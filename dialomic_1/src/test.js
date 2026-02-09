@@ -35,14 +35,20 @@ var bpos = [];
 var font;
 var iframe;
 
+var panels = []
+
+var testPanel;
+
 window.onload = () =>{
     console.log("HIIIII");
     iframe = document.getElementById("logicEngine");
+    
     loaded = true;
     iframe.addEventListener("load", (event) => {
         console.log("Iframe has loaded!");
         // You can now send a message to SugarCube
         iframe.contentWindow.postMessage({ type: "ping" }, event.origin);
+        
         // vars = iframe.contentWindow.SugarCube.State.variables;
     });
 
@@ -54,6 +60,10 @@ window.onload = () =>{
         
         if (data.type === "fromthree") {
             console.log("from three");
+
+            // let second = panels[1]
+            // console.log(testPanel)
+            // window.postMessage({ type: "canvas", canvas: testPanel.v}, window.location.origin);
         }
 
          if (data.type === "pong") {
@@ -61,13 +71,8 @@ window.onload = () =>{
         }
 
         if (data.type === "init") {
-            console.log("INIT");
-            // console.log(iframe.contentWindow.SugarCube.State.variables);
-            vars = iframe.contentWindow.SugarCube.State.variables;
-            v = vars.DL_setup;
-            vCurr = vars.DL_curr;
-            cols = vars.COLS;
-            rows = vars.ROWS;
+            init();
+            
         }
 
        
@@ -78,9 +83,9 @@ window.onload = () =>{
             psgName = data.psgName;
             // console.log("SugarCube is ready inside the iframe!");
             txt = data.passage;
-            let panel = {
-                "txt": data.passage
-            }
+            // let panel = {
+            //     "txt": data.passage
+            // }
 
             // console.log(txt);
 
@@ -94,9 +99,34 @@ window.onload = () =>{
         
     });
 
+    
+
 }
 
+function init(){
+    console.log("INIT");
+        let first = new p5(sketch1);
+        let second = new p5(sketch2);
 
+        // second.setup();
+        panels.push(first);
+        panels.push(second);
+        testPanel = second;
+        // console.log(iframe.contentWindow.SugarCube.State.variables);
+        vars = iframe.contentWindow.SugarCube.State.variables;
+        v = vars.DL_setup;
+        vCurr = vars.DL_curr;
+        cols = vars.COLS;
+        rows = vars.ROWS;
+        window.postMessage({ type: "tothree"}, window.location.origin);
+       
+        // console.log(testPanel)
+        // window.postMessage({ type: "canvas", canvas: testPanel.v}, window.location.origin);
+        // for (let i=0;i<panels.length; i++){
+
+        // }
+
+}
 
 
 
@@ -144,30 +174,45 @@ function updateButtons(){
 // Function for first canvas
 function sketch1(p) {
   p.setup = function () {
-    cnv = p.createCanvas(720, 200);
-    cnv.position(50, 100);
+    p.cnv = p.createCanvas(720, 200, p.WEBGL);
+    
     p.background(0);
+    window.postMessage({ type: "canvas", canvas: p.cnv.id(), w: p.width, h: p.height}, window.location.origin);
   };
   p.draw = function () {
-    p.circle(p.mouseX, p.mouseY, 50);
+    // p.circle(p.mouseX-p.width/2, p.mouseY-p.height/2, 50);
   };
 }
 
 // Run first p5 instance
-new p5(sketch1);
+
 
 // Function for second canvas
 function sketch2(p) {
   p.setup = function () {
-    cnv = p.createCanvas(720, 200);
-    p.background(255);
+    p.v = "waw";
+
+   
+    
+    p.cnv = p.createCanvas(720, 300, p.WEBGL);
+    p.cnv.position(100, 400);
+    p.background(200);
     p.fill(0);
     p.stroke(255);
+    window.postMessage({ type: "canvas", canvas: p.cnv.id(), w: p.width, h: p.height}, window.location.origin);
   };
-  p.draw = function () {
-    p.square(p.mouseX, p.mouseY, 50);
-  };
+//   p.draw = function () {
+//     p.square(p.mouseX, p.mouseY, 50);
+//   };
+  p.mouseMoved = function (){
+    // console.log(p.winMouseX);
+    p.cnv.position(p.winMouseX,p.winMouseY);
+  }
 }
 
 // Run second p5 instance
-new p5(sketch2);
+
+
+function bigSketch(p) {
+
+}
