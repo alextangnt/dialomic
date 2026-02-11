@@ -2,17 +2,26 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
+var canvas;
+var scene;
+var camera;
+var renderer;
+var info;
+
 function setup(data){
-    
+    info = data.info;
     const canvas = document.getElementById(data.canvas);
     const scene = new THREE.Scene();
     scene.background = new THREE.Color( 0xf0f0f0 );
 
-    const camera = new THREE.PerspectiveCamera( 75, data.w / data.h, 0.1, 1000 );
+    camera = new THREE.PerspectiveCamera( 75, info.w / info.h, 0.1, 1000 );
 
-    const renderer = new THREE.WebGLRenderer({ canvas: canvas});
+    renderer = new THREE.WebGLRenderer({ canvas: canvas});
+    // window.postMessage({ type: "renderer", renderer: renderer}, window.location.origin);
+    
+    
 
-    renderer.setSize( data.w,data.h );
+    renderer.setSize( info.w, info.h );
     renderer.setAnimationLoop( animate );
     // document.body.appendChild( renderer.domElement );
 
@@ -29,9 +38,16 @@ function setup(data){
       cube.rotation.y += 0.01;
 
       renderer.render( scene, camera );
+      // console.log(info);
+      
 
     }
 }
+
+function resize (w,h) {
+
+}
+
 
 
 window.addEventListener("message", (event) => {
@@ -49,6 +65,14 @@ window.addEventListener("message", (event) => {
     console.log("Canvas Recieved in three.js");
     console.log(data.canvas)
     setup(data);
+  }
+
+  if (data.type === "update three"){
+    // console.log("update three");
+    info = data.info;
+    // renderer.setSize(data.w,data.h);
+    camera.aspect = info.w / info.h;
+      camera.updateProjectionMatrix();
   }
 });
 

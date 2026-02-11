@@ -66,6 +66,11 @@ window.onload = () =>{
             // window.postMessage({ type: "canvas", canvas: testPanel.v}, window.location.origin);
         }
 
+        if (data.type === "renderer") {
+            console.log("getting renderer");
+            const renderer = data.renderer;
+        }
+
          if (data.type === "pong") {
             console.log("SugarCube is ready inside the iframe!");
         }
@@ -199,15 +204,37 @@ function sketch2(p) {
     p.background(200);
     p.fill(0);
     p.stroke(255);
-    window.postMessage({ type: "canvas", canvas: p.cnv.id(), w: p.width, h: p.height}, window.location.origin);
+
+    p.info = {w: p.width, h: p.height, pos: p.cnv.position()};
+    p.needsUpdate = false;
+
+    window.postMessage({ type: "canvas", canvas: p.cnv.id(), info: p.info}, window.location.origin);
   };
-//   p.draw = function () {
-//     p.square(p.mouseX, p.mouseY, 50);
-//   };
-  p.mouseMoved = function (){
+  p.draw = function () {
+    if (p.mouseIsPressed){
+        p.resizeCanvas(p.width,p.height+1);
+        p.needsUpdate = true;
+
+        // window.postMessage({ type: "resize", w: p.width, h: p.h}, window.location.origin);
+        // renderer.setSize(p.width,p.height+1);
+    }
+    
+    if (p.needsUpdate) {
+        p.info = {w: p.width, h: p.height, pos: p.cnv.position()};
+        window.postMessage({ type: "update three", info: p.info}, window.location.origin);
+        p.needsUpdate = false;
+    }
+    //  console.log(p.info);
+  };
+  p.mouseMoved = function () {
     // console.log(p.winMouseX);
     p.cnv.position(p.winMouseX,p.winMouseY);
-  }
+    p.needsUpdate = true;
+  };
+
+//   p.mousePressed = function () {
+//     p.resizeCanvas(p.width,p.height+10);
+//   }
 }
 
 // Run second p5 instance
