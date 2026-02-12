@@ -72,7 +72,7 @@ window.addEventListener("message", (event) => {
     info = data.info;
     // renderer.setSize(data.w,data.h);
     camera.aspect = info.w / info.h;
-      camera.updateProjectionMatrix();
+    camera.updateProjectionMatrix();
   }
 });
 
@@ -80,10 +80,10 @@ window.addEventListener( 'resize', onWindowResize, false );
 
 function onWindowResize() {
 
-			camera.aspect = window.innerWidth / window.innerHeight;
-			camera.updateProjectionMatrix();
+			camera.aspect = info.w / info.h;
+      camera.updateProjectionMatrix();
 
-			renderer.setSize( window.innerWidth, window.innerHeight );
+			renderer.setSize( info.w, info.h );
 
 			// renderer.render(scene,camera);
 

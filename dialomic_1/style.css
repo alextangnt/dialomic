@@ -5,6 +5,7 @@ html,
     left: 0;
     z-index: 1; /* Place this element below the canvas */
     /* Add styles for your background content (e.g., img width/height: 100%) */
+    overflow: hidden;
 }
 /* The canvas created by p5.js will need styling too */
 
@@ -16,6 +17,7 @@ canvas {
     z-index: 2; /* Place this element on top of the background */
     /* Optional: Set pointer-events to none if you want mouse interactions to pass through the canvas to the elements beneath it */
     /* pointer-events: none; */
+    overflow: hidden;
 }
 
 iframe {
