@@ -1,3 +1,4 @@
+import { Panel } from './panel.js';
 var loaded = false;
 var started = false;
 
@@ -68,23 +69,6 @@ window.onload = () =>{
 
 }
 
-// function setPsgInfo(info){
-//     console.log("PASSAGE has been sent back");
-//     layout.psgName = info.psgName;
-//     // console.log("SugarCube is ready inside the iframe!");
-//     layout.txt = info.passage;
-//     // let panel = {
-//     //     "txt": data.passage
-//     // }
-
-//     // console.log(txt);
-
-    
-//     console.log(vars);
-//     links = info.links;
-//     layout.updateButtons();
-
-        
     
 // }
 
@@ -95,7 +79,7 @@ function init(info){
     // window.postMessage({ type: "tothree"}, window.location.origin);
     
     if (!started){
-        let second = new p5(sketch2);
+        // let second = new p5(sketch2);
         layout = new p5(bigSketch);
     }
     
@@ -108,8 +92,8 @@ function init(info){
     vars = iframe.contentWindow.SugarCube.State.variables;
     layout.lo = vars.DL_setup;
     layout.loCurr = vars.DL_curr;
-    cols = vars.COLS;
-    rows = vars.ROWS;
+    // cols = vars.COLS;
+    // rows = vars.ROWS;
     
     
     // console.log(testPanel)
@@ -170,52 +154,7 @@ function sketch1(p) {
 // Run first p5 instance
 
 
-// Function for second canvas
-function sketch2(p) {
-  p.setup = function () {
-    p.v = "waw";
 
-   
-    
-    p.cnv = p.createCanvas(720, 300, p.WEBGL);
-    p.cnv.position(100, 400);
-    p.background(200);
-    p.fill(0);
-    p.stroke(255);
-
-    p.info = {w: p.width, h: p.height, pos: p.cnv.position()};
-    p.needsUpdate = false;
-
-    window.postMessage({ type: "canvas", canvas: p.cnv.id(), info: p.info}, window.location.origin);
-  };
-  p.draw = function () {
-    // if (p.mouseIsPressed){
-    //     p.resizeCanvas(p.width,p.height+1);
-    //     p.needsUpdate = true;
-
-    //     // window.postMessage({ type: "resize", w: p.width, h: p.h}, window.location.origin);
-    //     // renderer.setSize(p.width,p.height+1);
-    // }
-    
-    if (p.needsUpdate) {
-        p.info = {w: p.width, h: p.height, pos: p.cnv.position()};
-        window.postMessage({ type: "update three", info: p.info}, window.location.origin);
-        p.needsUpdate = false;
-    }
-    //  console.log(p.info);
-  };
-  p.mouseMoved = function () {
-    // console.log(p.winMouseX);
-    p.cnv.position(p.winMouseX,p.winMouseY);
-    p.needsUpdate = true;
-  };
-
-//   p.mousePressed = function () {
-//     p.resizeCanvas(p.width,p.height+10);
-//   }
-}
-
-// Run second p5 instance
 
 
 function bigSketch(S) {
@@ -290,13 +229,15 @@ function bigSketch(S) {
         S.by = S.h*4/5;
         S.bd = S.fontSize;
         
-        S.createCanvas(S.w, S.h);
+        S.cnv = S.createCanvas(S.w, S.h);
+        S.cnv.style('z-index', '10');
         S.background(S.bg);
 
         S.textSize(S.fontSize);
         started = true;
         layout.updateButtons();
         
+        S.panel = new Panel(S.winMouseX, S.winMouseY, 720, 300, S.psgName);
         
     
         // iframe.contentWindow.postMessage({ type: 'load', passage: 'Start' }, '*');
@@ -304,6 +245,7 @@ function bigSketch(S) {
         
 
     };
+
 
     S.windowResized = function () {
         S.resizeCanvas(S.windowWidth, S.windowHeight);
@@ -342,6 +284,8 @@ function bigSketch(S) {
         // S.text(S.windowWidth,10, 50,S.w-S.bx);
         // S.text(S.windowHeight,10, 75,S.w-S.bx);
         S.text(S.txt, 10, 25,S.w-S.bx);
+
+        S.text(S.txt, S.panel.data.left, S.panel.data.top,S.w-S.bx);
 
 
 
@@ -451,6 +395,11 @@ function bigSketch(S) {
     }
 
     S.mousePressed = function () {
+        console.log("mouse pressed");
+        // test();
+
+        
+
         // iframe.contentWindow.SugarCube.Story.get("start").processText();
         
         // console.log("THIS:" + iframe.contentWindow.SugarCube.Story.get("start").processText());
@@ -476,6 +425,18 @@ function bigSketch(S) {
         //     iframe.contentWindow.postMessage({ type: 'play', passage: psgName }, '*');
 
 
+    }
+    S.mouseWheel = function(event) {
+        
+        let data = S.panel.getData();
+        let top = data.top;
+        let left = data.left;
+        if (event.delta > 0){
+            S.panel.move(left,top+10);
+        }
+        else {
+            S.panel.move(left,top-10);
+        }
     }
 
 

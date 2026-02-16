@@ -76,15 +76,15 @@ window.addEventListener("message", (event) => {
   }
 });
 
-window.addEventListener( 'resize', onWindowResize, false );
+// window.addEventListener( 'resize', onWindowResize, false );
 
-function onWindowResize() {
+// function onWindowResize() {
 
-			camera.aspect = info.w / info.h;
-      camera.updateProjectionMatrix();
+// 			camera.aspect = info.w / info.h;
+//       camera.updateProjectionMatrix();
 
-			renderer.setSize( info.w, info.h );
+// 			renderer.setSize( info.w, info.h );
 
-			// renderer.render(scene,camera);
+// 			// renderer.render(scene,camera);
 
-}
+// }
