@@ -61,6 +61,7 @@ window.onload = () =>{
                 // layout = new p5(bigSketch);
             }
             layout.setPsgInfo(data.info);
+            layout.setPanel();
         }
         
     });
@@ -84,6 +85,7 @@ function init(info){
     }
     
     layout.setPsgInfo(info);
+    
 
     // second.setup();
     // panels.push(first);
@@ -154,7 +156,12 @@ function sketch1(p) {
 // Run first p5 instance
 
 
-
+function cleanText(s){
+    let i = s.indexOf("%%%");
+    if (i!=-1){
+        return s.substring(0,i);
+    }
+}
 
 
 function bigSketch(S) {
@@ -176,7 +183,7 @@ function bigSketch(S) {
     
     S.lo = {};
     S.loCurr = {};
-    // S.history = []
+    S.panels = {};
 
     S.panelCount = 0;
 
@@ -200,12 +207,36 @@ function bigSketch(S) {
     S.failure = function() {
         console.error("FAILFAIL");
     }
+    
+
+    S.setPanel = function (){
+        let offscreen = {left: 0, top: -200, width: 360, height: 150};
+        S.currPanel.setTarget(offscreen)
+
+        let name = S.psgName;
+        let data = {left: 0, top: S.h, width: 360, height: 150};
+        let target = {left: 0, top: S.h/4, width: 720, height: 300};
+
+        if (!S.panels[name]) {
+            
+            let p = new Panel(data,target, name, S.txt);
+            S.panels[name] = p;
+            S.currPanel = p;
+        }
+        else {
+            let p = S.panels[name];
+            S.currPanel = p;
+            p.setCurr(data);
+            p.setTarget(target);
+        }
+
+    }
 
     S.setPsgInfo = function (info) {
         console.log("PASSAGeinfo");
         S.psgName = info.psgName;
         // console.log("SugarCube is ready inside the iframe!");
-        S.txt = info.passage;
+        S.txt = cleanText(info.passage);
         // let panel = {
         //     "txt": data.passage
         // }
@@ -217,7 +248,6 @@ function bigSketch(S) {
         links = info.links;
         S.updateButtons();
 
-            
         
     }
 
@@ -236,8 +266,13 @@ function bigSketch(S) {
         S.textSize(S.fontSize);
         started = true;
         layout.updateButtons();
-        
-        S.panel = new Panel(S.winMouseX, S.winMouseY, 720, 300, S.psgName);
+
+        let h = S.height
+        let data = {left: 0, top: h, width: 360, height: 150};
+        let target = {left: 0, top: h/4, width: 720, height: 300};
+        S.currPanel = new Panel(data,target, S.psgName,S.txt);
+        let name = S.psgName;
+        S.panels[name] = S.currPanel;
         
     
         // iframe.contentWindow.postMessage({ type: 'load', passage: 'Start' }, '*');
@@ -283,9 +318,10 @@ function bigSketch(S) {
 
         // S.text(S.windowWidth,10, 50,S.w-S.bx);
         // S.text(S.windowHeight,10, 75,S.w-S.bx);
-        S.text(S.txt, 10, 25,S.w-S.bx);
 
-        S.text(S.txt, S.panel.data.left, S.panel.data.top,S.w-S.bx);
+        // S.text(s, 10, 25,S.w-S.bx);
+
+        // S.text(s, S.currPanel.data.left, S.currPanel.data.top,S.w-S.bx);
 
 
 
@@ -302,6 +338,13 @@ function bigSketch(S) {
 
         //     S.updateLo();
         // }
+
+        for (let panel in S.panels){
+            let p = S.panels[panel]
+            S.text(p.text, p.data.left, p.data.top,S.w-S.bx);
+            p.update();
+        }
+        // S.currPanel.update();
     };
 
     // S.updateLo = function (){
@@ -352,60 +395,20 @@ function bigSketch(S) {
 
 
 
-
-    // S.draw = function () {
-    //     clear();
-    //     background(bg);
-    //     circle(mouseX,mouseY,10);
-    //     if (loaded && !started && millis()>100){
-    //         iframe.contentWindow.postMessage({ type: 'start' , passage: psgName}, window.location.origin);
-    //         window.postMessage({ type: "tothree"}, window.location.origin);
-    //         // iframe.contentWindow.postMessage({ type: 'play' , passage: psgName}, window.location.origin);
-    //         started = true;
-    //     }
-        
-    //     fill(0);
-    //     noStroke();
-    //     textWrap(WORD);
-    //     text(txt, 10, 25, w-bx);
-    //     for (let i=0; i<bpos.length; i++){
-    //         let bbox = bpos[i];
-    //         fill(255,255,0);
-    //         rect(bbox.x, bbox.y, bbox.w, bbox.h);
-    //         fill(0);
-    //         noStroke();
-    //         text(links[i], bx, by+(i*bd));
-    //     }
-    //     if (started){
-    //         // console.log(vSetup);
-    //         // rect(0,0,100,100);
-    //         updateLo();
-    //     }
-    //     // textAlign(LEFT, TOP);
-        
-
-
-    // }
-
     S.keyPressed = function () {
     if (S.key === 'r' && loaded) {
         // document.getElementById("logicEngine").contentWindow.location.reload(true);
         iframe.contentWindow.postMessage({ type: 'start' , passage: S.psgName}, window.location.origin);
+        for (let panel in S.panels){
+            //this doesnt rly work yet
+            S.panels[panel].delete();
+        }
     }
     }
 
     S.mousePressed = function () {
         console.log("mouse pressed");
-        // test();
 
-        
-
-        // iframe.contentWindow.SugarCube.Story.get("start").processText();
-        
-        // console.log("THIS:" + iframe.contentWindow.SugarCube.Story.get("start").processText());
-        // iframe.contentWindow.postMessage("hello " + mouseX);
-        //     story.postMessage({a:'This is a test message.', b:random(255), c:mouseX}); /* send */
-        //   console.log('message posted at',mouseX);
 
         for (let i=0; i<S.bpos.length; i++){
             let bbox = S.bpos[i];
@@ -426,17 +429,43 @@ function bigSketch(S) {
 
 
     }
-    S.mouseWheel = function(event) {
-        
-        let data = S.panel.getData();
-        let top = data.top;
-        let left = data.left;
-        if (event.delta > 0){
-            S.panel.move(left,top+10);
+
+    S.makeResponse = function () {
+        let target = {left: 0, top: S.h/5, width: 720*3/4, height: 300*3/4};
+        S.currPanel.setTarget(target)
+
+        let name = S.psgName;
+        let data = {left: 0, top: S.h, width: 360, height: 150};
+        target = {left: 0, top: S.h/4, width: 720, height: 300};
+
+        if (!S.panels[name]) {
+            
+            let p = new Panel(data,target, name, S.txt);
+            S.panels[name] = p;
+            S.currPanel = p;
         }
         else {
-            S.panel.move(left,top-10);
+            let p = S.panels[name];
+            S.currPanel = p;
+            p.setCurr(data);
+            p.setTarget(target);
         }
+
+        
+    }
+    S.mouseWheel = function(event) {
+        
+        let data = S.currPanel.getData();
+
+        
+        let top = data.top;
+        let left = data.left;
+        // if (event.delta > 0){
+        //     S.panel.move(left,top+10);
+        // }
+        // else {
+        //     S.panel.move(left,top-10);
+        // }
     }
 
 
