@@ -137,7 +137,7 @@ export class ThreeScene {
     resize(width, height) {
         this.camera.aspect = width / height;
         this.camera.updateProjectionMatrix();
-        this.camera.updateProjectionMatrix();
+        this.renderer.setSize(width, height);
 
     }
 
@@ -177,17 +177,28 @@ export class Panel {
         this.linked = linked;
         this.onScreen = true;
 
-
-
         console.log(this.data);
-        this.p5;
-        this.makeP5();
-        this.canvas = this.p5.cnv.elt;
-        this.canvasID = this.p5.cnv.id();
+        this.canvas = document.createElement('canvas');
+        this.canvas.style.position = 'absolute';
+        this.canvas.style.left = `${curr.left}px`;
+        this.canvas.style.top = `${curr.top}px`;
+        this.canvas.style.width = `${curr.width}px`;
+        this.canvas.style.height = `${curr.height}px`;
+        this.canvas.style.display = 'block';
+        this.canvas.style.zIndex = '20';
+        document.body.appendChild(this.canvas);
 
+        this.textEl = document.createElement('div');
+        this.textEl.className = 'panel-text';
+        this.textEl.style.left = `${curr.left}px`;
+        this.textEl.style.top = `${curr.top}px`;
+        this.textEl.style.width = `${curr.width}px`;
+        this.textEl.style.height = `${curr.height}px`;
+        this.textEl.textContent = this.text || '';
+        document.body.appendChild(this.textEl);
         
         this.three = new ThreeScene(curr.width, curr.height, this.canvas);
-        this.three.addModel('cow');
+        this.three.addModel('rat');
         
     }
     
@@ -200,7 +211,10 @@ export class Panel {
     resize(width, height) {
         this.data.width = width;
         this.data.height = height;
-        this.p5.resizeCanvas(width, height);
+        this.canvas.style.width = `${width}px`;
+        this.canvas.style.height = `${height}px`;
+        this.textEl.style.width = `${width}px`;
+        this.textEl.style.height = `${height}px`;
         this.three.resize(width,height);
         
         
@@ -210,7 +224,10 @@ export class Panel {
     move(left,top){
         this.data.left = left;
         this.data.top = top;
-        this.p5.move(left,top);
+        this.canvas.style.left = `${left}px`;
+        this.canvas.style.top = `${top}px`;
+        this.textEl.style.left = `${left}px`;
+        this.textEl.style.top = `${top}px`;
     }
 
     setCurr(data){
@@ -297,11 +314,13 @@ export class Panel {
 
     setTxt(txt){
         this.text = txt;
+        this.textEl.textContent = txt || '';
     }
 
     delete(){
         //idk if this works
-        this.p5.remove();
+        this.canvas.remove();
+        this.textEl.remove();
         this.three.renderer.dispose();
         for (let obj in this.three.objects){
             if (!obj.isMesh) return;
@@ -315,41 +334,5 @@ export class Panel {
     }
 
     
-    
-    makeP5() {
-        let data = this.data;
-        function panel(p) {
-
-            p.setup = function() {
-                
-                
-                p.cnv = p.createCanvas(data.width, data.height, p.WEBGL);
-                p.cnv.position(data.left, data.top);
-
-                // p.font = data.font;
-                // p.textFont(p.font);
-                console.log(data);
-                p.background(255,0,0);
-            }
-
-            p.draw = function () {
-                p.fill(0);
-
-            }
-
-            p.move = function (left,top){
-                p.cnv.position(left, top);
-            }
-
-            p.remove = function() {
-                remove();
-            }
-
-
-        }
-        this.p5 = new p5(panel);
-    }
-
-
     
 }

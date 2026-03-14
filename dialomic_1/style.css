@@ -20,6 +20,45 @@ canvas {
     overflow: hidden;
 }
 
+#ui-root {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 30;
+    pointer-events: none;
+}
+
+#link-list {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    pointer-events: auto;
+}
+
+#link-list .link-button {
+    background: rgba(255, 255, 0, 0.85);
+    border: 0;
+    color: #000;
+    cursor: pointer;
+    font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: inherit;
+    line-height: inherit;
+    padding: 0 4px;
+    text-align: left;
+}
+
+.panel-text {
+    position: absolute;
+    z-index: 30;
+    color: #000;
+    font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    pointer-events: none;
+    white-space: pre-wrap;
+}
+
 iframe {
 	visibility: hidden;
 	position: absolute;
@@ -27,4 +66,10 @@ iframe {
     left: 0;
 	z-index: 3;
     overflow: hidden;
+}
+
+@font-face {
+    font-family: "InconsolataLocal";
+    src: url("/src/assets/Inconsolata.otf") format("opentype");
+    font-display: swap;
 }
