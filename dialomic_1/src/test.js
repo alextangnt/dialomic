@@ -84,7 +84,7 @@ function init(info){
         layout = new p5(bigSketch);
     }
     
-    layout.setPsgInfo(info);
+    
     
 
     // second.setup();
@@ -94,6 +94,8 @@ function init(info){
     vars = iframe.contentWindow.SugarCube.State.variables;
     layout.lo = vars.DL_setup;
     layout.loCurr = vars.DL_curr;
+
+    layout.setPsgInfo(info);
     // cols = vars.COLS;
     // rows = vars.ROWS;
     
@@ -166,6 +168,7 @@ function cleanText(s){
 
 function bigSketch(S) {
     S.bg = 200;
+    S.pressed = false;
 
 
     S.txt = "";
@@ -184,6 +187,9 @@ function bigSketch(S) {
     S.lo = {};
     S.loCurr = {};
     S.panels = {};
+    S.currPanel;
+
+    S.panelsOnscreen = {};
 
     S.panelCount = 0;
 
@@ -210,24 +216,33 @@ function bigSketch(S) {
     
 
     S.setPanel = function (){
+        // S.pressed = false;
         let offscreen = {left: 0, top: -200, width: 360, height: 150};
-        S.currPanel.setTarget(offscreen)
+        for (let i in S.panelsOnscreen){
+            let ps = S.panelsOnscreen[i];
+            ps.setTarget(offscreen);
+        }
+        // S.currPanel.setTarget(offscreen)
 
         let name = S.psgName;
         let data = {left: 0, top: S.h, width: 360, height: 150};
-        let target = {left: 0, top: S.h/4, width: 720, height: 300};
+        let target = {left: 0, top: S.h/4, width: S.w, height: 300};
 
         if (!S.panels[name]) {
             
-            let p = new Panel(data,target, name, S.txt);
+            let p = new Panel(data,target, name, S.txt,-1);
             S.panels[name] = p;
             S.currPanel = p;
+            S.panelsOnscreen[name] = p;
         }
         else {
             let p = S.panels[name];
             S.currPanel = p;
+            p.setLink = -1;
             p.setCurr(data);
             p.setTarget(target);
+            p.setTxt(S.txt);
+            S.panelsOnscreen[name] = p;
         }
 
     }
@@ -254,6 +269,7 @@ function bigSketch(S) {
     S.setup = function() {
         S.textFont(S.font);
         S.bg = S.color(255,0,0,60)
+        // S.bg = S.color(255,255,255,0)
         S.windowResized()
         S.bx = S.w/100;
         S.by = S.h*4/5;
@@ -264,15 +280,20 @@ function bigSketch(S) {
         S.background(S.bg);
 
         S.textSize(S.fontSize);
-        started = true;
+        
         layout.updateButtons();
 
-        let h = S.height
-        let data = {left: 0, top: h, width: 360, height: 150};
-        let target = {left: 0, top: h/4, width: 720, height: 300};
-        S.currPanel = new Panel(data,target, S.psgName,S.txt);
-        let name = S.psgName;
-        S.panels[name] = S.currPanel;
+        
+        iframe.contentWindow.postMessage({ type: 'start' , passage: S.psgName}, window.location.origin);
+        started = true;
+        // let h = S.height
+        // let data = {left: 0, top: h, width: 360, height: 150};
+        // let target = {left: 0, top: h/4, width: S.w, height: 300};
+        // let p = new Panel(data,target, S.psgName,S.txt, -1);
+        // S.currPanel = p;
+        // let name = S.psgName;
+        // S.panels[name] = p;
+        // S.panelsOnscreen[name] = p;
         
     
         // iframe.contentWindow.postMessage({ type: 'load', passage: 'Start' }, '*');
@@ -319,9 +340,9 @@ function bigSketch(S) {
         // S.text(S.windowWidth,10, 50,S.w-S.bx);
         // S.text(S.windowHeight,10, 75,S.w-S.bx);
 
-        // S.text(s, 10, 25,S.w-S.bx);
+        // S.text(S.txt, 10, 25,S.w-S.bx);
 
-        // S.text(s, S.currPanel.data.left, S.currPanel.data.top,S.w-S.bx);
+        // S.text(S.txt, S.currPanel.data.left, S.currPanel.data.top,S.w-S.bx);
 
 
 
@@ -339,42 +360,30 @@ function bigSketch(S) {
         //     S.updateLo();
         // }
 
-        for (let panel in S.panels){
-            let p = S.panels[panel]
-            S.text(p.text, p.data.left, p.data.top,S.w-S.bx);
-            p.update();
+        for (let panel in S.panelsOnscreen){
+            let p = S.panelsOnscreen[panel]
+            
+            if (!p.onScreen){
+                console.log(p.text + " removed")
+                S.pressed = false;
+                delete S.panelsOnscreen[panel]
+            }
+            else {
+                S.text(p.text, p.data.left, p.data.top,S.w-S.bx);
+                let linkExists = p.update();
+                // console.log(linkExists);
+
+                if (linkExists!=-1){
+                    
+                    S.clickLink(linkExists)
+                    p.setLink(-1);
+                    
+                }
+            }
         }
         // S.currPanel.update();
     };
 
-    // S.updateLo = function (){
-    //     outPadAmt = lo.outerPadding * S.screenRatio;
-    //     inPadAmt = lo.innerPadding * S.screenRatio;
-    //     S.r = lo.rows;
-    //     S.c = lo.cols;
-    //     S.x = (w-(outPadAmt*2))/S.c
-    //     S.y = (h-(outPadAmt*2))/S.r
-        
-    //     S.noFill();
-    //     S.strokeWeight(2);
-    //     S.stroke(0);
-    //     // console.log(r)
-    //     let counter = 0;
-    //     for (let i = 0; i<r; i++){
-            
-    //         for (let j = 0; j<c;  j++){
-                
-    //             if (counter == panelCount)
-    //                 S.fill(0,0,255,50);
-    //             else {
-    //                 S.noFill()
-    //             }
-    //             S.rect(outPadAmt+j*x,outPadAmt+i*y,x,y);
-    //             counter ++;
-    //         }
-    //     }
-        
-    // };
 
     S.updateButtons = function () {
         if (!fontLoaded)
@@ -407,52 +416,71 @@ function bigSketch(S) {
     }
 
     S.mousePressed = function () {
-        console.log("mouse pressed");
-
-
+        
+        
         for (let i=0; i<S.bpos.length; i++){
             let bbox = S.bpos[i];
             if (S.winMouseX>bbox.x && S.winMouseX<bbox.x+bbox.w && S.winMouseY>bbox.y && S.winMouseY<bbox.y+bbox.h){
                 // txtHistory.push(txt);
                 // panelCount = (panelCount+1)%(lo.rows*lo.cols);
-                S.psgName = links[i];
-                S.clicked = i;
-                console.log(links[i]);
-                if (loaded)
-                    iframe.contentWindow.postMessage({ type: 'click', clicked: S.clicked }, window.location.origin);
+                if (S.pressed) return;
+                S.pressed = true;
+                S.makeResponse(i);
+                
 
+                
             }
             
         }
+        
         // if (outside)
         //     iframe.contentWindow.postMessage({ type: 'play', passage: psgName }, '*');
 
 
     }
 
-    S.makeResponse = function () {
+    S.makeResponse = function (i) {
+        let choice = links[i]
         let target = {left: 0, top: S.h/5, width: 720*3/4, height: 300*3/4};
-        S.currPanel.setTarget(target)
+        for (let i in S.panelsOnscreen){
+            let ps = S.panelsOnscreen[i];
+            ps.setTarget(target);
+        }
+        // S.currPanel.setTarget(target)
 
-        let name = S.psgName;
-        let data = {left: 0, top: S.h, width: 360, height: 150};
-        target = {left: 0, top: S.h/4, width: 720, height: 300};
+        let name = S.psgName+choice;
+        let data = {left: 0, top: S.h, width: 100, height: 100};
+        target = {left: S.width*3/4, top: S.h/3, width: 200, height: 200};
 
         if (!S.panels[name]) {
             
-            let p = new Panel(data,target, name, S.txt);
+            let p = new Panel(data,target, name, choice, i);
             S.panels[name] = p;
             S.currPanel = p;
+            S.panelsOnscreen[name] = p;
         }
         else {
             let p = S.panels[name];
+            p.setLink(i);
             S.currPanel = p;
+            // p.setTxt(choice);
             p.setCurr(data);
             p.setTarget(target);
-        }
-
-        
+            S.panelsOnscreen[name] = p;
+        } 
     }
+
+    S.clickLink = function (i){
+
+        console.log("click link " + i);
+        S.psgName = links[i];
+        S.clicked = i;
+        // console.log(links[i]);
+        if (loaded)
+            iframe.contentWindow.postMessage({ type: 'click', clicked: S.clicked }, window.location.origin);
+
+    }
+
     S.mouseWheel = function(event) {
         
         let data = S.currPanel.getData();

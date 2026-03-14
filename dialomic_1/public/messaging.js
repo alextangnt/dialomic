@@ -78,26 +78,19 @@ window.onload = () =>{
     window.addEventListener("message", function (event) {
         const { type, passage, clicked } = event.data;
         
-        
         if (event.data.type === "ping") {
             event.source.postMessage({ type: "pong", status: "ready" }, event.origin);
             p5Origin = event.origin;
-            
         }
 
         if (event.data.type === "start") {
             started = true;
             SugarCube.Engine.restart();
-            // SugarCube.Engine.play(psgName);
             
         }
         if (event.data.type === "play") {
-
             SugarCube.Engine.play(passage);
-            // SugarCubetriggerEvent('click', document.getElementById('some-menu'));
-            
             console.log(SugarCube.State.variables);
-            // event.source.postMessage({ type: "passage", passage: psg, links: linksText}, event.origin);
         }
         if (event.data.type === "click"){
             console.log(allLinks[clicked]);

@@ -11,11 +11,160 @@ export class TextBox {
 
 function lerp(start, stop, t) {
 
-    return Math.round(start + (stop - start) * t);
+    return start + (stop - start) * t;
+}
+
+export class ThreeScene {
+    constructor (width,height,canvas) {
+
+        
+        let camera = new THREE.PerspectiveCamera( 75, width / height, 0.1, 1000 );
+        this.camera = camera;
+        let scene = new THREE.Scene();
+        this.scene = scene;
+        let r = Math.floor(Math.random() * 255);
+        let color = new THREE.Color("hsl("+r+", 100%, 50%)");
+        r = Math.floor(Math.random() * 255);
+        let bg = new THREE.Color("hsl("+r+", 100%, 50%)");
+        scene.background = bg
+        let renderer = new THREE.WebGLRenderer({ canvas: canvas});
+        this.renderer = renderer;
+        renderer.setSize( width, height );
+
+        
+        
+
+        let skyColor = 0xB1E1FF;
+        let groundColor = 0xB97A20;
+        
+        let objects = [];
+        let light = new THREE.HemisphereLight(skyColor, groundColor, 3);
+        objects.push(light);
+        scene.add( light );
+        // r = Math.max(Math.floor(Math.random() * 5),1);
+        // let r2 = Math.max(Math.floor(Math.random() * 5),1);
+        // let r3 = Math.max(Math.floor(Math.random() * 5),1);
+        // let geometry = new THREE.BoxGeometry( r, r2, r3 );
+        // objects.push(geometry);
+        // let material = new THREE.MeshLambertMaterial( { color: color } );
+        // objects.push(material);
+        // let cube = new THREE.Mesh( geometry, material );
+        // objects.push(cube);
+        // // this.scene.add( cube );
+        
+        
+        // scene.add( cube );
+        this.objects = objects;
+
+        let loader = new GLTFLoader();
+        this.loader = loader;
+        // loader.load('/src/assets/animals/mammoth.obj', (object)=> {
+        //     scene.add(object);
+        // })
+
+        let models = []
+        this.models = models;
+
+        // let model;
+        // loader.load( '/src/assets/animals/rat.glb', function ( gltf ) {
+        //     model = gltf.scene;
+        //     scene.add( gltf.scene );
+        //     model.scale.set(3, 3, 3);
+
+
+        // }, undefined, function ( error ) {
+
+        //     console.error( error );
+
+        // } );
+
+        // let model2;
+        // loader.load( '/src/assets/animals/cow.glb', function ( gltf ) {
+        //     model2 = gltf.scene;
+        //     scene.add( gltf.scene );
+        //     model2.scale.set(3, 3, 3);
+
+
+        // }, undefined, function ( error ) {
+
+        //     console.error( error );
+
+        // } );
+        camera.position.z = 5;
+
+        let controls = new OrbitControls( camera, renderer.domElement );
+        this.controls = controls;
+        controls.update();
+        
+
+
+        
+
+        // this.animate = function () {
+        //     let model;
+        //     controls.update();
+        //     console.log(models)
+        //     for (let model in models){
+        //         if (model) {
+                    
+        //             model.rotation.x += 0.01;
+        //             model.rotation.y += 0.01;
+        //         }
+        //     }
+
+        //     renderer.render( scene, camera );
+        // };
+        // this.addModel("cow");
+
+
+        this.animate = this.animate.bind(this);
+        renderer.setAnimationLoop(this.animate);
+    }
+
+    animate() {
+        
+        for (const model of this.models) {
+            // if (model) {
+            //     model.rotation.x += 0.01;
+            //     model.rotation.y += 0.01;
+            // }
+        }
+        this.controls.update();
+        this.renderer.render( this.scene, this.camera );
+        
+    }
+
+    resize(width, height) {
+        this.camera.aspect = width / height;
+        this.camera.updateProjectionMatrix();
+        this.camera.updateProjectionMatrix();
+
+    }
+
+    addModel(file){
+        // file is string name of animal that we add .glb to the end of
+        let filename = '/src/assets/animals/'+file+'.glb';
+        console.log(filename);
+        let loader = this.loader;
+        let scene = this.scene;
+        let models = this.models;
+        loader.load( filename, function ( gltf ) {
+            let model = gltf.scene;
+            scene.add( model );
+            model.scale.set(2, 2, 2);
+            models.push(model);
+
+        }, undefined, function ( error ) {
+
+            console.error( error );
+
+        } );
+    }
+
 }
 
 export class Panel {
-    constructor(curr,target, id,text) {
+    constructor(curr, target, id, text, linked) {
         console.log("make panel");
         // let curr = {left: left, top: top, width: width, height: height};
         // let target = {left: left, top: top, width: width, height: height};
@@ -25,6 +174,8 @@ export class Panel {
         this.text = text;
         this.isUpdating = true;
         this.movingToTarget = {left:true, top:true, width:true, height:true};
+        this.linked = linked;
+        this.onScreen = true;
 
 
 
@@ -35,7 +186,8 @@ export class Panel {
         this.canvasID = this.p5.cnv.id();
 
         
-        this.makeThree();
+        this.three = new ThreeScene(curr.width, curr.height, this.canvas);
+        this.three.addModel('cow');
         
     }
     
@@ -43,64 +195,14 @@ export class Panel {
         return this.data;
     }
 
-    makeThree() {
-        this.three = {};
-        let camera = new THREE.PerspectiveCamera( 75, this.data.width / this.data.height, 0.1, 1000 );
-        this.three.camera = camera;
-        let scene = new THREE.Scene();
-        this.three.scene = scene;
-        let r = Math.floor(Math.random() * 255);
-        let color = new THREE.Color("hsl("+r+", 100%, 50%)");
-        r = Math.floor(Math.random() * 255);
-        let bg = new THREE.Color("hsl("+r+", 100%, 50%)");
-        scene.background = bg
-        let renderer = new THREE.WebGLRenderer({ canvas: this.canvas});
-        this.three.renderer = renderer;
-        renderer.setSize( this.data.width, this.data.height );
-        
-
-        let skyColor = 0xB1E1FF;
-        let groundColor = 0xB97A20;
-        
-        let objects = [];
-        let light = new THREE.HemisphereLight(skyColor, groundColor, 3);
-        objects.push(light);
-        scene.add( light );
-        r = Math.max(Math.floor(Math.random() * 5),1);
-        let r2 = Math.max(Math.floor(Math.random() * 5),1);
-        let r3 = Math.max(Math.floor(Math.random() * 5),1);
-        let geometry = new THREE.BoxGeometry( r, r2, r3 );
-        objects.push(geometry);
-        let material = new THREE.MeshLambertMaterial( { color: color } );
-        objects.push(material);
-        let cube = new THREE.Mesh( geometry, material );
-        objects.push(cube);
-        // this.scene.add( cube );
-        
-        this.three.objects = objects;
-        scene.add( cube );
-        camera.position.z = 5;
-
-
-        
-
-        this.three.animate = function () {
-            
-            cube.rotation.x += 0.01;
-            cube.rotation.y += 0.01;
-
-            renderer.render( scene, camera );
-        };
-
-        renderer.setAnimationLoop( this.three.animate );
-    }
+    
 
     resize(width, height) {
         this.data.width = width;
         this.data.height = height;
-        this.p5.resizeCanvas(width, height)
-        this.three.camera.aspect = width / height;
-        this.three.camera.updateProjectionMatrix();
+        this.p5.resizeCanvas(width, height);
+        this.three.resize(width,height);
+        
         
 
     }
@@ -132,10 +234,7 @@ export class Panel {
         let wwidth = window.innerWidth;
         let wheight = window.innerHeight;
 
-        if (c.left+c.width<0 || c.top+c.height<0 || c.left>wwidth || c.top>wheight){
-            this.stopUpdates();
-            return;
-        }
+        
 
         
 
@@ -156,29 +255,48 @@ export class Panel {
             if (Math.abs(c.height-t.height)<1) this.movingToTarget.height = false;
         }
         
-        // if (!movingToTarget.width && !movingToTarget.height && !movingToTarget.top && !movingToTarget.left) {
-        //     c.data.
-        // }
-
+        if (!this.movingToTarget.width && !this.movingToTarget.height && !this.movingToTarget.top && !this.movingToTarget.left) {
+            console.log(this.id + " is done updating");
+            this.isUpdating = false;
+        }
+        
+        if (c.left+c.width<0 || c.top+c.height<0 || c.left>wwidth || c.top>wheight){
+            console.log("off screen")
+            this.isUpdating = false;
+            this.onScreen = false;
+            this.stopUpdates();
+            return;
+        }
     }
     
-    queueUpdates(){
-        this.isUpdating = true;
-        this.movingToTarget = {left:true, top:true, width:true, height:true};
-    }
+
     stopUpdates(){
         this.isUpdating = false;
         this.movingToTarget = {left:false, top:false, width:false, height:false};
         this.three.renderer.setAnimationLoop(null);
     }
     startUpdates(){
+        this.onScreen = true;
+        this.isUpdating = true;
         this.three.renderer.setAnimationLoop(this.three.animate);
-        this.queueUpdates()
+        this.movingToTarget = {left:true, top:true, width:true, height:true};
     }
 
     update(){
-        if (!this.isUpdating) return;
+        
+        if (!this.isUpdating) {
+            // console.log(this.linked);
+            return this.linked;
+        }
         this.moveToTarget();
+        return -1;
+    }
+    setLink(i){
+        this.linked = i;
+    }
+
+    setTxt(txt){
+        this.text = txt;
     }
 
     delete(){
