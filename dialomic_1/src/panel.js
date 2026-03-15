@@ -25,7 +25,7 @@ export class ThreeScene {
         let r = Math.floor(Math.random() * 255);
         let color = new THREE.Color("hsl("+r+", 100%, 50%)");
         r = Math.floor(Math.random() * 255);
-        let bg = new THREE.Color("hsl("+r+", 100%, 50%)");
+        let bg = new THREE.Color("hsl("+r+", 100%, 80%)");
         scene.background = bg
         let renderer = new THREE.WebGLRenderer({ canvas: canvas});
         this.renderer = renderer;
@@ -121,6 +121,8 @@ export class ThreeScene {
         renderer.setAnimationLoop(this.animate);
     }
 
+
+
     animate() {
         
         for (const model of this.models) {
@@ -141,7 +143,11 @@ export class ThreeScene {
 
     }
 
-    addModel(file){
+    addModel(obj){
+        let file = obj.model;
+        let pos = obj.pos;
+        let scale = obj.size;
+        console.log(pos);
         // file is string name of animal that we add .glb to the end of
         let filename = '/src/assets/animals/'+file+'.glb';
         console.log(filename);
@@ -151,7 +157,8 @@ export class ThreeScene {
         loader.load( filename, function ( gltf ) {
             let model = gltf.scene;
             scene.add( model );
-            model.scale.set(2, 2, 2);
+            model.scale.set(scale,scale,scale);
+            model.position.set(...pos);
             models.push(model);
 
         }, undefined, function ( error ) {
@@ -164,7 +171,7 @@ export class ThreeScene {
 }
 
 export class Panel {
-    constructor(curr, target, id, text, linked) {
+    constructor(curr, target, id, text, linked, scene) {
         console.log("make panel");
         // let curr = {left: left, top: top, width: width, height: height};
         // let target = {left: left, top: top, width: width, height: height};
@@ -197,9 +204,20 @@ export class Panel {
         this.textEl.textContent = this.text || '';
         document.body.appendChild(this.textEl);
         
-        this.three = new ThreeScene(curr.width, curr.height, this.canvas);
-        this.three.addModel('rat');
         
+        // this.three.addModel('rat');
+        this.makeScene(scene);
+        
+    }
+
+    makeScene(scene){
+        this.three = new ThreeScene(this.data.width, this.data.height, this.canvas);
+        let objs = scene.objs;
+        for (const obj of objs){
+            if (obj){
+                this.three.addModel(obj)
+            }
+        }
     }
     
     getData() {

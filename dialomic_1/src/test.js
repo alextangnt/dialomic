@@ -113,9 +113,10 @@ class LayoutUI {
     onKeyDown(event) {
         if (event.key === 'r' && loaded) {
             iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, window.location.origin);
-            // for (let panel in this.panels){
-            //     this.panels[panel].delete();
-            // }
+            for (let panel in this.panels){
+                this.panels[panel].delete();
+            }
+            this.panels = []
         }
     }
 
@@ -167,9 +168,12 @@ class LayoutUI {
         let name = this.psgName;
         let data = {left: 0, top: this.h, width: 360, height: 150};
         let target = {left: 0, top: this.h / 4, width: this.w, height: 300};
+        let vars = iframe.contentWindow.SugarCube.State.variables;
+        let scene = vars.DL_currScene;
+        console.log(scene);
 
         if (!this.panels[name]) {
-            let p = new Panel(data, target, name, this.txt, -1);
+            let p = new Panel(data, target, name, this.txt, -1, scene);
             this.panels[name] = p;
             this.currPanel = p;
             this.panelsOnscreen[name] = p;
@@ -195,9 +199,9 @@ class LayoutUI {
         let name = this.psgName + choice;
         let data = {left: 0, top: this.h, width: 100, height: 100};
         target = {left: this.w * 3 / 4, top: this.h / 3, width: 200, height: 200};
-
+        let scene = vars.DL_currScene;
         if (!this.panels[name]) {
-            let p = new Panel(data, target, name, choice, i);
+            let p = new Panel(data, target, name, choice, i,scene);
             this.panels[name] = p;
             this.currPanel = p;
             this.panelsOnscreen[name] = p;
