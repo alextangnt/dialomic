@@ -139,7 +139,7 @@ export class ThreeScene {
     }
 
     parseModelInfo(info){
-        console.log(info);
+        // console.log(info);
         let specs = info.split(" ");
         let file = specs[0].toLowerCase();
         // file is string name of animal that we add .glb to the end of
@@ -166,9 +166,9 @@ export class ThreeScene {
 
     addModel(obj){
         let {filename, dist, distName, locKey} = this.parseModelInfo(obj);
-        console.log(filename);
-        console.log(dist);
-        console.log(locKey);
+        // console.log(filename);
+        // console.log(dist);
+        // console.log(locKey);
         // let file = obj.model;
         // let pos = obj.position;
         // let scale = obj.scale;

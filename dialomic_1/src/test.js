@@ -108,6 +108,7 @@ class LayoutUI {
         this.w = window.innerWidth;
         this.h = window.innerHeight;
         this.updateLinkLayout();
+        this.updatePanelLayoutImmediate();
     }
 
     onKeyDown(event) {
@@ -170,10 +171,11 @@ class LayoutUI {
         let target = {left: 0, top: this.h / 4, width: this.w, height: 300};
         let vars = iframe.contentWindow.SugarCube.State.variables;
         let scene = vars.DL_currScene;
-        console.log(scene);
+        // console.log(scene);
 
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, this.txt, -1, scene);
+            p.panelSize = 'large';
             this.panels[name] = p;
             this.currPanel = p;
             this.panelsOnscreen[name] = p;
@@ -184,6 +186,7 @@ class LayoutUI {
             p.setCurr(data);
             p.setTarget(target);
             p.setTxt(this.txt);
+            p.panelSize = 'large';
             this.panelsOnscreen[name] = p;
         }
     }
@@ -199,9 +202,13 @@ class LayoutUI {
         let name = this.psgName + choice;
         let data = {left: 0, top: this.h, width: 100, height: 100};
         target = {left: this.w * 3 / 4, top: this.h / 3, width: 200, height: 200};
+        vars = iframe.contentWindow.SugarCube.State.variables;
         let scene = vars.DL_currScene;
+        console.log("makeresponese make response");
+        console.log(vars);
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, choice, i,scene);
+            p.panelSize = 'small';
             this.panels[name] = p;
             this.currPanel = p;
             this.panelsOnscreen[name] = p;
@@ -211,12 +218,13 @@ class LayoutUI {
             this.currPanel = p;
             p.setCurr(data);
             p.setTarget(target);
+            p.panelSize = 'small';
             this.panelsOnscreen[name] = p;
         }
     }
 
     clickLink(i){
-        console.log("click link " + i);
+
         this.psgName = this.links[i];
         this.clicked = i;
         if (loaded) {
@@ -240,5 +248,47 @@ class LayoutUI {
             }
         }
         requestAnimationFrame(this.tick);
+    }
+
+    updatePanelLayoutImmediate() {
+        const panels = Object.values(this.panelsOnscreen);
+        const largePanels = panels.filter((p) => p.panelSize !== 'small');
+        const smallPanels = panels.filter((p) => p.panelSize === 'small');
+
+        const largeTop = this.h * 0.1;
+        const largeBottom = this.h * 0.6;
+        const largeSpan = Math.max(0, largeBottom - largeTop);
+        const largeStep = largePanels.length ? largeSpan / (largePanels.length + 1) : 0;
+
+        const smallTop = this.h * 0.2;
+        const smallBottom = this.h * 0.9;
+        const smallSpan = Math.max(0, smallBottom - smallTop);
+        const smallStep = smallPanels.length ? smallSpan / (smallPanels.length + 1) : 0;
+
+        for (let i = 0; i < largePanels.length; i++) {
+            const p = largePanels[i];
+            const left = Math.max(0, p.data.left);
+            const width = Math.max(50, this.w - left);
+            const height = p.data.height;
+            const top = largeTop + largeStep * (i + 1) - height / 2;
+            const target = {left, top, width, height};
+            p.setCurr(target);
+            p.target = target;
+            p.movingToTarget = {left:false, top:false, width:false, height:false};
+            p.isUpdating = false;
+        }
+
+        for (let i = 0; i < smallPanels.length; i++) {
+            const p = smallPanels[i];
+            const width = p.data.width;
+            const height = p.data.height;
+            const left = this.w - width;
+            const top = smallTop + smallStep * (i + 1) - height / 2;
+            const target = {left, top, width, height};
+            p.setCurr(target);
+            p.target = target;
+            p.movingToTarget = {left:false, top:false, width:false, height:false};
+            p.isUpdating = false;
+        }
     }
 }
