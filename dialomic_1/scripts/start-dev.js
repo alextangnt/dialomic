@@ -5,14 +5,20 @@ const { spawnSync, spawn } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
 const src = path.join(root, 'public', 'story.html');
-const out = path.join(root, 'public', 'story.with-messaging.html');
+const out = path.join(root, 'public', 'debug_story.with-messaging.html');
 const addScript = path.join(__dirname, 'add-messaging-script.js');
+const debug =
+  process.env.DEBUG_STORY === '1' ||
+  process.env.DEBUG_STORY === 'true' ||
+  process.env.DEBUG_STORY === 'TRUE';
 
-const addResult = spawnSync(process.execPath, [addScript, src, out], {
-  stdio: 'inherit',
-});
-if (addResult.status !== 0) {
-  process.exit(addResult.status || 1);
+if (!debug) {
+  const addResult = spawnSync(process.execPath, [addScript, src, out], {
+    stdio: 'inherit',
+  });
+  if (addResult.status !== 0) {
+    process.exit(addResult.status || 1);
+  }
 }
 
 const viteBin = path.join(
@@ -23,12 +29,12 @@ const viteBin = path.join(
 );
 
 function cleanup() {
-  if (fs.existsSync(out)) {
-    try {
-      fs.unlinkSync(out);
-    } catch (err) {
-      console.error(`Failed to remove ${out}: ${err.message}`);
-    }
+  if (debug) return;
+  if (!fs.existsSync(out)) return;
+  try {
+    fs.unlinkSync(out);
+  } catch (err) {
+    console.error(`Failed to remove ${out}: ${err.message}`);
   }
 }
 

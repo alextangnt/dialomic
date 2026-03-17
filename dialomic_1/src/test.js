@@ -111,7 +111,7 @@ class LayoutUI {
     }
 
     onKeyDown(event) {
-        if (event.key === 'r' && loaded) {
+        if (event.key === 'r' || event.key === 'R' && loaded) {
             iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, window.location.origin);
             for (let panel in this.panels){
                 this.panels[panel].delete();

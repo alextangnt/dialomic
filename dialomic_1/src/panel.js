@@ -14,11 +14,42 @@ function lerp(start, stop, t) {
     return start + (stop - start) * t;
 }
 
+
+const locsIdx = ["FARLEFT","LEFT","CENTER","RIGHT","FARRIGHT"];
+const locations = {
+    "FARLEFT": 0,
+    "LEFT": 1,
+    "CENTER": 2,
+    "RIGHT": 3,
+    "FARRIGHT": 4
+}
+const distIdx = ["VERYNEAR","NEAR","MID","FAR","VERYFAR"];
+const distances = {
+    "VERYNEAR":5.5,
+    "NEAR":4,
+    "MID":2,
+    "FAR":-2,
+    "VERYFAR":-9
+}
+const facingIdx = ["LOOKLEFT","LOOKFRONT","LOOKRIGHT","LOOKBACK"];
+const facings = {
+    "LOOKLEFT": -Math.PI/2,
+    "LOOKFRONT": 0,
+    "LOOKRIGHT": Math.PI/2,
+    "LOOKBACK": Math.PI
+}
+
 export class ThreeScene {
+    
     constructor (width,height,canvas) {
 
         
-        let camera = new THREE.PerspectiveCamera( 75, width / height, 0.1, 1000 );
+        let camera = new THREE.PerspectiveCamera( 25, width / height, 0.1, 500 );
+        camera.position.set(0,0.8,9);
+        camera.lookAt(0,2,-80);
+
+
+
         this.camera = camera;
         let scene = new THREE.Scene();
         this.scene = scene;
@@ -29,6 +60,7 @@ export class ThreeScene {
         scene.background = bg
         let renderer = new THREE.WebGLRenderer({ canvas: canvas});
         this.renderer = renderer;
+        renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize( width, height );
 
         
@@ -64,57 +96,20 @@ export class ThreeScene {
 
         let models = []
         this.models = models;
-
-        // let model;
-        // loader.load( '/src/assets/animals/rat.glb', function ( gltf ) {
-        //     model = gltf.scene;
-        //     scene.add( gltf.scene );
-        //     model.scale.set(3, 3, 3);
-
-
-        // }, undefined, function ( error ) {
-
-        //     console.error( error );
-
-        // } );
-
-        // let model2;
-        // loader.load( '/src/assets/animals/cow.glb', function ( gltf ) {
-        //     model2 = gltf.scene;
-        //     scene.add( gltf.scene );
-        //     model2.scale.set(3, 3, 3);
-
-
-        // }, undefined, function ( error ) {
-
-        //     console.error( error );
-
-        // } );
-        camera.position.z = 5;
-
-        let controls = new OrbitControls( camera, renderer.domElement );
-        this.controls = controls;
-        controls.update();
-        
-
+        const size = 10;
+        const divisions = 10;
+        const gridHelper = new THREE.GridHelper( size, divisions );
+        scene.add( gridHelper );
+        objects.push(gridHelper);
 
         
 
-        // this.animate = function () {
-        //     let model;
-        //     controls.update();
-        //     console.log(models)
-        //     for (let model in models){
-        //         if (model) {
-                    
-        //             model.rotation.x += 0.01;
-        //             model.rotation.y += 0.01;
-        //         }
-        //     }
+        // let controls = new OrbitControls( camera, renderer.domElement );
+        // this.controls = controls;
+        // controls.update();
+        
 
-        //     renderer.render( scene, camera );
-        // };
-        // this.addModel("cow");
+
 
 
         this.animate = this.animate.bind(this);
@@ -124,14 +119,14 @@ export class ThreeScene {
 
 
     animate() {
-        
+        // console.log(this.camera.position);
         for (const model of this.models) {
             // if (model) {
             //     model.rotation.x += 0.01;
             //     model.rotation.y += 0.01;
             // }
         }
-        this.controls.update();
+        // this.controls.update();
         this.renderer.render( this.scene, this.camera );
         
     }
@@ -143,22 +138,65 @@ export class ThreeScene {
 
     }
 
-    addModel(obj){
-        let file = obj.model;
-        let pos = obj.pos;
-        let scale = obj.size;
-        console.log(pos);
+    parseModelInfo(info){
+        console.log(info);
+        let specs = info.split(" ");
+        let file = specs[0].toLowerCase();
         // file is string name of animal that we add .glb to the end of
         let filename = '/src/assets/animals/'+file+'.glb';
+        let dist;
+        let distName;
+        let locKey = "CENTER";
+
+
+        for (const spec of specs){
+            let s = spec.toUpperCase();
+            
+            if (distances[s]!== undefined){
+                dist = distances[s];
+                distName = s;
+            }
+            else if (locations[s]!== undefined){
+                locKey = s;
+            }
+        }
+        return {filename, dist, distName, locKey};
+        
+    }
+
+    addModel(obj){
+        let {filename, dist, distName, locKey} = this.parseModelInfo(obj);
         console.log(filename);
+        console.log(dist);
+        console.log(locKey);
+        // let file = obj.model;
+        // let pos = obj.position;
+        // let scale = obj.scale;
+        // let rotation = obj.rotation;
+        // if (rotation) {
+        //     rotation.forEach((v,i) => rotation[i] = v*Math.PI/4);
+        //     console.log(rotation);
+        // }
+    
+        // let filename = '/src/assets/animals/'+file+'.glb';
+        // console.log(filename);
         let loader = this.loader;
         let scene = this.scene;
         let models = this.models;
-        loader.load( filename, function ( gltf ) {
+        loader.load( filename, ( gltf ) => {
             let model = gltf.scene;
             scene.add( model );
-            model.scale.set(scale,scale,scale);
-            model.position.set(...pos);
+            model.scale.set(1,1,1);
+                
+            const xPos = this.getScreenXForLocation(locKey, distName);
+            if (typeof dist === 'number') {
+                const alignedX = this.screenXToWorldX(model, xPos, dist);
+                if (typeof alignedX === 'number') {
+                    model.position.x = alignedX;
+                }
+                model.position.y = 0;
+                model.position.z = dist;
+            }
             models.push(model);
 
         }, undefined, function ( error ) {
@@ -166,6 +204,42 @@ export class ThreeScene {
             console.error( error );
 
         } );
+    }
+
+    screenXToWorldX(object, screenX, depthZ) {
+        if (!object || typeof screenX !== 'number' || typeof depthZ !== 'number') return;
+        const canvas = this.renderer.domElement;
+        const width = canvas.clientWidth || canvas.width;
+        const height = canvas.clientHeight || canvas.height;
+        if (!width || !height) return;
+
+        const ndcX = (screenX / width) * 2 - 1;
+        const projected = object.position.clone().project(this.camera);
+        const ndcY = projected.y;
+
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+
+        const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -depthZ);
+        const hit = new THREE.Vector3();
+        if (raycaster.ray.intersectPlane(plane, hit)) {
+            return hit.x;
+        }
+    }
+
+    getScreenXForLocation(locKey, distName) {
+        const canvas = this.renderer.domElement;
+        const width = canvas.clientWidth || canvas.width;
+        if (!width) return 0;
+
+        const slots = locsIdx.length;
+        const paddingRatio = 0.12;
+        const padding = width * paddingRatio;
+        const usable = Math.max(0, width - padding * 2);
+        const step = slots > 1 ? usable / (slots - 1) : 0;
+        const idx = locations[locKey] ?? locations.CENTER;
+
+        return padding + step * idx;
     }
 
 }
