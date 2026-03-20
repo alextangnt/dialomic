@@ -140,19 +140,18 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     "RAT VERYNEAR CENTER LOOKLEFT",
     "RAT VERYNEAR RIGHT LOOKLEFT",
     "RAT VERYNEAR FARRIGHT LOOKLEFT"
-],
-  bg: (200,255,255)
+]
 }&gt;&gt;
-There is a rat and a cow in this scene
+Here is a grid of all the places you can put a rat
 %%%
-[[Add another rat.][$scene = [$cat]]]
+[[Show a scene with two rats and a cow.|Add another rat.][$scene = [$cat]]]
 </tw-passagedata><tw-passagedata pid="2" name="Add another rat." tags="" position="400,350" size="100,100">&lt;&lt;set $DL_currScene = {
   objs: [$rat1,$rat2,$cow],
 }&gt;&gt;\
-Another rat has been added to the scene.
+Here's that.
 %%%
-[[Now add a cat.]]
-[[Now add a deer.]]
+[[Show a cat|Now add a cat.]]
+[[Show a deer|Now add a deer.]]
 </tw-passagedata><tw-passagedata pid="3" name="Goodbye" tags="" position="1025,650" size="100,100">Bye! You have $&lt;&lt;print $test&gt;&gt;.
 %%%
 &lt;&lt;return&gt;&gt;</tw-passagedata><tw-passagedata pid="4" name="No it&#39;s not." tags="" position="950,350" size="100,100">&lt;&lt;set $test -=1&gt;&gt;\
@@ -174,6 +173,7 @@ Wonderful. You have $&lt;&lt;print $test&gt;&gt;.
   objs: [$cat],
 }&gt;&gt;\
 Cat has been added.
+%%%
 [[Go back to the start|start]]</tw-passagedata><tw-passagedata pid="9" name="Now add a deer." tags="" position="625,675" size="100,100">&lt;&lt;set $DL_currScene = {
   objs: [$deer],
 }&gt;&gt;\

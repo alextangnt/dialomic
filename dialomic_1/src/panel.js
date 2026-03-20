@@ -147,6 +147,7 @@ export class ThreeScene {
         let dist;
         let distName;
         let locKey = "CENTER";
+        let angle;
 
 
         for (const spec of specs){
@@ -156,16 +157,19 @@ export class ThreeScene {
                 dist = distances[s];
                 distName = s;
             }
+            else if (facings[s]!== undefined){
+                angle = facings[s];
+            }
             else if (locations[s]!== undefined){
                 locKey = s;
             }
         }
-        return {filename, dist, distName, locKey};
+        return {filename, dist, distName, locKey, angle};
         
     }
 
     addModel(obj){
-        let {filename, dist, distName, locKey} = this.parseModelInfo(obj);
+        let {filename, dist, distName, locKey, angle} = this.parseModelInfo(obj);
         // console.log(filename);
         // console.log(dist);
         // console.log(locKey);
@@ -196,6 +200,7 @@ export class ThreeScene {
                 }
                 model.position.y = 0;
                 model.position.z = dist;
+                model.rotation.set(0,angle,0);
             }
             models.push(model);
 
