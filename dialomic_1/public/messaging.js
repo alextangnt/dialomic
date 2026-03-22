@@ -5,6 +5,7 @@ let linksText = [];
 let started = false;
 let p5Origin = "";
 let firstPassageSent = false;
+let sessionId = null;
 
 function preserveWhitespaceInNode(root) {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
@@ -32,14 +33,14 @@ window.onload = () =>{
         /* Log details about the current moment. */
         psgName = ev.passage.name;
         // console.group('Details about the current moment');
-        console.log('buffer:', ev.detail);
+        // console.log('buffer:', ev.detail);
 
         // console.groupEnd();
         
         const content = ev.detail.content.cloneNode(true);
         preserveWhitespaceInNode(content);
         psg = content.innerHTML;
-        console.log(psg);
+        // console.log(psg);
         allLinks = document.querySelectorAll('a.link-internal');
         // console.log("links: ",allLinks);
         linksText = [];
@@ -52,14 +53,15 @@ window.onload = () =>{
         // console.log("linksText: ",linksText);
         let psgInfo = {psgName: psgName, passage: psg, links: linksText};
 
+        const targetOrigin = window.location.origin === "null" ? "*" : window.location.origin;
         if (!started){
             console.log("SugarCube is ready!");
-            parent.postMessage({ type: "init", info: psgInfo}, window.location.origin);
+            parent.postMessage({ type: "init", info: psgInfo, sessionId }, targetOrigin);
             started = true;
         }
         else
             console.log("Sending passage back!");
-            parent.postMessage({ type: "passage", info: psgInfo}, window.location.origin);
+            parent.postMessage({ type: "passage", info: psgInfo, sessionId }, targetOrigin);
     });
 
 
@@ -104,6 +106,7 @@ window.onload = () =>{
         if (event.data.type === "ping") {
             event.source.postMessage({ type: "pong", status: "ready" }, event.origin);
             p5Origin = event.origin;
+            sessionId = event.data.sessionId || null;
         }
 
         if (event.data.type === "start") {
@@ -113,10 +116,11 @@ window.onload = () =>{
         }
         if (event.data.type === "play") {
             SugarCube.Engine.play(passage);
-            console.log(SugarCube.State.variables);
+            // console.log(SugarCube.State.variables);
         }
         if (event.data.type === "click"){
-            console.log(allLinks[clicked]);
+            if (sessionId && event.data.sessionId && event.data.sessionId !== sessionId) return;
+            // console.log(allLinks);
             allLinks[clicked].click();
         }
 

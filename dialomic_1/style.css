@@ -48,11 +48,38 @@ canvas {
     line-height: inherit;
     padding: 0 4px;
     text-align: left;
+    white-space: nowrap;
+    position: relative;
+    align-self: flex-start;
+}
+
+#link-list .link-button::after {
+    content: "←";
+    margin-left: 6px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+#link-list .link-button:hover::after {
+    opacity: 1;
+}
+
+#link-list .link-button:hover {
+    padding-right: 22px;
 }
 
 .panel-text {
     position: absolute;
     z-index: 30;
+    color: #000;
+    font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    pointer-events: none;
+    white-space: pre-wrap;
+}
+
+.panel-narration {
+    position: absolute;
+    z-index: 40;
     color: #000;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     pointer-events: none;
@@ -66,6 +93,53 @@ iframe {
     left: 0;
 	z-index: 3;
     overflow: hidden;
+}
+
+#topbar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    background: #000;
+    color: #fff;
+    padding: 8px 12px;
+    pointer-events: auto;
+    font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    font-size: 12px;
+    box-sizing: border-box;
+}
+
+#storyControls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+#storyControls input[type="file"] {
+    color: #fff;
+    font-size: 12px;
+}
+
+#storyControls button {
+    background: #35a;
+    border: 1px solid #57c;
+    color: #fff;
+    padding: 2px 8px;
+    font-size: 12px;
+}
+
+#storyStatus {
+    font-weight: 600;
+}
+
+#fileStatus {
+    opacity: 0.8;
+    font-size: 11px;
 }
 
 @font-face {

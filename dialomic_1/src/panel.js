@@ -38,6 +38,7 @@ const facings = {
     "LOOKRIGHT": Math.PI/2,
     "LOOKBACK": Math.PI
 }
+const frames = 10;
 
 export class ThreeScene {
     
@@ -250,7 +251,7 @@ export class ThreeScene {
 }
 
 export class Panel {
-    constructor(curr, target, id, text, linked, scene) {
+    constructor(curr, target, id, text, linked, scene, textType = 'narration', topInset = 0) {
         console.log("make panel");
         // let curr = {left: left, top: top, width: width, height: height};
         // let target = {left: left, top: top, width: width, height: height};
@@ -258,6 +259,8 @@ export class Panel {
         this.target = target;
         this.id = id;
         this.text = text;
+        this.textType = textType;
+        this.topInset = topInset;
         this.isUpdating = true;
         this.movingToTarget = {left:true, top:true, width:true, height:true};
         this.linked = linked;
@@ -280,15 +283,25 @@ export class Panel {
         this.textEl.style.top = `${curr.top}px`;
         this.textEl.style.width = `${curr.width}px`;
         this.textEl.style.height = `${curr.height}px`;
-        this.textEl.style.fontSize = `${curr.width / 30}px`;
-        this.textEl.style.lineHeight = `${curr.width / 30}px`;
+        this.textEl.style.fontSize = '16.8px';
+        this.textEl.style.lineHeight = '20.16px';
         this.textEl.innerHTML = this.text || '';
         document.body.appendChild(this.textEl);
+        this.narrationEl = document.createElement('div');
+        this.narrationEl.className = 'panel-narration';
+        this.narrationEl.style.left = `${curr.left}px`;
+        this.narrationEl.style.top = `${curr.top}px`;
+        this.narrationEl.style.width = `${window.innerWidth}px`;
+        this.narrationEl.style.fontSize = '16.8px';
+        this.narrationEl.style.lineHeight = '20.16px';
+        this.narrationEl.innerHTML = this.text || '';
+        document.body.appendChild(this.narrationEl);
         this.baseSize = {width: curr.width, height: curr.height};
-        const computed = getComputedStyle(this.textEl);
-        this.baseFontSize = parseFloat(computed.fontSize) || 16;
-        const lh = parseFloat(computed.lineHeight);
-        this.baseLineHeight = Number.isFinite(lh) ? lh : this.baseFontSize * 1.2;
+        this.baseFontSize = 16.8;
+        this.baseLineHeight = 20.16;
+        this.narrationData = {left: curr.left, top: curr.top};
+        this.narrationTarget = {left: curr.left, top: curr.top};
+        this.updateTextMode();
         
         
         // this.three.addModel('rat');
@@ -319,10 +332,18 @@ export class Panel {
         this.canvas.style.height = `${height}px`;
         this.textEl.style.width = `${width}px`;
         this.textEl.style.height = `${height}px`;
+        this.narrationEl.style.width = `${window.innerWidth}px`;
         if (scaleText) {
             const scale = width / this.baseSize.width;
             this.textEl.style.fontSize = `${this.baseFontSize * scale}px`;
             this.textEl.style.lineHeight = `${this.baseLineHeight * scale}px`;
+            this.narrationEl.style.fontSize = `${this.baseFontSize}px`;
+            this.narrationEl.style.lineHeight = `${this.baseLineHeight}px`;
+        } else {
+            this.textEl.style.fontSize = `${this.baseFontSize}px`;
+            this.textEl.style.lineHeight = `${this.baseLineHeight}px`;
+            this.narrationEl.style.fontSize = `${this.baseFontSize}px`;
+            this.narrationEl.style.lineHeight = `${this.baseLineHeight}px`;
         }
         this.three.resize(width,height);
         
@@ -337,6 +358,7 @@ export class Panel {
         this.canvas.style.top = `${top}px`;
         this.textEl.style.left = `${left}px`;
         this.textEl.style.top = `${top}px`;
+        this.updateNarrationTarget();
     }
 
     setCurr(data, scaleText = true){
@@ -347,13 +369,15 @@ export class Panel {
     
     setTarget(data){
         this.target = data;
+        this.updateNarrationTarget();
         this.startUpdates();
     }
 
 
     moveToTarget(){
         
-        let rate = 0.2
+        
+        let rate = 1 - Math.pow(0.1, 1 / frames);
         let c = this.data;
         let t = this.target;
 
@@ -372,6 +396,15 @@ export class Panel {
             this.move(c.left,lerp(c.top,t.top,rate));
             if (Math.abs(c.top-t.top)<1) this.movingToTarget.top = false;
         }
+        if (this.textType === 'narration' && this.movingToTarget.top) {
+            const rect = this.narrationEl.getBoundingClientRect();
+            // const top = Math.max(this.topInset || 0, c.top - rect.height);
+            const top = c.top - rect.height
+            this.narrationEl.style.left = `${c.left}px`;
+            this.narrationEl.style.top = `${top}px`;
+            this.narrationData.left = c.left;
+            this.narrationData.top = top;
+        }
         if (this.movingToTarget.width){
             this.resize(lerp(c.width,t.width,rate), c.height);
             if (Math.abs(c.width-t.width)<1) this.movingToTarget.width = false;
@@ -380,7 +413,7 @@ export class Panel {
             this.resize(c.width,lerp(c.height,t.height,rate));
             if (Math.abs(c.height-t.height)<1) this.movingToTarget.height = false;
         }
-        
+
         if (!this.movingToTarget.width && !this.movingToTarget.height && !this.movingToTarget.top && !this.movingToTarget.left) {
             console.log(this.id + " is done updating");
             this.isUpdating = false;
@@ -391,6 +424,7 @@ export class Panel {
             this.isUpdating = false;
             this.onScreen = false;
             this.textEl.style.display = 'none';
+            this.narrationEl.style.display = 'none';
             this.stopUpdates();
             return;
         }
@@ -405,7 +439,7 @@ export class Panel {
     startUpdates(){
         this.onScreen = true;
         this.isUpdating = true;
-        this.textEl.style.display = 'block';
+        this.updateTextMode();
         this.three.renderer.setAnimationLoop(this.three.animate);
         this.movingToTarget = {left:true, top:true, width:true, height:true};
     }
@@ -426,12 +460,14 @@ export class Panel {
     setTxt(txt){
         this.text = txt;
         this.textEl.innerHTML = txt || '';
+        this.narrationEl.innerHTML = txt || '';
     }
 
     delete(){
         //idk if this works
         this.canvas.remove();
         this.textEl.remove();
+        this.narrationEl.remove();
         this.three.renderer.dispose();
         for (let obj in this.three.objects){
             if (!obj.isMesh) return;
@@ -446,4 +482,33 @@ export class Panel {
 
     
     
+    updateTextMode(){
+        if (this.textType === 'dialogue') {
+            this.textEl.style.display = 'block';
+            this.narrationEl.style.display = 'none';
+        } else {
+            this.textEl.style.display = 'none';
+            this.narrationEl.style.display = 'block';
+        }
+    }
+
+    updateNarrationTarget(){
+        if (this.textType !== 'narration') return;
+        const rect = this.narrationEl.getBoundingClientRect();
+        const targetTop = Math.max(this.topInset || 0, this.target.top - rect.height);
+        this.narrationTarget.left = this.target.left;
+        this.narrationTarget.top = targetTop;
+        if (this.narrationData.left === this.data.left && this.narrationData.top === this.data.top) {
+            this.narrationData.left = this.target.left;
+            this.narrationData.top = this.target.top + 40;
+        }
+        this.narrationEl.style.left = `${this.narrationData.left}px`;
+        this.narrationEl.style.top = `${this.narrationData.top}px`;
+    }
+
+    setTopInset(inset){
+        this.topInset = inset || 0;
+        this.updateNarrationTarget();
+    }
+
 }

@@ -9,19 +9,19 @@ const debug =
   process.env.DEBUG_STORY === '1' ||
   process.env.DEBUG_STORY === 'true' ||
   process.env.DEBUG_STORY === 'TRUE';
-const useStoryHtml =
-  process.env.USE_STORY_HTML === '1' ||
-  process.env.USE_STORY_HTML === 'true' ||
-  process.env.USE_STORY_HTML === 'TRUE';
+const useTwee =
+  process.env.USE_TWEE === '1' ||
+  process.env.USE_TWEE === 'true' ||
+  process.env.USE_TWEE === 'TRUE';
 
 const tweeSrc = path.join(root, 'public', 'TweeStory.twee');
 const storySrc = path.join(root, 'public', 'story.html');
 const debugSrc = path.join(root, 'public', 'debug_story.with-messaging.html');
-const out = path.join(root, 'public', 'tweestory.html');
+const out = path.join(root, 'public', 'story.with-messaging.html');
 const formatDir = path.join(root, 'formats');
 
 if (!debug) {
-  if (useStoryHtml) {
+  if (!useTwee) {
     try {
       fs.copyFileSync(storySrc, out);
     } catch (err) {
@@ -34,7 +34,7 @@ if (!debug) {
       stdio: 'inherit',
     });
     if (tweegoResult.error && tweegoResult.error.code === 'ENOENT') {
-      console.error('tweego not found in PATH; install it or set USE_STORY_HTML=1');
+      console.error('tweego not found in PATH; install it or unset USE_TWEE');
       process.exit(1);
     }
     if (tweegoResult.status !== 0) {
