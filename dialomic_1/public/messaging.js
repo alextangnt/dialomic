@@ -6,17 +6,40 @@ let started = false;
 let p5Origin = "";
 let firstPassageSent = false;
 
+function preserveWhitespaceInNode(root) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+    for (const node of textNodes) {
+        const text = node.nodeValue;
+        if (text == null || text === "") continue;
+        const lines = text.split("\n");
+        const frag = document.createDocumentFragment();
+        for (let i = 0; i < lines.length; i++) {
+            frag.appendChild(document.createTextNode(lines[i]));
+            if (i < lines.length - 1) {
+                frag.appendChild(document.createElement("br"));
+            }
+        }
+        node.parentNode.replaceChild(frag, node);
+    }
+}
+
 window.onload = () =>{
     $(document).on(':passageend', function (ev) {
         
         /* Log details about the current moment. */
         psgName = ev.passage.name;
         // console.group('Details about the current moment');
-        // console.log('buffer:', ev.detail);
+        console.log('buffer:', ev.detail);
 
         // console.groupEnd();
         
-        psg = ev.detail.content.outerText;
+        const content = ev.detail.content.cloneNode(true);
+        preserveWhitespaceInNode(content);
+        psg = content.innerHTML;
+        console.log(psg);
         allLinks = document.querySelectorAll('a.link-internal');
         // console.log("links: ",allLinks);
         linksText = [];
@@ -99,4 +122,3 @@ window.onload = () =>{
 
     });
 }
-

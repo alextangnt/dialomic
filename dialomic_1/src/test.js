@@ -62,6 +62,7 @@ function init(info){
 }
 
 function cleanText(s){
+    console.log(s);
     let i = s.indexOf("%%%");
     if (i !== -1){
         return s.substring(0, i);
@@ -122,24 +123,55 @@ class LayoutUI {
     }
 
     updateLinkLayout() {
-        this.fontSize = this.w / 30;
+        const maxFont = (this.h * 0.8) / Math.max(1, this.links.length);
+        this.fontSize = Math.min(this.w / 30, maxFont);
         this.bx = this.w / 100;
         this.bd = this.fontSize;
-        this.by = this.h - this.links.length * this.bd;
+        this.linkGap = Math.max(4, this.fontSize * 0.15);
+        const totalHeight = this.links.length * this.bd + Math.max(0, this.links.length - 1) * this.linkGap;
+        this.by = Math.max(this.h - totalHeight, this.h * 0.05);
 
         this.linksRoot.style.left = `${this.bx}px`;
         this.linksRoot.style.top = `${this.by}px`;
         this.linksRoot.style.fontSize = `${this.fontSize}px`;
         this.linksRoot.style.lineHeight = `${this.bd}px`;
+        this.linksRoot.style.gap = `${this.linkGap}px`;
+
+        const measure = document.createElement('span');
+        measure.style.position = 'absolute';
+        measure.style.visibility = 'hidden';
+        measure.style.whiteSpace = 'pre';
+        measure.style.fontFamily = '"InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+        measure.style.fontSize = `${this.fontSize}px`;
+        document.body.appendChild(measure);
+        const buttons = this.linksRoot.querySelectorAll('button.link-button');
+        for (const btn of buttons) {
+            measure.textContent = btn.textContent || '';
+            const textWidth = measure.getBoundingClientRect().width;
+            btn.style.width = `${Math.ceil(textWidth + 8)}px`;
+            btn.style.marginBottom = `${this.linkGap}px`;
+        }
+        measure.remove();
     }
 
     renderLinks() {
         this.linksRoot.innerHTML = '';
+        const measure = document.createElement('span');
+        measure.style.position = 'absolute';
+        measure.style.visibility = 'hidden';
+        measure.style.whiteSpace = 'pre';
+        measure.style.fontFamily = '"InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+        measure.style.fontSize = `${this.fontSize}px`;
+        document.body.appendChild(measure);
         for (let i = 0; i < this.links.length; i++){
             const btn = document.createElement('button');
             btn.type = 'button';
             btn.className = 'link-button';
             btn.textContent = this.links[i];
+            btn.style.marginBottom = `${this.linkGap}px`;
+            measure.textContent = this.links[i];
+            const textWidth = measure.getBoundingClientRect().width;
+            btn.style.width = `${Math.ceil(textWidth + 8)}px`;
             btn.addEventListener('click', () => {
                 if (this.pressed) return;
                 this.pressed = true;
@@ -147,6 +179,7 @@ class LayoutUI {
             });
             this.linksRoot.appendChild(btn);
         }
+        measure.remove();
         this.updateLinkLayout();
     }
 
@@ -272,7 +305,8 @@ class LayoutUI {
             const height = p.data.height;
             const top = largeTop + largeStep * (i + 1) - height / 2;
             const target = {left, top, width, height};
-            p.setCurr(target);
+            const shouldScale = p.isUpdating;
+            p.setCurr(target, shouldScale);
             p.target = target;
             p.movingToTarget = {left:false, top:false, width:false, height:false};
             p.isUpdating = false;
@@ -285,7 +319,8 @@ class LayoutUI {
             const left = this.w - width;
             const top = smallTop + smallStep * (i + 1) - height / 2;
             const target = {left, top, width, height};
-            p.setCurr(target);
+            const shouldScale = p.isUpdating;
+            p.setCurr(target, shouldScale);
             p.target = target;
             p.movingToTarget = {left:false, top:false, width:false, height:false};
             p.isUpdating = false;

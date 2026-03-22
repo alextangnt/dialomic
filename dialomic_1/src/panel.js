@@ -280,8 +280,15 @@ export class Panel {
         this.textEl.style.top = `${curr.top}px`;
         this.textEl.style.width = `${curr.width}px`;
         this.textEl.style.height = `${curr.height}px`;
-        this.textEl.textContent = this.text || '';
+        this.textEl.style.fontSize = `${curr.width / 30}px`;
+        this.textEl.style.lineHeight = `${curr.width / 30}px`;
+        this.textEl.innerHTML = this.text || '';
         document.body.appendChild(this.textEl);
+        this.baseSize = {width: curr.width, height: curr.height};
+        const computed = getComputedStyle(this.textEl);
+        this.baseFontSize = parseFloat(computed.fontSize) || 16;
+        const lh = parseFloat(computed.lineHeight);
+        this.baseLineHeight = Number.isFinite(lh) ? lh : this.baseFontSize * 1.2;
         
         
         // this.three.addModel('rat');
@@ -305,13 +312,18 @@ export class Panel {
 
     
 
-    resize(width, height) {
+    resize(width, height, scaleText = true) {
         this.data.width = width;
         this.data.height = height;
         this.canvas.style.width = `${width}px`;
         this.canvas.style.height = `${height}px`;
         this.textEl.style.width = `${width}px`;
         this.textEl.style.height = `${height}px`;
+        if (scaleText) {
+            const scale = width / this.baseSize.width;
+            this.textEl.style.fontSize = `${this.baseFontSize * scale}px`;
+            this.textEl.style.lineHeight = `${this.baseLineHeight * scale}px`;
+        }
         this.three.resize(width,height);
         
         
@@ -327,10 +339,10 @@ export class Panel {
         this.textEl.style.top = `${top}px`;
     }
 
-    setCurr(data){
+    setCurr(data, scaleText = true){
         let t = data;
         this.move(t.left,t.top);
-        this.resize(t.width,t.height);
+        this.resize(t.width,t.height, scaleText);
     }
     
     setTarget(data){
@@ -378,6 +390,7 @@ export class Panel {
             console.log("off screen")
             this.isUpdating = false;
             this.onScreen = false;
+            this.textEl.style.display = 'none';
             this.stopUpdates();
             return;
         }
@@ -392,6 +405,7 @@ export class Panel {
     startUpdates(){
         this.onScreen = true;
         this.isUpdating = true;
+        this.textEl.style.display = 'block';
         this.three.renderer.setAnimationLoop(this.three.animate);
         this.movingToTarget = {left:true, top:true, width:true, height:true};
     }
@@ -411,7 +425,7 @@ export class Panel {
 
     setTxt(txt){
         this.text = txt;
-        this.textEl.textContent = txt || '';
+        this.textEl.innerHTML = txt || '';
     }
 
     delete(){
