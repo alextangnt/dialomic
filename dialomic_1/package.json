@@ -1,6 +1,7 @@
 {
   "scripts": {
-    "dev": "node scripts/start-dev.js"
+    "dev": "node scripts/start-dev.js",
+    "build": "vite build"
   },
   "dependencies": {
     "three": "^0.181.1"

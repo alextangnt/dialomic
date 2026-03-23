@@ -9,37 +9,16 @@ const debug =
   process.env.DEBUG_STORY === '1' ||
   process.env.DEBUG_STORY === 'true' ||
   process.env.DEBUG_STORY === 'TRUE';
-const useTwee =
-  process.env.USE_TWEE === '1' ||
-  process.env.USE_TWEE === 'true' ||
-  process.env.USE_TWEE === 'TRUE';
-
-const tweeSrc = path.join(root, 'public', 'TweeStory.twee');
-const storySrc = path.join(root, 'public', 'story.html');
-const debugSrc = path.join(root, 'public', 'debug_story.with-messaging.html');
-const out = path.join(root, 'public', 'story.with-messaging.html');
-const formatDir = path.join(root, 'formats');
+const storySrc = path.join(root, 'story.html');
+const debugSrc = path.join(root, 'debug_story.with-messaging.html');
+const out = path.join(root, 'story.with-messaging.html');
 
 if (!debug) {
-  if (!useTwee) {
-    try {
-      fs.copyFileSync(storySrc, out);
-    } catch (err) {
-      console.error(`Failed to copy ${storySrc} to ${out}: ${err.message}`);
-      process.exit(1);
-    }
-  } else {
-    const tweegoArgs = [tweeSrc, '-o', out, '--format', 'sugarcube-2', '--format-dir', formatDir];
-    const tweegoResult = spawnSync('tweego', tweegoArgs, {
-      stdio: 'inherit',
-    });
-    if (tweegoResult.error && tweegoResult.error.code === 'ENOENT') {
-      console.error('tweego not found in PATH; install it or unset USE_TWEE');
-      process.exit(1);
-    }
-    if (tweegoResult.status !== 0) {
-      process.exit(tweegoResult.status || 1);
-    }
+  try {
+    fs.copyFileSync(storySrc, out);
+  } catch (err) {
+    console.error(`Failed to copy ${storySrc} to ${out}: ${err.message}`);
+    process.exit(1);
   }
 
   const addResult = spawnSync(process.execPath, [addScript, out], {
