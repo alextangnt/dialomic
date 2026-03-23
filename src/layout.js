@@ -14,7 +14,7 @@ window.onload = () =>{
     const statusEl = document.getElementById("fileStatus");
     const storyStatusEl = document.getElementById("storyStatus");
     const storyToggleBtn = document.getElementById("storyToggleBtn");
-    const defaultStoryUrl = "/story.with-messaging.html";
+    const defaultStoryUrl = "story.with-messaging.html";
     let importedHtml = null;
     let importedName = null;
     let currentMode = 'default';
