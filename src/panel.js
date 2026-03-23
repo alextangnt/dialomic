@@ -144,7 +144,8 @@ export class ThreeScene {
         let specs = info.split(" ");
         let file = specs[0].toLowerCase();
         // file is string name of animal that we add .glb to the end of
-        let filename = '/src/assets/animals/'+file+'.glb';
+        const base = import.meta.env.BASE_URL;
+        let filename = base+'animals/'+file+'.glb';
         let dist;
         let distName;
         let locKey = "CENTER";
