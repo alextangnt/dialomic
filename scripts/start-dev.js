@@ -9,9 +9,9 @@ const debug =
   process.env.DEBUG_STORY === '1' ||
   process.env.DEBUG_STORY === 'true' ||
   process.env.DEBUG_STORY === 'TRUE';
-const storySrc = path.join(root, 'story.html');
-const debugSrc = path.join(root, 'debug_story.with-messaging.html');
-const out = path.join(root, 'story.with-messaging.html');
+const storySrc = path.join(root, 'public', 'story.html');
+const debugSrc = path.join(root, 'public', 'debug_story.with-messaging.html');
+const out = path.join(root, 'public', 'story.with-messaging.html');
 
 if (!debug) {
   try {
