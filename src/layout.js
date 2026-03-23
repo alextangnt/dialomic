@@ -15,10 +15,13 @@ window.onload = () =>{
     const storyStatusEl = document.getElementById("storyStatus");
     const storyToggleBtn = document.getElementById("storyToggleBtn");
     const defaultStoryUrl = "story.with-messaging.html";
+    const refreshResets = true;
     let importedHtml = null;
     let importedName = null;
     let currentMode = 'default';
     let pendingStart = false;
+    let refreshRestarted = false;
+    let awaitingRefreshInit = false;
 
     loaded = true;
     iframe.addEventListener("load", (event) => {
@@ -51,15 +54,27 @@ window.onload = () =>{
         }
 
         if (data.type === "init") {
+            
             if (data.sessionId && data.sessionId !== activeSessionId) return;
+            if (refreshResets && currentMode === 'default' && !refreshRestarted) {
+                refreshRestarted = true;
+                awaitingRefreshInit = true;
+                const targetOrigin = iframe.getAttribute('srcdoc') ? '*' : window.location.origin;
+                iframe.contentWindow.postMessage({ type: "start" }, targetOrigin);
+                return;
+            }
+            if (awaitingRefreshInit) {
+                awaitingRefreshInit = false;
+            }
             init(data.info);
         }
 
         if (data.type === "passage") {
             if (data.sessionId && data.sessionId !== activeSessionId) return;
             console.log("passage recieved");
+            if (awaitingRefreshInit) return;
             if (!started){
-                return;
+                init(data.info);
             }
             layout.setPsgInfo(data.info);
             layout.setPanel();
