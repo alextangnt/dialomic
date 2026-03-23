@@ -202,6 +202,13 @@ class LayoutUI {
         this.uiRoot.appendChild(this.linksRoot);
         document.body.appendChild(this.uiRoot);
 
+        this.restartBtn = document.createElement('button');
+        this.restartBtn.id = 'restartBtn';
+        this.restartBtn.type = 'button';
+        this.restartBtn.textContent = 'restart';
+        this.restartBtn.addEventListener('click', () => this.restartStory());
+        document.body.appendChild(this.restartBtn);
+
         this.tick = this.tick.bind(this);
         requestAnimationFrame(this.tick);
 
@@ -229,13 +236,18 @@ class LayoutUI {
     }
 
     onKeyDown(event) {
-        if (event.key === 'r' || event.key === 'R' && loaded) {
-            iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, window.location.origin);
-            for (let panel in this.panels){
-                this.panels[panel].delete();
-            }
-            this.panels = []
+        if (event.key === 'r' || event.key === 'R') {
+            this.restartStory();
         }
+    }
+
+    restartStory() {
+        if (!loaded) return;
+        iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, window.location.origin);
+        for (let panel in this.panels){
+            this.panels[panel].delete();
+        }
+        this.panels = []
     }
 
     updateLinkLayout() {
