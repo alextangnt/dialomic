@@ -4,6 +4,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.3",
     "three": "^0.181.1"
   },
   "devDependencies": {

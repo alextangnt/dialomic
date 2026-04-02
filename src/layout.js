@@ -186,6 +186,91 @@ function cleanText(s){
     return s;
 }
 
+function stripHtml(html) {
+    if (!html) return '';
+    const el = document.createElement('div');
+    el.innerHTML = html;
+    return (el.textContent || '').replace(/\r\n/g, '\n');
+}
+
+function splitHtmlParagraphs(html) {
+    const normalized = String(html || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\n\s*\n/g, '<br>');
+    return normalized.split(/<br\s*\/?>/i);
+}
+
+function parseSpeakerBlocks(text, sceneObjects) {
+    console.log(sceneObjects);
+    const originalParas = splitHtmlParagraphs(text);
+    const cleanedParas = originalParas.map((p) => stripHtml(p));
+    const narrationParas = [];
+    const speakers = [];
+
+    for (let i = 0; i < cleanedParas.length; i++) {
+        const para = cleanedParas[i].trim();
+        if (!para) continue;
+        const firstLine = para.split('\n').find((l) => l.trim().length > 0) || '';
+        const line = firstLine.replace(/^(?:<br\s*\/?>\s*)+/gi, '').trim();
+        if (!line) continue;
+        const match = line.match(/^([^:]+)::\s*(.*)$/);
+        if (!match) {
+            narrationParas.push(originalParas[i] || '');
+            continue;
+        }
+        const speaker = match[1].trim();
+        if (!speaker || !sceneObjects || !sceneObjects[speaker]) {
+            narrationParas.push(originalParas[i] || '');
+            continue;
+        }
+        const originalPara = originalParas[i] || '';
+        const splitIdx = originalPara.indexOf('::');
+        let updatedPara = originalPara;
+        if (splitIdx >= 0) {
+            const after = originalPara.slice(splitIdx + 2);
+            updatedPara = after.replace(/^\s+/, '').replace(/^(?:<br\s*\/?>\s*)+/gi, '');
+        }
+        speakers.push({ speaker, html: updatedPara.trim() });
+    }
+
+    return {
+        speakers,
+        narrationText: narrationParas.join('\n\n'),
+    };
+}
+
+function buildSceneObjectMap(objs) {
+    if (!objs) return {};
+    if (Array.isArray(objs)) {
+        const map = {};
+        objs.forEach((obj, i) => {
+            if (typeof obj === 'string') {
+                const trimmed = obj.trim();
+                let key = '';
+                let spec = trimmed;
+                const eqIdx = trimmed.indexOf('=');
+                if (eqIdx > 0) {
+                    key = trimmed.slice(0, eqIdx).trim();
+                    spec = trimmed.slice(eqIdx + 1).trim();
+                }
+                if (key) {
+                    map[key] = spec;
+                } else {
+                    const modelKey = (trimmed.split(/\s+/)[0] || '').toLowerCase();
+                    if (modelKey) map[modelKey] = obj;
+                }
+            } else if (obj && typeof obj === 'object') {
+                const key = (obj.id || obj.name || obj.model || `obj_${i}`);
+                if (key) map[String(key)] = obj;
+            }
+            map[`obj_${i}`] = obj;
+        });
+        return map;
+    }
+    if (typeof objs === 'object') return objs;
+    return {};
+}
+
 class LayoutUI {
     constructor() {
         this.pressed = false;
@@ -262,7 +347,14 @@ class LayoutUI {
         for (let panel in this.panels){
             this.panels[panel].delete();
         }
-        this.panels = []
+        for (let panel in this.panelsOnscreen){
+            if (this.panelsOnscreen[panel] && this.panelsOnscreen[panel].delete) {
+                this.panelsOnscreen[panel].delete();
+            }
+        }
+        this.panels = {};
+        this.panelsOnscreen = {};
+        this.currPanel = null;
     }
 
     updateLinkLayout() {
@@ -345,9 +437,14 @@ class LayoutUI {
     }
 
     setPsgInfo(info) {
-        console.log("PASSAGeinfo");
+       
         this.psgName = info.psgName;
-        this.txt = cleanText(info.passage);
+        vars = iframe.contentWindow.SugarCube.State.variables;
+        console.log(vars?.DL_currScene?.objs);
+        const sceneObjects = buildSceneObjectMap(vars?.DL_currScene?.objs);
+        const parsed = parseSpeakerBlocks(cleanText(info.passage), sceneObjects);
+        this.speakers = parsed.speakers || [];
+        this.txt = parsed.narrationText || '';
         this.links = info.links || [];
         this.pressed = false;
         this.renderLinks();
@@ -365,10 +462,11 @@ class LayoutUI {
         let target = {left: 0, top: this.topInset + this.h / 4, width: this.w, height: 300};
         let vars = iframe.contentWindow.SugarCube.State.variables;
         let scene = vars.DL_currScene;
-        // console.log(scene);
+        // console.log(vars);
 
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, this.txt, -1, scene, 'narration', this.topInset);
+            if (this.speakers?.length) p.setSpeakers(this.speakers);
             p.panelSize = 'large';
             this.panels[name] = p;
             this.currPanel = p;
@@ -380,6 +478,7 @@ class LayoutUI {
             p.setCurr(data);
             p.setTarget(target);
             p.setTxt(this.txt);
+            p.setSpeakers(this.speakers || []);
             p.setTopInset(this.topInset);
             p.panelSize = 'large';
             this.panelsOnscreen[name] = p;

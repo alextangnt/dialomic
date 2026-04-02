@@ -115,36 +115,17 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
 };
 </script><tw-passagedata pid="1" name="start" tags="" position="700,300" size="100,100">&lt;&lt;set $DL_currScene = {
   objs: [
-    "RAT VERYFAR FARLEFT LOOKLEFT",
-    "RAT VERYFAR LEFT LOOKLEFT",
-    "RAT VERYFAR CENTER LOOKLEFT",
-    "RAT VERYFAR RIGHT LOOKLEFT",
-    "RAT VERYFAR FARRIGHT LOOKLEFT",
-    "RAT FAR FARLEFT LOOKLEFT",
-    "RAT FAR LEFT LOOKLEFT",
-    "RAT FAR CENTER LOOKLEFT",
-    "RAT FAR RIGHT LOOKLEFT",
-    "RAT FAR FARRIGHT LOOKLEFT",
-    "RAT MID FARLEFT LOOKLEFT",
-    "RAT MID LEFT LOOKLEFT",
-    "RAT MID CENTER LOOKLEFT",
-    "RAT MID RIGHT LOOKLEFT",
-    "RAT MID FARRIGHT LOOKLEFT",
-    "RAT NEAR FARLEFT LOOKLEFT",
-    "RAT NEAR LEFT LOOKLEFT",
+    "rat1= RAT VERYNEAR FARLEFT LOOKFRONT",
+    "rat2= RAT MID FARRIGHT LOOKFRONT",
     "RAT NEAR CENTER LOOKLEFT",
     "RAT NEAR RIGHT LOOKLEFT",
     "RAT NEAR FARRIGHT LOOKLEFT",
-    "RAT VERYNEAR FARLEFT LOOKLEFT",
-    "RAT VERYNEAR LEFT LOOKLEFT",
-    "RAT VERYNEAR CENTER LOOKLEFT",
-    "RAT VERYNEAR RIGHT LOOKLEFT",
-    "RAT VERYNEAR FARRIGHT LOOKLEFT"
+    "RAT NEAR LEFT LOOKLEFT"
 ]
 }&gt;&gt;
-Here is a grid of all the places you can put a rat. Each rat is defined with a string value that includes the specified model, depth in scene, placement in scene, and looking direction.
+rat1:: Here is a grid of all the places you can put a rat. Each rat is defined with a string value that includes the specified model, depth in scene, placement in scene, and looking direction.
 
-For example: "RAT VERYFAR LEFT LOOKLEFT." Each scene contains a list of objects, such as a rat.
+rat2:: For example: "RAT VERYFAR LEFT LOOKLEFT." Each scene contains a list of objects, such as a rat.
 
 This text is Twine narration or dialogue text of your choice combined with custom and Twine code.
 %%%
@@ -154,7 +135,7 @@ This text is Twine narration or dialogue text of your choice combined with custo
   objs: [$rat1,$rat2,$cow],
 }&gt;&gt;\
 Here's that. The scene is defined by the variable $$DL_currScene with the field $$DL_currScene.objs, an array.
-
+cow:: I'm a cow.
 This array contains 3 strings. "RAT NEAR LEFT LOOKLEFT", "RAT VERYNEAR FARLEFT LOOKRIGHT", and "COW VERYNEAR RIGHT LOOKBACK". These strings could also be stored in variables such as $$rat1, $$rat2, and $$cow, then placed in the array.
 %%%
 [[Show a cat.|Now add a cat.]]
@@ -174,8 +155,8 @@ Wonderful. You have $&lt;&lt;print $test&gt;&gt;.
 [[Goodbye]]</tw-passagedata><tw-passagedata pid="7" name="StoryInit" tags="" position="1075,425" size="100,100">
 &lt;&lt;set $rat1 = &quot;RAT NEAR LEFT LOOKLEFT&quot;&gt;&gt;
 &lt;&lt;set $rat2 = &quot;RAT VERYNEAR FARLEFT LOOKRIGHT&quot;&gt;&gt;
-&lt;&lt;set $cow = &quot;COW VERYNEAR RIGHT LOOKBACK&quot;&gt;&gt;
-&lt;&lt;set $cat = &quot;CAT FAR MID LOOKFRONT&quot;&gt;&gt;
+&lt;&lt;set $cow = &quot;cow=COW VERYNEAR RIGHT LOOKBACK&quot;&gt;&gt;
+&lt;&lt;set $cat = &quot;CAT MID FAR LOOKFRONT&quot;&gt;&gt;
 &lt;&lt;set $deer = &quot;DEER VERYFAR FARRIGHT LOOKFRONT&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="8" name="Now add a cat." tags="" position="400,575" size="100,100">&lt;&lt;set $DL_currScene = {
   objs: [$cat],
 }&gt;&gt;\

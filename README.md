@@ -50,6 +50,8 @@ Nonetheless, I added a UI bar at the top of Dialomic for users to import their o
 
 Finally, I published the file on Github pages here: https://alextangnt.github.io/dialomic/
 
+This was done with lots of help from Codex, because I had no idea how to set up a Github workflow, nor how to do Vite development with a to make a start script that will modify input files and delete them.
+
 
 ## NEXT STEPS
 
