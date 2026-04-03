@@ -41,6 +41,13 @@ function stripLeadingHtmlWhitespace(html) {
     return htmlOut;
 }
 
+function getHtmlTextLength(html) {
+    if (!html) return 0;
+    const el = document.createElement('div');
+    el.innerHTML = html;
+    return (el.textContent || '').trim().length;
+}
+
 
 const locsIdx = ["FARLEFT","LEFT","CENTER","RIGHT","FARRIGHT"];
 const locations = {
@@ -175,6 +182,17 @@ export class ThreeScene {
             maxForce: 0.06,
             minRadius: 0.05,
         };
+        this.speakerAnim = {
+            queue: [],
+            index: 0,
+            startTime: 0,
+            duration: 0,
+            active: false,
+            missingLogged: new Set(),
+            foundLogged: new Set(),
+            cyclePauseUntil: 0,
+        };
+        this.lastTime = performance.now();
         const size = 10;
         const divisions = 10;
         const gridHelper = new THREE.GridHelper( size, divisions );
@@ -198,10 +216,12 @@ export class ThreeScene {
 
 
     animate() {
-        // console.log(this.camera.position);
+        const now = performance.now();
+        this.lastTime = now;
         if (this.repulsion.enabled && this.models.length > 1) {
             this.applyRepulsion();
         }
+        this.updateSpeakerHop(now);
         // this.controls.update();
         this.renderer.render( this.scene, this.camera );
         
@@ -311,6 +331,8 @@ export class ThreeScene {
             model.userData.radius = Math.max(radius, this.repulsion.minRadius);
             model.userData.vx = 0;
             model.userData.vz = 0;
+            model.userData.baseY = model.position.y;
+            model.userData.height = box.max.y - box.min.y;
             this.maxRadius = Math.max(this.maxRadius, model.userData.radius);
 
         }, undefined, function ( error ) {
@@ -469,6 +491,81 @@ export class ThreeScene {
             m.userData.vz = (m.userData.vz || 0) * this.repulsion.damping;
             m.position.x += m.userData.vx;
             m.position.z += m.userData.vz;
+        }
+    }
+
+    setSpeakerQueue(speakers) {
+        const queue = [];
+        for (const s of speakers || []) {
+            const key = String(s.speaker || '').trim();
+            const length = getHtmlTextLength(s.html || '');
+            queue.push({ key, length });
+        }
+        this.speakerAnim.queue = queue;
+        this.speakerAnim.index = 0;
+        this.speakerAnim.startTime = 0;
+        this.speakerAnim.duration = 0;
+        this.speakerAnim.active = queue.length > 0;
+    }
+
+    updateSpeakerHop(now) {
+        const anim = this.speakerAnim;
+        if (!anim.active || anim.queue.length === 0) return;
+        if (anim.cyclePauseUntil && now < anim.cyclePauseUntil) return;
+
+        const current = anim.queue[anim.index];
+        const model = this.getModelByKey(current.key);
+        if (!model) {
+            if (this.models.length > 0 && !anim.missingLogged.has(current.key)) {
+                console.warn('[speaker hop] model not found for key:', current.key, 'available:', Array.from(this.modelByKey.keys()));
+                anim.missingLogged.add(current.key);
+            }
+            if (this.models.length > 0) {
+                anim.index = (anim.index + 1) % anim.queue.length;
+                anim.startTime = now;
+                anim.duration = 0;
+            }
+            return;
+        }
+        if (!anim.foundLogged.has(current.key)) {
+            console.log('[speaker hop] animating key:', current.key);
+            anim.foundLogged.add(current.key);
+        }
+        // console.log(model);
+        if (!model) {
+            anim.index = (anim.index + 1) % anim.queue.length;
+            anim.startTime = now;
+            anim.duration = 0;
+            return;
+        }
+
+        if (!anim.startTime) {
+            anim.startTime = now;
+            const base = 140;
+            const perChar = 10;
+            anim.duration = Math.min(2200, Math.max(500, base + current.length * perChar));
+        }
+
+        const elapsed = now - anim.startTime;
+        const t = Math.min(1, elapsed / anim.duration);
+        const hops = Math.max(2, Math.round(anim.duration / 320));
+        const phase = t * Math.PI * hops;
+        const height = model.userData.height || 1;
+        const amp = Math.max(0.15, Math.min(1.0, height * 0.1));
+        const hop = Math.abs(Math.sin(phase)) * amp;
+        const baseY = model.userData.baseY ?? model.position.y;
+        model.position.y = baseY + hop;
+        model.updateMatrixWorld(true);
+
+        if (elapsed >= anim.duration) {
+            model.position.y = baseY;
+            const nextIndex = (anim.index + 1) % anim.queue.length;
+            if (nextIndex === 0) {
+                anim.cyclePauseUntil = now + 400;
+            }
+            anim.index = nextIndex;
+            anim.startTime = 0;
+            anim.duration = 0;
         }
     }
 
@@ -674,7 +771,9 @@ export class Panel {
     stopUpdates(){
         this.isUpdating = false;
         this.movingToTarget = {left:false, top:false, width:false, height:false};
-        this.three.renderer.setAnimationLoop(null);
+        if (!this.speakers.length) {
+            this.three.renderer.setAnimationLoop(null);
+        }
     }
     startUpdates(){
         this.onScreen = true;
@@ -688,6 +787,7 @@ export class Panel {
         
         if (!this.isUpdating) {
             // console.log(this.linked);
+            this.positionSpeechBubbles();
             return this.linked;
         }
         this.moveToTarget();
@@ -704,7 +804,14 @@ export class Panel {
     }
 
     setSpeakers(speakers) {
+        console.log(speakers);
         this.speakers = Array.isArray(speakers) ? speakers : [];
+        if (this.three && this.three.setSpeakerQueue) {
+            this.three.setSpeakerQueue(this.speakers);
+        }
+        if (this.speakers.length) {
+            this.three.renderer.setAnimationLoop(this.three.animate);
+        }
         this.renderText();
     }
 
