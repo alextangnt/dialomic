@@ -1,60 +1,153 @@
-This project began because I wanted to make a storytelling tool for artists. I like comics, I like interactive media, I like games and funky little clickable tools, but I’m not very good at making games. I like picking through the capabilities of tools people give me and see how funnily I can make them spin. By making a tool *I* can use, that my friends and I can use, I’m shortcutting the “What do I use to tell my story” step that I always deliberate on.
+**Dialomic**
+Dialomic turns Twine stories into interactive webcomics with animated 3D panels, narration overlays, and speech bubbles. Authors write standard SugarCube passages and add a few formatting conventions so scenes and dialogue can be parsed automatically.
 
-![Template that translates Twine html (below) into visual “webcomic” format, generating a random three.js box per node](https://miro.medium.com/v2/resize:fit:1280/format:webp/1*jT4NkjpcLR5z5InjlLv8Mg.gif)![Running the text only Twine .html file](https://miro.medium.com/v2/resize:fit:1280/format:webp/1*VyeRhqvG0sk6zif_QAm3fQ.gif)
+**Core SugarCube Concepts**
+- SugarCube stores story state in `State.variables` (exposed as `$var` in Twine).
+- Use `<<set $var = ...>>` to define scene variables.
+- Use `[[link text|Passage Name]]` to create choices (SugarCube creates `.link-internal` anchors).
 
-When I was given access to Twine and told to make a very basic story, I read through a good deal of the Twine Harlowe (default story format) documentation and made a silly randomized project that looped on itself, rather than attempting to tell a good story. Y/N, equipped with a handy pocket-burger, climbs through an eternal construction site and talks to a randomized NPC at every level. The “game” ends when you’ve completed seven loops and have picked up a screw from the ground at every level. I was chuffed at the fact I could code a parametrized “narrative” game like that.
+References:
+- Twine: https://twinery.org/
+- SugarCube documentation: https://www.motoslave.net/sugarcube/2/
+- SugarCube macro reference: https://www.motoslave.net/sugarcube/2/docs/
 
-That’s not to say I don’t like to make good stories. When I’m not working my ass off in my CS cores, I’m usually creating original characters who have wacky stories of their own and live in wide, ironic, contradictory literary worlds that I illustrate. I just often struggle to find a suitable way to Tell these stories. Can I really draw unique cutscenes for every character? Draw every background for a visual novel?...
+**Passage Formatting**
+- Paragraphs are split on blank lines (or `<br><br>` after export), meaning each individual paragraph will be parsed for "speaker" or "narration".
+- Everything after `%%%` is ignored by the scene/narration parser (use this to separate narrative from choices if desired).
 
-There's something I really love about Twine, and that's how powerful it is, while having an extremely simple base UI. Fully text based stories. So let's start simple: my concept is to make a tool for users to create interactive webcomics.
+Example passage block:
+```twine
+<<set $DL_currScene = {
+  objs: [
+    "rat1= RAT VERYNEAR FARLEFT LOOKFRONT",
+    "rat2= RAT MID FARRIGHT LOOKFRONT",
+    "RAT NEAR CENTER LOOKLEFT"
+  ],
+  background: "bus stop"
+}>>
 
-1. I decided to just *use* Twine for narrative/dialogue flow. I want to keep the variables, scripting, conditional logic, etc, of Twine. 
-2. Then, I'll have the user be able to define simple parametrized scenes for each node within their Twine stories. Since I want to go 3D, I'll use THREE.js for this.
-3. From there, there are tons of additional features to be parametrized so that an author can control how their stories look. More scene elements. Animation. UI. You name it.
+rat1:: This is a speaker line that will become a speech bubble.
 
-## STEP 1
-### Making Twine work for me
-![Twine app GUI with examples of Twine Sugarcube formatting](https://miro.medium.com/v2/resize:fit:1400/format:webp/1*Rn53v6zbWyNyQWdVDuOqIw.png)![How it compiles into a runnable .html](https://miro.medium.com/v2/resize:fit:1400/format:webp/1*wgPxm19IpxbotVPNq_gZBA.png)![Part of messaging script I attach to that .html file. Controls clicking links, restarts, etc.](https://miro.medium.com/v2/resize:fit:1400/format:webp/1*LzKQ5Z8nhnEezGdbktk_Rg.png)![:passageend is an event that Sugarcube .html files will send out when the passage finishes loading in the iframe](https://miro.medium.com/v2/resize:fit:1400/format:webp/1*SOPT6sAeruWV1j8DzoVHyQ.png)
+This is narration (plain passage text).
+%%%
+[[Choice A|Some Passage]]
+[[Choice B|Other Passage]]
+```
 
-So now, I have code that reads from a headless Sugarcube-compiled .html file as a logic engine, and a p5js file that is sent passages. A click onto this p5js canvas simulates a click into the hidden Sugarcube iframe. It’s clean, it’s stupid, it works.
+**Speaker Syntax (Speech Bubbles)**
+- To mark a paragraph as spoken dialogue, start the paragraph with `speakerKey::`.
+- The `speakerKey` must match a scene object key (see Object Keys below).
+- Multiple speaker paragraphs are supported. Each speaker paragraph becomes its own bubble.
+- Narration is all non‑speaker paragraphs.
 
-The next step is making something that actually looks nice. I wanted users of my tool to be able to import 3D models + bgs + objects with preset poses that they could procedurally tell, within some Twine code, how to pose and frame themselves within a comic panel. How do I incorporate both 3D and 2D graphics at all? three.js!
+Example:
+```twine
+rat1:: Hello.
+rat2:: Hi.
 
-My current template generates a random cube + bg color just as a proof of concept (per panel). When you revisit a panel, it shows the same object as before.
+This is narration.
+```
 
-Next, after importing some very simple placeholder 3d models and objects and scenes, I will be integrating scene composition based on variables users set in Twine. I already can access variables as soon as they are updated per node.
+**Choices / Links**
+- Any SugarCube `[[link]]` becomes a choice button in the UI.
+- The UI uses the link’s HTML as the label (so you can include formatting in the link text).
 
-## STEP 2
-### Set the scene
+Example:
+```twine
+[[Show a deer.|Now add a deer.]]
+```
 
-While I would love for rigged models to be imported into scenes, then placed in neat environments with total control over lighting and camera and whatnot, I decided to scale down my prototype into something simple for a user to control.
+**Scene Variables (3D Models)**
+Your scene should be stored in `State.variables.DL_currScene` (i.e., `$DL_currScene` in Twine).
 
-![Array of rats! In every specified location!](documentation/rats.png)
+Minimum shape:
+```twine
+<<set $DL_currScene = { objs: ["RAT NEAR CENTER LOOKLEFT"] }>>
+```
 
-I'll be using David OReilly's everything models for now. [Animals](https://davidoreilly.itch.io/everything-library-animals)! They make great, lowpoly building blocks for simple to complex iconographic stories.
+Supported `objs` formats:
+- Array of strings.
+- Object map keyed by object id.
 
-![Examples of the positioning notation and syntax](documentation/ratsandcow.png)
+**Object Keys (For Speaker Matching)**
+If you want `speakerKey::` to target a model, the key must exist in `DL_currScene.objs`.
 
-Given just a few common animals and my positioning syntax, I imagine users will be still able to tell a wide variety of fable-like stories, along with whatever they may want to tell. For now, I hope this limitation allows users to have fun and be creative without being too nitpicky about what is shown onscreen.
+Option A (recommended): object map keyed by id
+```twine
+<<set $DL_currScene.objs = {
+  rat1: "RAT VERYNEAR FARLEFT LOOKFRONT",
+  rat2: "RAT MID FARRIGHT LOOKFRONT"
+}>>
+```
 
-### STEP 2.5
-Publishing to the web and an interface overhaul!
+Option B: array with `key=SPEC` strings
+```twine
+<<set $DL_currScene.objs = [
+  "rat1= RAT VERYNEAR FARLEFT LOOKFRONT",
+  "rat2= RAT MID FARRIGHT LOOKFRONT"
+]>>
+```
 
-![New UI. Includes restart button and a file import](documentation/ui.png)
+**Object Spec String Format**
+Each object string follows:
+```
+MODEL DISTANCE LOCATION FACING
+```
 
-This next step is about how I want to present my tool to the user. After some research and consultation from Codex, it turns out I can't compile Twine's .twee native files into Sugarcube HTML files in the browser, because [Tweego](https://www.motoslave.net/tweego/) is a CLI. This just means that the user has to import an already compiled .html file from the app, which is just an additional step. 
+Accepted tokens:
+- Distance: `VERYNEAR`, `NEAR`, `MID`, `FAR`, `VERYFAR`
+- Location: `FARLEFT`, `LEFT`, `CENTER`, `RIGHT`, `FARRIGHT`
+- Facing: `LOOKLEFT`, `LOOKFRONT`, `LOOKRIGHT`, `LOOKBACK`
 
-![Imported file working!](documentation/imported.png)
+**Accepted Model Tokens (Animals)**
+Use the model name as the first token. These map to `.glb` files in `public/animals/`:
+- `RAT` -> `public/animals/rat.glb`
+- `CAT` -> `public/animals/cat.glb`
+- `COW` -> `public/animals/cow.glb`
+- `DEER` -> `public/animals/deer.glb`
+- `ELEPHANT` -> `public/animals/elephant.glb`
+- `HARE` -> `public/animals/hare.glb`
+- `WOLF` -> `public/animals/wolf.glb`
 
-Nonetheless, I added a UI bar at the top of Dialomic for users to import their own .html stories to run instead of my default tutorialish file!
+If you add new models to `public/animals/`, just use the filename (uppercased) as the token.
 
-Finally, I published the file on Github pages here: https://alextangnt.github.io/dialomic/
+**Background Models**
+Set a background with:
+```twine
+<<set $DL_currScene.background = "bus stop">>
+```
+This loads:
+```
+public/background/bus_stop.glb
+```
+Slug rules:
+- Lowercase
+- Spaces and punctuation become `_`
 
-This was done with lots of help from Codex, because I had no idea how to set up a Github workflow, nor how to do Vite development with a to make a start script that will modify input files and delete them.
+Defaults are applied for position/scale unless you extend the code.
 
+**Twine Variables and Custom State**
+You can define reusable object specs as variables and reference them in `DL_currScene.objs`.
 
-## NEXT STEPS
+Example:
+```twine
+<<set $rat1 = "RAT VERYNEAR FARLEFT LOOKFRONT">>
+<<set $rat2 = "RAT MID FARRIGHT LOOKFRONT">>
+<<set $DL_currScene.objs = [$rat1, $rat2]>>
+```
 
-* Get some speech bubbles in there! Handle overlap and layering logic! Figure out who's saying what.
-* Import some background presets to use.
-* Procedural animation in panels?
+**Narration vs Speech Bubble Rendering**
+- Speaker paragraphs (matched with `speakerKey::`) render as speech bubbles.
+- All other paragraphs render as narration above the panel.
+- Multiple speaker paragraphs produce multiple bubbles.
+
+**Common Pitfalls**
+- If a background fails to load, check the filename and slugging (`"bus stop"` -> `bus_stop.glb`).
+- If a speaker bubble doesn’t appear, the `speakerKey` likely doesn’t match a scene object key.
+- Anything after `%%%` is ignored for narration parsing.
+
+**How It Works (Behind The Scenes)**
+- The runtime listens to SugarCube’s `:passageend` event (see `public/messaging.js`).
+- `public/messaging.js` captures passage HTML and `.link-internal` anchors, then posts them to the app.
+- `src/layout.js` parses passage HTML and SugarCube variables (`State.variables`).
+- `src/panel.js` builds the 3D scene, speech bubbles, and narration UI.

@@ -86,7 +86,15 @@ window.onload = () =>{
         for (let key in layout.panels) {
             layout.panels[key].delete();
         }
+        for (let key in layout.panelsOnscreen) {
+            if (layout.panelsOnscreen[key]?.delete) {
+                layout.panelsOnscreen[key].delete();
+            }
+        }
         layout.uiRoot?.remove();
+        layout.panels = {};
+        layout.panelsOnscreen = {};
+        layout.currPanel = null;
         layout = null;
         started = false;
     }
@@ -345,12 +353,10 @@ class LayoutUI {
         if (!loaded) return;
         iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, window.location.origin);
         for (let panel in this.panels){
-            this.panels[panel].delete();
+            if (this.panels[panel]?.delete) this.panels[panel].delete();
         }
         for (let panel in this.panelsOnscreen){
-            if (this.panelsOnscreen[panel] && this.panelsOnscreen[panel].delete) {
-                this.panelsOnscreen[panel].delete();
-            }
+            if (this.panelsOnscreen[panel]?.delete) this.panelsOnscreen[panel].delete();
         }
         this.panels = {};
         this.panelsOnscreen = {};
@@ -479,6 +485,7 @@ class LayoutUI {
             p.setTarget(target);
             p.setTxt(this.txt);
             p.setSpeakers(this.speakers || []);
+            p.setScene(scene);
             p.setTopInset(this.topInset);
             p.panelSize = 'large';
             this.panelsOnscreen[name] = p;

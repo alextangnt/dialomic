@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 
 
 export class TextBox {
@@ -46,6 +47,14 @@ function getHtmlTextLength(html) {
     const el = document.createElement('div');
     el.innerHTML = html;
     return (el.textContent || '').trim().length;
+}
+
+function slugifyAssetName(name) {
+    return String(name || '')
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
 }
 
 
@@ -193,11 +202,22 @@ export class ThreeScene {
             cyclePauseUntil: 0,
         };
         this.lastTime = performance.now();
+        this.backgroundModel = null;
+        this.backgroundToken = 0;
+        this.backgroundDefaults = {
+            scale: 2,
+            position: new THREE.Vector3(0, -0.6, 0),
+            rotation: new THREE.Euler(0, 0, 0),
+        };
         const size = 10;
         const divisions = 10;
-        const gridHelper = new THREE.GridHelper( size, divisions );
-        scene.add( gridHelper );
-        objects.push(gridHelper);
+        // const effect = new OutlineEffect( renderer );
+        // function render() {
+        //     effect.render( scene, camera );
+        // }
+        // const gridHelper = new THREE.GridHelper( size, divisions );
+        // scene.add( gridHelper );
+        // objects.push(gridHelper);
 
         
 
@@ -340,6 +360,59 @@ export class ThreeScene {
             console.error( error );
 
         } );
+    }
+
+    setBackground(backgroundSpec) {
+        if (!backgroundSpec) {
+            this.clearBackground();
+            return;
+        }
+        const name = typeof backgroundSpec === 'string'
+            ? backgroundSpec
+            : backgroundSpec.name || backgroundSpec.model || '';
+        const slug = slugifyAssetName(name);
+        if (!slug) return;
+
+        const base = import.meta.env.BASE_URL;
+        const filename = `${base}backgrounds/${slug}.glb`;
+        const token = ++this.backgroundToken;
+
+        this.clearBackground();
+
+        this.loader.load(filename, (gltf) => {
+            if (token !== this.backgroundToken) return;
+            const model = gltf.scene;
+            this.backgroundModel = model;
+            this.scene.add(model);
+
+            const scale = backgroundSpec?.scale ?? this.backgroundDefaults.scale;
+            const pos = backgroundSpec?.position ?? this.backgroundDefaults.position;
+            const rot = backgroundSpec?.rotation ?? this.backgroundDefaults.rotation;
+            model.scale.set(scale, scale, scale);
+            model.position.set(pos.x, pos.y, pos.z);
+            model.rotation.set(rot.x, rot.y, rot.z);
+        }, undefined, (error) => {
+            console.error(error);
+        });
+    }
+
+    clearBackground() {
+        if (!this.backgroundModel) return;
+        const model = this.backgroundModel;
+        this.scene.remove(model);
+        model.traverse((child) => {
+            if (child.isMesh) {
+                if (child.geometry) child.geometry.dispose();
+                if (child.material) {
+                    if (Array.isArray(child.material)) {
+                        child.material.forEach((m) => m.dispose && m.dispose());
+                    } else if (child.material.dispose) {
+                        child.material.dispose();
+                    }
+                }
+            }
+        });
+        this.backgroundModel = null;
     }
 
     getModelKey(obj) {
@@ -645,6 +718,19 @@ export class Panel {
                 this.three.addModel(obj);
             }
         }
+        if (scene?.background) {
+            this.three.setBackground(scene.background);
+        }
+    }
+
+    setScene(scene){
+        const normalized = normalizeSceneObjects(scene);
+        this.sceneObjects = normalized.byId;
+        if (scene?.background) {
+            this.three.setBackground(scene.background);
+        } else {
+            this.three.setBackground(null);
+        }
     }
     
     getData() {
@@ -903,6 +989,8 @@ export class Panel {
         const pad = 8;
         const gap = 8;
         let cursorTop = canvasRect.top + pad;
+        const occupied = [];
+        const narrationRect = this.narrationEl.getBoundingClientRect();
         for (let i = 0; i < this.speechEls.length; i++) {
             const el = this.speechEls[i];
             const rect = el.getBoundingClientRect();
@@ -922,7 +1010,35 @@ export class Panel {
                 canvasRect.left + pad,
                 Math.min(canvasRect.right - rect.width - pad, anchorX - rect.width / 2)
             );
-            const top = Math.max(canvasRect.top + pad, cursorTop);
+            let top = Math.max(canvasRect.top + pad, cursorTop);
+
+            // Try to lift bubble upwards unless it would collide.
+            let candidate = Math.max(canvasRect.top + pad, top - 24);
+            for (let tries = 0; tries < 6; tries++) {
+                const testRect = {
+                    left,
+                    top: candidate,
+                    right: left + rect.width,
+                    bottom: candidate + rect.height,
+                };
+                const overlapsNarration =
+                    testRect.right > narrationRect.left &&
+                    testRect.left < narrationRect.right &&
+                    testRect.bottom > narrationRect.top &&
+                    testRect.top < narrationRect.bottom;
+                const overlapsBubble = occupied.some((r) =>
+                    testRect.right > r.left &&
+                    testRect.left < r.right &&
+                    testRect.bottom > r.top &&
+                    testRect.top < r.bottom
+                );
+                if (!overlapsNarration && !overlapsBubble) {
+                    top = candidate;
+                    break;
+                }
+                candidate += 12;
+                if (candidate > top) break;
+            }
 
             el.style.left = `${left}px`;
             el.style.top = `${top}px`;
@@ -946,6 +1062,12 @@ export class Panel {
             }
 
             cursorTop = top + rect.height + gap;
+            occupied.push({
+                left,
+                top,
+                right: left + rect.width,
+                bottom: top + rect.height,
+            });
         }
     }
 
