@@ -1,4 +1,4 @@
-**Dialomic**
+# Dialomic
 Dialomic turns Twine stories into interactive webcomics with animated 3D panels, narration overlays, and speech bubbles. Authors write standard SugarCube passages and add a few formatting conventions so scenes and dialogue can be parsed automatically.
 
 **Core SugarCube Concepts**
@@ -11,7 +11,7 @@ References:
 - SugarCube documentation: https://www.motoslave.net/sugarcube/2/
 - SugarCube macro reference: https://www.motoslave.net/sugarcube/2/docs/
 
-**Passage Formatting**
+## Passage Formatting
 - Paragraphs are split on blank lines (or `<br><br>` after export), meaning each individual paragraph will be parsed for "speaker" or "narration".
 - Everything after `%%%` is ignored by the scene/narration parser (use this to separate narrative from choices if desired).
 
@@ -34,7 +34,7 @@ This is narration (plain passage text).
 [[Choice B|Other Passage]]
 ```
 
-**Speaker Syntax (Speech Bubbles)**
+## Speaker Syntax (Speech Bubbles)
 - To mark a paragraph as spoken dialogue, start the paragraph with `speakerKey::`.
 - The `speakerKey` must match a scene object key (see Object Keys below).
 - Multiple speaker paragraphs are supported. Each speaker paragraph becomes its own bubble.
@@ -48,16 +48,7 @@ rat2:: Hi.
 This is narration.
 ```
 
-**Choices / Links**
-- Any SugarCube `[[link]]` becomes a choice button in the UI.
-- The UI uses the link’s HTML as the label (so you can include formatting in the link text).
-
-Example:
-```twine
-[[Show a deer.|Now add a deer.]]
-```
-
-**Scene Variables (3D Models)**
+## Scene Variables (3D Models)
 Your scene should be stored in `State.variables.DL` (i.e., `$DL` in Twine).
 
 Minimum shape:
@@ -156,12 +147,22 @@ Example:
 - All other paragraphs render as narration above the panel.
 - Multiple speaker paragraphs produce multiple bubbles.
 
-**Common Pitfalls**
+## Choices / Links
+- Any SugarCube `[[link]]` becomes a choice button in the UI.
+- The UI uses the link’s HTML as the label (so you can include formatting in the link text).
+- Choices are rendered at the bottom of the screen
+
+Example:
+```twine
+[[Show a deer.|Now add a deer.]]
+```
+
+## Common Pitfalls
 - If a background fails to load, check the filename and slugging (`"bus stop"` -> `bus_stop.glb`).
 - If a speaker bubble doesn’t appear, the `speakerKey` likely doesn’t match a scene object key.
 - Anything after `%%%` is ignored for narration parsing.
 
-**How It Works (Behind The Scenes)**
+## How It Works (Behind The Scenes)
 - The runtime listens to SugarCube’s `:passageend` event (see `public/messaging.js`).
 - `public/messaging.js` captures passage HTML and `.link-internal` anchors, then posts them to the app.
 - `src/layout.js` parses passage HTML and SugarCube variables (`State.variables`).

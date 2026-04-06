@@ -144,7 +144,7 @@ export class ThreeScene {
         r = Math.floor(Math.random() * 255);
         let bg = new THREE.Color("hsl("+r+", 100%, 80%)");
         scene.background = bg
-        let renderer = new THREE.WebGLRenderer({ canvas: canvas});
+        let renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
         this.renderer = renderer;
         renderer.setPixelRatio(window.devicePixelRatio);
         renderer.setSize( width, height );
@@ -202,6 +202,20 @@ export class ThreeScene {
             cyclePauseUntil: 0,
         };
         this.lastTime = performance.now();
+        this.cameraBasePos = camera.position.clone();
+        this.cameraBaseLook = new THREE.Vector3(0, 2, -80);
+        this.mouseTilt = {
+            x: 0,
+            y: 0,
+            maxYaw: 0.015,
+            maxPitch: 0.01,
+        };
+        window.addEventListener('mousemove', (e) => {
+            const nx = (e.clientX / window.innerWidth) * 2 - 1;
+            const ny = (e.clientY / window.innerHeight) * 2 - 1;
+            this.mouseTilt.x = Math.max(-1, Math.min(1, nx));
+            this.mouseTilt.y = Math.max(-1, Math.min(1, ny));
+        });
         this.backgroundModel = null;
         this.backgroundToken = 0;
         this.backgroundDefaults = {
@@ -242,6 +256,7 @@ export class ThreeScene {
             this.applyRepulsion();
         }
         this.updateSpeakerHop(now);
+        this.applyMouseTilt();
         // this.controls.update();
         this.renderer.render( this.scene, this.camera );
         
@@ -565,6 +580,14 @@ export class ThreeScene {
             m.position.x += m.userData.vx;
             m.position.z += m.userData.vz;
         }
+    }
+
+    applyMouseTilt() {
+        const yaw = -this.mouseTilt.x * this.mouseTilt.maxYaw;
+        const pitch = this.mouseTilt.y * this.mouseTilt.maxPitch;
+        const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(pitch, yaw, 0));
+        const lookTarget = this.cameraBasePos.clone().add(dir.multiplyScalar(10));
+        this.camera.lookAt(lookTarget);
     }
 
     setSpeakerQueue(speakers) {
