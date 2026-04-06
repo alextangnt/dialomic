@@ -85,7 +85,7 @@ const frames = 10;
 
 function normalizeSceneObjects(scene) {
     console.log(scene);
-    const objs = scene?.objs;
+    const objs = scene?.objects;
     const list = [];
     const byId = {};
 

@@ -17,7 +17,7 @@ References:
 
 Example passage block:
 ```twine
-<<set $DL_currScene = {
+<<set $DL = {
   objs: [
     "rat1= RAT VERYNEAR FARLEFT LOOKFRONT",
     "rat2= RAT MID FARRIGHT LOOKFRONT",
@@ -58,11 +58,11 @@ Example:
 ```
 
 **Scene Variables (3D Models)**
-Your scene should be stored in `State.variables.DL_currScene` (i.e., `$DL_currScene` in Twine).
+Your scene should be stored in `State.variables.DL` (i.e., `$DL` in Twine).
 
 Minimum shape:
 ```twine
-<<set $DL_currScene = { objs: ["RAT NEAR CENTER LOOKLEFT"] }>>
+<<set $DL = { objs: ["RAT NEAR CENTER LOOKLEFT"] }>>
 ```
 
 Supported `objs` formats:
@@ -70,11 +70,11 @@ Supported `objs` formats:
 - Object map keyed by object id.
 
 **Object Keys (For Speaker Matching)**
-If you want `speakerKey::` to target a model, the key must exist in `DL_currScene.objs`.
+If you want `speakerKey::` to target a model, the key must exist in `DL.objects`.
 
 Option A (recommended): object map keyed by id
 ```twine
-<<set $DL_currScene.objs = {
+<<set $DL.objects = {
   rat1: "RAT VERYNEAR FARLEFT LOOKFRONT",
   rat2: "RAT MID FARRIGHT LOOKFRONT"
 }>>
@@ -82,7 +82,7 @@ Option A (recommended): object map keyed by id
 
 Option B: array with `key=SPEC` strings
 ```twine
-<<set $DL_currScene.objs = [
+<<set $DL.objects = [
   "rat1= RAT VERYNEAR FARLEFT LOOKFRONT",
   "rat2= RAT MID FARRIGHT LOOKFRONT"
 ]>>
@@ -114,7 +114,7 @@ If you add new models to `public/animals/`, just use the filename (uppercased) a
 **Background Models**
 Set a background with:
 ```twine
-<<set $DL_currScene.background = "bus stop">>
+<<set $DL.background = "bus stop">>
 ```
 This loads:
 ```
@@ -127,13 +127,13 @@ Slug rules:
 Defaults are applied for position/scale unless you extend the code.
 
 **Twine Variables and Custom State**
-You can define reusable object specs as variables and reference them in `DL_currScene.objs`.
+You can define reusable object specs as variables and reference them in `DL.objects`.
 
 Example:
 ```twine
 <<set $rat1 = "RAT VERYNEAR FARLEFT LOOKFRONT">>
 <<set $rat2 = "RAT MID FARRIGHT LOOKFRONT">>
-<<set $DL_currScene.objs = [$rat1, $rat2]>>
+<<set $DL.objects = [$rat1, $rat2]>>
 ```
 
 **Narration vs Speech Bubble Rendering**

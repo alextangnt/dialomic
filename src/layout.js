@@ -446,8 +446,8 @@ class LayoutUI {
        
         this.psgName = info.psgName;
         vars = iframe.contentWindow.SugarCube.State.variables;
-        console.log(vars?.DL_currScene?.objs);
-        const sceneObjects = buildSceneObjectMap(vars?.DL_currScene?.objs);
+        console.log(vars?.DL?.objects);
+        const sceneObjects = buildSceneObjectMap(vars?.DL?.objects);
         const parsed = parseSpeakerBlocks(cleanText(info.passage), sceneObjects);
         this.speakers = parsed.speakers || [];
         this.txt = parsed.narrationText || '';
@@ -467,7 +467,7 @@ class LayoutUI {
         let data = {left: 0, top: this.topInset + this.h, width: 360, height: 150};
         let target = {left: 0, top: this.topInset + this.h / 4, width: this.w, height: 300};
         let vars = iframe.contentWindow.SugarCube.State.variables;
-        let scene = vars.DL_currScene;
+        let scene = vars.DL;
         // console.log(vars);
 
         if (!this.panels[name]) {
@@ -504,7 +504,7 @@ class LayoutUI {
         let data = {left: 0, top: this.topInset + this.h, width: 100, height: 100};
         target = {left: this.w * 3 / 4, top: this.topInset + this.h / 3, width: 200, height: 200};
         vars = iframe.contentWindow.SugarCube.State.variables;
-        let scene = vars.DL_currScene;
+        let scene = vars.DL;
         console.log("makeresponese make response");
         console.log(vars);
         if (!this.panels[name]) {
