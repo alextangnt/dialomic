@@ -76,7 +76,7 @@ Option A (recommended): object map keyed by id
 ```twine
 <<set $DL.objects = {
   rat1: "RAT VERYNEAR FARLEFT LOOKFRONT",
-  rat2: "RAT MID FARRIGHT LOOKFRONT"
+  rat2: "RAT MID FARRIGHT LOOKLEFT"
 }>>
 ```
 
@@ -84,9 +84,22 @@ Option B: array with `key=SPEC` strings
 ```twine
 <<set $DL.objects = [
   "rat1= RAT VERYNEAR FARLEFT LOOKFRONT",
-  "rat2= RAT MID FARRIGHT LOOKFRONT"
+  "rat2= RAT MID FARRIGHT LOOKLEFT"
 ]>>
 ```
+
+With this text underneath:
+```
+rat1:: My name is "rat1", and I'm defined with the string "rat1 = RAT NEAR FARLEFT LOOKFRONT." Each rat is defined with a string value that includes the specified model, depth in scene, placement in scene, and looking direction.
+rat2:: I'm "rat2", and I'm defined with the string "rat2 = RAT MID FARRIGHT LOOKLEFT" in the list DL.objects.
+
+This text is Twine narration or dialogue text of your choice combined with custom and Twine code.
+```
+
+Both of the above formats produce this result.
+
+![Dialogue example](documentation/dialogue.gif)
+
 
 **Object Spec String Format**
 Each object string follows:
@@ -99,17 +112,19 @@ Accepted tokens:
 - Location: `FARLEFT`, `LEFT`, `CENTER`, `RIGHT`, `FARRIGHT`
 - Facing: `LOOKLEFT`, `LOOKFRONT`, `LOOKRIGHT`, `LOOKBACK`
 
-**Accepted Model Tokens (Animals)**
-Use the model name as the first token. These map to `.glb` files in `public/animals/`:
-- `RAT` -> `public/animals/rat.glb`
-- `CAT` -> `public/animals/cat.glb`
-- `COW` -> `public/animals/cow.glb`
-- `DEER` -> `public/animals/deer.glb`
-- `ELEPHANT` -> `public/animals/elephant.glb`
-- `HARE` -> `public/animals/hare.glb`
-- `WOLF` -> `public/animals/wolf.glb`
+![Model Placements](documentation/locations.png)
 
-If you add new models to `public/animals/`, just use the filename (uppercased) as the token.
+**Accepted Model Tokens (Animals)**
+Use the model name as the first token. These map to `.glb` files in `public/animals/`. As of now, authors have access to:
+- `RAT`
+- `CAT`
+- `COW`
+- `DEER`
+- `ELEPHANT`
+- `HARE`
+- `WOLF`
+
+If you add new models to `public/animals/`, just use the filename (case insensitive) as the token.
 
 **Background Models**
 Set a background with:
