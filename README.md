@@ -1,15 +1,20 @@
 # Dialomic
 Dialomic turns Twine stories into interactive webcomics with animated 3D panels, narration overlays, and speech bubbles. Authors write standard SugarCube passages and add a few formatting conventions so scenes and dialogue can be parsed automatically.
 
-**Core SugarCube Concepts**
-- SugarCube stores story state in `State.variables` (exposed as `$var` in Twine).
-- Use `<<set $var = ...>>` to define scene variables.
-- Use `[[link text|Passage Name]]` to create choices (SugarCube creates `.link-internal` anchors).
+Visit the [Dialomic web player](https://alextangnt.github.io/dialomic/) for a sample story and to play your stories!
 
-References:
-- Twine: https://twinery.org/
-- SugarCube documentation: https://www.motoslave.net/sugarcube/2/
-- SugarCube macro reference: https://www.motoslave.net/sugarcube/2/docs/
+### Getting Started
+1. Download the [Twine desktop app or use the online editor](https://twinery.org/).
+2. Make a new story.
+![New Story](documentation/newstory.png)
+3. Go to `Story>Details>Story Format`, change the format to `SugarCube 2.37.3`.
+![SugarCube Format](documentation/sugarcube.png)
+4. Set up your scene, speech bubbles, and choices! (See below)
+5. When finished, export a .html file in `Build>Publish to File`
+![Export](documentation/export.png)
+6. To preview your story, visit the [Dialomic web player](https://alextangnt.github.io/dialomic/) and upload your file at the top! Make edits to your Twine story as needed. Happy comicing!
+![Preview](documentation/preview.png)
+(This is a different story from the screenshot above)
 
 ## Passage Formatting
 - Paragraphs are split on blank lines (or `<br><br>` after export), meaning each individual paragraph will be parsed for "speaker" or "narration".
@@ -60,7 +65,7 @@ Supported `objs` formats:
 - Array of strings.
 - Object map keyed by object id.
 
-**Object Keys (For Speaker Matching)**
+#### Object Keys (For Speaker Matching)
 If you want `speakerKey::` to target a model, the key must exist in `DL.objects`.
 
 Option A (recommended): object map keyed by id
@@ -92,7 +97,7 @@ Both of the above formats produce this result.
 ![Dialogue example](documentation/dialogue.gif)
 
 
-**Object Spec String Format**
+#### Object Spec String Format
 Each object string follows:
 ```
 MODEL DISTANCE LOCATION FACING
@@ -105,7 +110,7 @@ Accepted tokens:
 
 ![Model Placements](documentation/locations.png)
 
-**Accepted Model Tokens (Animals)**
+#### Accepted Model Tokens (Animals)
 Use the model name as the first token. These map to `.glb` files in `public/animals/`. As of now, authors have access to:
 - `RAT`
 - `CAT`
@@ -117,7 +122,7 @@ Use the model name as the first token. These map to `.glb` files in `public/anim
 
 If you add new models to `public/animals/`, just use the filename (case insensitive) as the token.
 
-**Background Models**
+#### Background Models
 Set a background with:
 ```twine
 <<set $DL.background = "bus stop">>
@@ -132,7 +137,7 @@ Slug rules:
 
 Defaults are applied for position/scale unless you extend the code.
 
-**Twine Variables and Custom State**
+#### Twine Variables and Custom State
 You can define reusable object specs as variables and reference them in `DL.objects`.
 
 Example:
@@ -142,7 +147,7 @@ Example:
 <<set $DL.objects = [$rat1, $rat2]>>
 ```
 
-**Narration vs Speech Bubble Rendering**
+#### Narration vs Speech Bubble Rendering
 - Speaker paragraphs (matched with `speakerKey::`) render as speech bubbles.
 - All other paragraphs render as narration above the panel.
 - Multiple speaker paragraphs produce multiple bubbles.
@@ -167,3 +172,13 @@ Example:
 - `public/messaging.js` captures passage HTML and `.link-internal` anchors, then posts them to the app.
 - `src/layout.js` parses passage HTML and SugarCube variables (`State.variables`).
 - `src/panel.js` builds the 3D scene, speech bubbles, and narration UI.
+
+#### Core SugarCube Concepts
+- SugarCube stores story state in `State.variables` (exposed as `$var` in Twine).
+- Use `<<set $var = ...>>` to define scene variables.
+- Use `[[link text|Passage Name]]` to create choices (SugarCube creates `.link-internal` anchors).
+
+References:
+- Twine: https://twinery.org/
+- SugarCube documentation: https://www.motoslave.net/sugarcube/2/
+- SugarCube macro reference: https://www.motoslave.net/sugarcube/2/docs/
