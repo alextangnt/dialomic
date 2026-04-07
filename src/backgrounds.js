@@ -2,7 +2,7 @@ export const backgroundDefaults = {
     scale: 2,
     position: { x: 0, y: -0.6, z: 0 },
     rotation: { x: 0, y: 0, z: 0 },
-    snapToBackground: true,
+    snapToBackground: false,
     snapGridRadius: 1,
     snapGridStep: 0.4,
     snapRayHeight: 200,

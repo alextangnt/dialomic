@@ -253,11 +253,13 @@ export class ThreeScene {
             // maxYaw: 1,
             // maxPitch: 1,
         };
+        this.mouseTiltTarget = { x: 0, y: 0 };
+        this.mouseTiltLerp = 0.12;
         window.addEventListener('mousemove', (e) => {
             const nx = (e.clientX / window.innerWidth) * 2 - 1;
             const ny = (e.clientY / window.innerHeight) * 2 - 1;
-            this.mouseTilt.x = Math.max(-1, Math.min(1, nx));
-            this.mouseTilt.y = Math.max(-1, Math.min(1, ny));
+            this.mouseTiltTarget.x = Math.max(-1, Math.min(1, nx));
+            this.mouseTiltTarget.y = Math.max(-1, Math.min(1, ny));
         });
         this.backgroundModel = null;
         this.backgroundToken = 0;
@@ -275,7 +277,7 @@ export class ThreeScene {
         this.backgroundSnapExcludeNames = backgroundDefaults.snapExcludeNames;
         this.backgroundSnapGridRadius = backgroundDefaults.snapGridRadius;
         this.backgroundSnapGridStep = backgroundDefaults.snapGridStep;
-        this.mouseTiltReady = false;
+        this.mouseTiltReady = !this.backgroundSnap;
         this.pendingSnapModels = 0;
         this.snapWaitModels = new Set();
         const size = 10;
@@ -825,6 +827,8 @@ export class ThreeScene {
     }
 
     applyMouseTilt() {
+        this.mouseTilt.x = lerp(this.mouseTilt.x, this.mouseTiltTarget.x, this.mouseTiltLerp);
+        this.mouseTilt.y = lerp(this.mouseTilt.y, this.mouseTiltTarget.y, this.mouseTiltLerp);
         const yaw = -this.mouseTilt.x * this.mouseTilt.maxYaw;
         const pitch = -this.mouseTilt.y * this.mouseTilt.maxPitch;
         const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(pitch, yaw, 0));
