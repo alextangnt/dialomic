@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
+import { backgroundConfigs, backgroundDefaults } from './backgrounds.js';
 
 
 export class TextBox {
@@ -55,6 +56,22 @@ function slugifyAssetName(name) {
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '_')
         .replace(/^_+|_+$/g, '');
+}
+
+function resolveBackgroundTransform(slug, backgroundSpec) {
+    const config = backgroundConfigs[slug] || {};
+    const scale = backgroundSpec?.scale ?? config.scale ?? backgroundDefaults.scale;
+    const pos = {
+        ...backgroundDefaults.position,
+        ...(config.position || {}),
+        ...(backgroundSpec?.position || {}),
+    };
+    const rot = {
+        ...backgroundDefaults.rotation,
+        ...(config.rotation || {}),
+        ...(backgroundSpec?.rotation || {}),
+    };
+    return { scale, pos, rot };
 }
 
 
@@ -156,7 +173,7 @@ export class ThreeScene {
         let groundColor = 0xB97A20;
         
         let objects = [];
-        let light = new THREE.HemisphereLight(skyColor, groundColor, 3);
+        let light = new THREE.HemisphereLight(skyColor, groundColor, 6);
         objects.push(light);
         scene.add( light );
         // r = Math.max(Math.floor(Math.random() * 5),1);
@@ -218,11 +235,6 @@ export class ThreeScene {
         });
         this.backgroundModel = null;
         this.backgroundToken = 0;
-        this.backgroundDefaults = {
-            scale: 2,
-            position: new THREE.Vector3(0, -0.6, 0),
-            rotation: new THREE.Euler(0, 0, 0),
-        };
         const size = 10;
         const divisions = 10;
         // const effect = new OutlineEffect( renderer );
@@ -295,7 +307,7 @@ export class ThreeScene {
         let file = (specs[0] || '').toLowerCase();
         // file is string name of animal that we add .glb to the end of
         const base = import.meta.env.BASE_URL;
-        let filename = base+'animals/'+file+'.glb';
+        let filename = base+'assets/animals/'+file+'.glb';
         let dist;
         let distName;
         let locKey = "CENTER";
@@ -389,7 +401,7 @@ export class ThreeScene {
         if (!slug) return;
 
         const base = import.meta.env.BASE_URL;
-        const filename = `${base}backgrounds/${slug}.glb`;
+        const filename = `${base}assets/backgrounds/${slug}.glb`;
         const token = ++this.backgroundToken;
 
         this.clearBackground();
@@ -400,9 +412,7 @@ export class ThreeScene {
             this.backgroundModel = model;
             this.scene.add(model);
 
-            const scale = backgroundSpec?.scale ?? this.backgroundDefaults.scale;
-            const pos = backgroundSpec?.position ?? this.backgroundDefaults.position;
-            const rot = backgroundSpec?.rotation ?? this.backgroundDefaults.rotation;
+            const { scale, pos, rot } = resolveBackgroundTransform(slug, backgroundSpec);
             model.scale.set(scale, scale, scale);
             model.position.set(pos.x, pos.y, pos.z);
             model.rotation.set(rot.x, rot.y, rot.z);

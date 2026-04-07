@@ -111,7 +111,7 @@ Accepted tokens:
 ![Model Placements](documentation/locations.png)
 
 #### Accepted Model Tokens (Animals)
-Use the model name as the first token. These map to `.glb` files in `public/animals/`. As of now, authors have access to:
+Use the model name as the first token. These map to `.glb` files in `public/assets/animals/`. As of now, authors have access to:
 - `RAT`
 - `CAT`
 - `COW`
@@ -120,7 +120,7 @@ Use the model name as the first token. These map to `.glb` files in `public/anim
 - `HARE`
 - `WOLF`
 
-If you add new models to `public/animals/`, just use the filename (case insensitive) as the token.
+If you add new models to `public/assets/animals/`, just use the filename (case insensitive) as the token.
 
 #### Background Models
 Set a background with:
@@ -129,13 +129,14 @@ Set a background with:
 ```
 This loads:
 ```
-public/background/bus_stop.glb
+public/assets/backgrounds/bus_stop.glb
 ```
 Slug rules:
 - Lowercase
 - Spaces and punctuation become `_`
 
 Defaults are applied for position/scale unless you extend the code.
+Per-background transforms can be defined in `src/backgrounds.js`.
 
 #### Twine Variables and Custom State
 You can define reusable object specs as variables and reference them in `DL.objects`.
