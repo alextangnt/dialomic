@@ -584,7 +584,7 @@ export class ThreeScene {
 
     applyMouseTilt() {
         const yaw = -this.mouseTilt.x * this.mouseTilt.maxYaw;
-        const pitch = this.mouseTilt.y * this.mouseTilt.maxPitch;
+        const pitch = -this.mouseTilt.y * this.mouseTilt.maxPitch;
         const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(pitch, yaw, 0));
         const lookTarget = this.cameraBasePos.clone().add(dir.multiplyScalar(10));
         this.camera.lookAt(lookTarget);
