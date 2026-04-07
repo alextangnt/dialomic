@@ -71,7 +71,31 @@ function resolveBackgroundTransform(slug, backgroundSpec) {
         ...(config.rotation || {}),
         ...(backgroundSpec?.rotation || {}),
     };
-    return { scale, pos, rot };
+    const snap = backgroundSpec?.snapToBackground ?? config.snapToBackground ?? backgroundDefaults.snapToBackground;
+    const snapGridRadius = backgroundSpec?.snapGridRadius ?? config.snapGridRadius ?? backgroundDefaults.snapGridRadius;
+    const snapGridStep = backgroundSpec?.snapGridStep ?? config.snapGridStep ?? backgroundDefaults.snapGridStep;
+    const snapRayHeight = backgroundSpec?.snapRayHeight ?? config.snapRayHeight ?? backgroundDefaults.snapRayHeight;
+    const snapMaxDelta = backgroundSpec?.snapMaxDelta ?? config.snapMaxDelta ?? backgroundDefaults.snapMaxDelta;
+    const snapDebug = backgroundSpec?.snapDebug ?? config.snapDebug ?? backgroundDefaults.snapDebug;
+    const snapMaxY = backgroundSpec?.snapMaxY ?? config.snapMaxY ?? backgroundDefaults.snapMaxY;
+    const snapPreferHighest = backgroundSpec?.snapPreferHighest ?? config.snapPreferHighest ?? backgroundDefaults.snapPreferHighest;
+    const snapIncludeNames = backgroundSpec?.snapIncludeNames ?? config.snapIncludeNames ?? backgroundDefaults.snapIncludeNames;
+    const snapExcludeNames = backgroundSpec?.snapExcludeNames ?? config.snapExcludeNames ?? backgroundDefaults.snapExcludeNames;
+    return {
+        scale,
+        pos,
+        rot,
+        snap,
+        snapGridRadius,
+        snapGridStep,
+        snapRayHeight,
+        snapMaxDelta,
+        snapDebug,
+        snapMaxY,
+        snapPreferHighest,
+        snapIncludeNames,
+        snapExcludeNames,
+    };
 }
 
 
@@ -226,6 +250,8 @@ export class ThreeScene {
             y: 0,
             maxYaw: 0.015,
             maxPitch: 0.01,
+            // maxYaw: 1,
+            // maxPitch: 1,
         };
         window.addEventListener('mousemove', (e) => {
             const nx = (e.clientX / window.innerWidth) * 2 - 1;
@@ -235,8 +261,25 @@ export class ThreeScene {
         });
         this.backgroundModel = null;
         this.backgroundToken = 0;
+        this.backgroundMeshes = [];
+        this.backgroundSnap = false;
+        this.backgroundRaycaster = new THREE.Raycaster();
+        this.backgroundRayOrigin = new THREE.Vector3();
+        this.backgroundRayDir = new THREE.Vector3(0, -1, 0);
+        this.backgroundRayMaxHeight = backgroundDefaults.snapRayHeight;
+        this.backgroundSnapMaxDelta = backgroundDefaults.snapMaxDelta;
+        this.backgroundSnapDebug = backgroundDefaults.snapDebug;
+        this.backgroundSnapMaxY = backgroundDefaults.snapMaxY;
+        this.backgroundSnapPreferHighest = backgroundDefaults.snapPreferHighest;
+        this.backgroundSnapIncludeNames = backgroundDefaults.snapIncludeNames;
+        this.backgroundSnapExcludeNames = backgroundDefaults.snapExcludeNames;
+        this.backgroundSnapGridRadius = backgroundDefaults.snapGridRadius;
+        this.backgroundSnapGridStep = backgroundDefaults.snapGridStep;
+        this.mouseTiltReady = false;
+        this.pendingSnapModels = 0;
+        this.snapWaitModels = new Set();
         const size = 10;
-        const divisions = 10;
+        const divisions = 50;
         // const effect = new OutlineEffect( renderer );
         // function render() {
         //     effect.render( scene, camera );
@@ -268,7 +311,9 @@ export class ThreeScene {
             this.applyRepulsion();
         }
         this.updateSpeakerHop(now);
-        this.applyMouseTilt();
+        if (this.mouseTiltReady) {
+            this.applyMouseTilt();
+        }
         // this.controls.update();
         this.renderer.render( this.scene, this.camera );
         
@@ -352,6 +397,10 @@ export class ThreeScene {
         let scene = this.scene;
         let models = this.models;
         const modelKey = this.getModelKey(obj);
+        if (this.backgroundSnap) {
+            this.pendingSnapModels += 1;
+            this.mouseTiltReady = false;
+        }
         loader.load( filename, ( gltf ) => {
             let model = gltf.scene;
             scene.add( model );
@@ -380,7 +429,19 @@ export class ThreeScene {
             model.userData.vz = 0;
             model.userData.baseY = model.position.y;
             model.userData.height = box.max.y - box.min.y;
+            model.userData.localMinY = box.min.y - model.position.y;
             this.maxRadius = Math.max(this.maxRadius, model.userData.radius);
+            if (this.backgroundSnap) {
+                if (this.backgroundMeshes.length) {
+                    this.snapModelToBackground(model);
+                    this.pendingSnapModels = Math.max(0, this.pendingSnapModels - 1);
+                    if (this.pendingSnapModels === 0) {
+                        this.mouseTiltReady = true;
+                    }
+                } else {
+                    this.snapWaitModels.add(model);
+                }
+            }
 
         }, undefined, function ( error ) {
 
@@ -412,17 +473,66 @@ export class ThreeScene {
             this.backgroundModel = model;
             this.scene.add(model);
 
-            const { scale, pos, rot } = resolveBackgroundTransform(slug, backgroundSpec);
+            const {
+                scale,
+                pos,
+                rot,
+                snap,
+                snapGridRadius,
+                snapGridStep,
+                snapRayHeight,
+                snapMaxDelta,
+                snapDebug,
+                snapMaxY,
+                snapPreferHighest,
+                snapIncludeNames,
+                snapExcludeNames,
+            } = resolveBackgroundTransform(slug, backgroundSpec);
             model.scale.set(scale, scale, scale);
             model.position.set(pos.x, pos.y, pos.z);
             model.rotation.set(rot.x, rot.y, rot.z);
+
+            this.backgroundMeshes = [];
+            model.traverse((child) => {
+                if (child.isMesh) this.backgroundMeshes.push(child);
+            });
+            this.backgroundSnap = Boolean(snap);
+            this.backgroundSnapGridRadius = snapGridRadius ?? backgroundDefaults.snapGridRadius;
+            this.backgroundSnapGridStep = snapGridStep ?? backgroundDefaults.snapGridStep;
+            this.backgroundRayMaxHeight = snapRayHeight ?? backgroundDefaults.snapRayHeight;
+            this.backgroundSnapMaxDelta = snapMaxDelta ?? backgroundDefaults.snapMaxDelta;
+            this.backgroundSnapDebug = Boolean(snapDebug);
+            this.backgroundSnapMaxY = snapMaxY ?? backgroundDefaults.snapMaxY;
+            this.backgroundSnapPreferHighest = Boolean(snapPreferHighest);
+            this.backgroundSnapIncludeNames = Array.isArray(snapIncludeNames) ? snapIncludeNames : [];
+            this.backgroundSnapExcludeNames = Array.isArray(snapExcludeNames) ? snapExcludeNames : [];
+            if (this.backgroundSnap) {
+                this.snapAllModelsToBackground();
+            } else {
+                this.pendingSnapModels = 0;
+                this.snapWaitModels.clear();
+                this.mouseTiltReady = true;
+            }
         }, undefined, (error) => {
             console.error(error);
         });
     }
 
     clearBackground() {
-        if (!this.backgroundModel) return;
+        if (!this.backgroundModel) {
+            this.backgroundMeshes = [];
+            this.backgroundSnap = false;
+            this.pendingSnapModels = 0;
+            this.snapWaitModels.clear();
+            this.mouseTiltReady = true;
+            this.backgroundSnapMaxDelta = backgroundDefaults.snapMaxDelta;
+            this.backgroundSnapDebug = backgroundDefaults.snapDebug;
+            this.backgroundSnapMaxY = backgroundDefaults.snapMaxY;
+            this.backgroundSnapPreferHighest = backgroundDefaults.snapPreferHighest;
+            this.backgroundSnapIncludeNames = backgroundDefaults.snapIncludeNames;
+            this.backgroundSnapExcludeNames = backgroundDefaults.snapExcludeNames;
+            return;
+        }
         const model = this.backgroundModel;
         this.scene.remove(model);
         model.traverse((child) => {
@@ -438,6 +548,128 @@ export class ThreeScene {
             }
         });
         this.backgroundModel = null;
+        this.backgroundMeshes = [];
+        this.backgroundSnap = false;
+        this.pendingSnapModels = 0;
+        this.snapWaitModels.clear();
+        this.mouseTiltReady = true;
+        this.backgroundSnapMaxDelta = backgroundDefaults.snapMaxDelta;
+        this.backgroundSnapDebug = backgroundDefaults.snapDebug;
+        this.backgroundSnapMaxY = backgroundDefaults.snapMaxY;
+        this.backgroundSnapPreferHighest = backgroundDefaults.snapPreferHighest;
+        this.backgroundSnapIncludeNames = backgroundDefaults.snapIncludeNames;
+        this.backgroundSnapExcludeNames = backgroundDefaults.snapExcludeNames;
+    }
+
+    getBackgroundHitY(x, z, referenceY = null) {
+        if (!this.backgroundMeshes.length) return null;
+        this.backgroundRayOrigin.set(x, this.backgroundRayMaxHeight, z);
+        this.backgroundRaycaster.set(this.backgroundRayOrigin, this.backgroundRayDir);
+        const hits = this.backgroundRaycaster.intersectObjects(this.backgroundMeshes, true);
+        if (this.backgroundSnapDebug) {
+            const sample = hits.slice(0, 5).map((hit) => ({
+                name: hit.object?.name || '(unnamed)',
+                y: Number(hit.point.y.toFixed(3)),
+            }));
+            console.log('[snap] hits', { x: Number(x.toFixed(2)), z: Number(z.toFixed(2)), referenceY, sample });
+        }
+        if (!hits.length) return null;
+        const maxY = Number(this.backgroundSnapMaxY);
+        const includeNames = this.backgroundSnapIncludeNames || [];
+        const excludeNames = this.backgroundSnapExcludeNames || [];
+        let filteredHits = hits;
+        if (includeNames.length) {
+            filteredHits = filteredHits.filter((hit) => {
+                const name = (hit.object?.name || '').toLowerCase();
+                return includeNames.some((needle) => name.includes(String(needle).toLowerCase()));
+            });
+        }
+        if (excludeNames.length) {
+            filteredHits = filteredHits.filter((hit) => {
+                const name = (hit.object?.name || '').toLowerCase();
+                return !excludeNames.some((needle) => name.includes(String(needle).toLowerCase()));
+            });
+        }
+        if (Number.isFinite(maxY)) {
+            filteredHits = filteredHits.filter((hit) => hit.point.y <= maxY);
+        }
+        if (!filteredHits.length) return null;
+        if (this.backgroundSnapPreferHighest) {
+            let highestY = filteredHits[0].point.y;
+            for (let i = 1; i < filteredHits.length; i += 1) {
+                if (filteredHits[i].point.y > highestY) highestY = filteredHits[i].point.y;
+            }
+            if (Number.isFinite(referenceY)) {
+                const maxDelta = Number(this.backgroundSnapMaxDelta);
+                if (Number.isFinite(maxDelta) && highestY > referenceY && Math.abs(highestY - referenceY) > maxDelta) {
+                    return null;
+                }
+            }
+            return highestY;
+        }
+        let chosenY = hits[0].point.y;
+        if (Number.isFinite(referenceY)) {
+            const belowHits = [];
+            const tolerance = 0.5;
+            for (let i = 0; i < filteredHits.length; i += 1) {
+                if (filteredHits[i].point.y <= referenceY + tolerance) {
+                    belowHits.push(filteredHits[i].point.y);
+                }
+            }
+            if (belowHits.length) {
+                chosenY = Math.max(...belowHits);
+                return chosenY;
+            }
+            let bestDist = Math.abs(chosenY - referenceY);
+            for (let i = 1; i < filteredHits.length; i += 1) {
+                const dy = Math.abs(filteredHits[i].point.y - referenceY);
+                if (dy < bestDist) {
+                    bestDist = dy;
+                    chosenY = filteredHits[i].point.y;
+                }
+            }
+            const maxDelta = Number(this.backgroundSnapMaxDelta);
+            if (Number.isFinite(maxDelta) && Math.abs(chosenY - referenceY) > maxDelta) {
+                return null;
+            }
+            return chosenY;
+        }
+        let highestY = filteredHits[0].point.y;
+        for (let i = 1; i < filteredHits.length; i += 1) {
+            if (filteredHits[i].point.y > highestY) highestY = filteredHits[i].point.y;
+        }
+        return highestY;
+    }
+
+    snapModelToBackground(model) {
+        if (!model || !this.backgroundSnap) return;
+        model.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        const hitY = this.getBackgroundHitY(center.x, center.z, box.min.y);
+        const targetY = typeof hitY === 'number' ? hitY : 0;
+        const localMinY = Number.isFinite(model.userData.localMinY)
+            ? model.userData.localMinY
+            : (box.min.y - model.position.y);
+        const nextY = targetY - localMinY;
+        if (!Number.isFinite(nextY)) return;
+        model.position.y = nextY;
+        model.userData.baseY = model.position.y;
+    }
+
+    snapAllModelsToBackground() {
+        if (!this.backgroundSnap) return;
+        for (const model of this.models) {
+            this.snapModelToBackground(model);
+        }
+        const waitingCount = this.snapWaitModels.size;
+        if (waitingCount) {
+            this.snapWaitModels.clear();
+            this.pendingSnapModels = Math.max(0, this.pendingSnapModels - waitingCount);
+        }
+        if (this.pendingSnapModels === 0) {
+            this.mouseTiltReady = true;
+        }
     }
 
     getModelKey(obj) {
