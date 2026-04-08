@@ -98,6 +98,18 @@ function resolveBackgroundTransform(slug, backgroundSpec) {
     };
 }
 
+const shotTypes = {
+    EXTREMELONG: 4.5,
+    LONG: 3.5,
+    FULL: 2.4,
+    MEDIUMLONG: 1.8,
+    MEDIUM: 1.3,
+    MEDIUMCLOSE: 1.0,
+    CLOSE: 0.75,
+    EXTREMECLOSE: 0.5,
+};
+const multiTargetShots = new Set(['EXTREMELONG', 'LONG', 'FULL']);
+
 
 const locsIdx = ["FARLEFT","LEFT","CENTER","RIGHT","FARRIGHT"];
 const locations = {
@@ -243,15 +255,21 @@ export class ThreeScene {
             cyclePauseUntil: 0,
         };
         this.lastTime = performance.now();
-        this.cameraBasePos = camera.position.clone();
-        this.cameraBaseLook = new THREE.Vector3(0, 2, -80);
+        this.cameraDefaultPos = camera.position.clone();
+        this.cameraDefaultLookTarget = new THREE.Vector3(0, 2, -80);
+        this.cameraBasePos = this.cameraDefaultPos.clone();
+        this.cameraBaseLookTarget = this.cameraDefaultLookTarget.clone();
         this.mouseTilt = {
             x: 0,
             y: 0,
-            maxYaw: 0.015,
-            maxPitch: 0.01,
+            maxYaw: 0.1,
+            maxPitch: 0.08,
             // maxYaw: 1,
             // maxPitch: 1,
+        };
+        this.mouseTiltBase = {
+            maxYaw: this.mouseTilt.maxYaw,
+            maxPitch: this.mouseTilt.maxPitch,
         };
         this.mouseTiltTarget = { x: 0, y: 0 };
         this.mouseTiltLerp = 0.12;
@@ -280,6 +298,9 @@ export class ThreeScene {
         this.mouseTiltReady = !this.backgroundSnap;
         this.pendingSnapModels = 0;
         this.snapWaitModels = new Set();
+        this.shotSpec = null;
+        this.pendingShotModels = 0;
+        this.waitingForShot = false;
         const size = 10;
         const divisions = 50;
         // const effect = new OutlineEffect( renderer );
@@ -403,6 +424,7 @@ export class ThreeScene {
             this.pendingSnapModels += 1;
             this.mouseTiltReady = false;
         }
+        this.pendingShotModels += 1;
         loader.load( filename, ( gltf ) => {
             let model = gltf.scene;
             scene.add( model );
@@ -418,6 +440,7 @@ export class ThreeScene {
                 model.position.z = dist;
                 model.rotation.set(0,angle,0);
             }
+            model.userData.layout = { dist, distName, locKey, angle };
             models.push(model);
             if (modelKey) {
                 this.modelByKey.set(modelKey, model);
@@ -443,6 +466,11 @@ export class ThreeScene {
                 } else {
                     this.snapWaitModels.add(model);
                 }
+            }
+            this.pendingShotModels = Math.max(0, this.pendingShotModels - 1);
+            if (this.shotSpec && this.pendingShotModels === 0 && this.waitingForShot) {
+                this.waitingForShot = false;
+                this.applyShotIfReady();
             }
 
         }, undefined, function ( error ) {
@@ -674,6 +702,122 @@ export class ThreeScene {
         }
     }
 
+    parseShotSpec(spec) {
+        if (!spec) return null;
+        if (typeof spec === 'object') {
+            const token = String(spec.type || spec.shot || '').toUpperCase().trim();
+            const targets = Array.isArray(spec.targets) ? spec.targets : [];
+            if (!shotTypes[token] || targets.length === 0) return null;
+            return { token, targets };
+        }
+        const parts = String(spec).trim().split(/\s+/);
+        if (parts.length < 2) return null;
+        const token = parts[0].toUpperCase();
+        if (!shotTypes[token]) return null;
+        const targets = parts.slice(1);
+        return { token, targets };
+    }
+
+    getTargetsBounds(targets) {
+        const box = new THREE.Box3();
+        let has = false;
+        for (const raw of targets) {
+            const key = String(raw || '').toLowerCase();
+            const model = this.getModelByKey(key);
+            if (!model) continue;
+            const mbox = new THREE.Box3().setFromObject(model);
+            if (!has) {
+                box.copy(mbox);
+                has = true;
+            } else {
+                box.union(mbox);
+            }
+        }
+        if (!has) return null;
+        return box;
+    }
+
+    resetCameraToDefault() {
+        if (!this.cameraDefaultPos || !this.cameraDefaultLookTarget) return;
+        this.camera.position.copy(this.cameraDefaultPos);
+        this.camera.lookAt(this.cameraDefaultLookTarget);
+        this.cameraBasePos.copy(this.cameraDefaultPos);
+        this.cameraBaseLookTarget = this.cameraDefaultLookTarget.clone();
+    }
+
+    relayoutModelsForScreen() {
+        this.resetCameraToDefault();
+        for (const model of this.models) {
+            const layout = model?.userData?.layout;
+            if (!layout || typeof layout.dist !== 'number') continue;
+            const xPos = this.getScreenXForLocation(layout.locKey || 'CENTER', layout.distName);
+            const alignedX = this.screenXToWorldX(model, xPos, layout.dist);
+            if (typeof alignedX === 'number') {
+                model.position.x = alignedX;
+            }
+            model.position.z = layout.dist;
+            if (typeof layout.angle === 'number') {
+                model.rotation.set(0, layout.angle, 0);
+            }
+        }
+    }
+
+    applyShotIfReady() {
+        if (!this.shotSpec) return;
+        this.relayoutModelsForScreen();
+        const parsed = this.parseShotSpec(this.shotSpec);
+        if (!parsed) return;
+        const token = parsed.token;
+        let targets = parsed.targets;
+        if (!multiTargetShots.has(token) && targets.length > 1) {
+            targets = targets.slice(0, 1);
+        }
+        const box = this.getTargetsBounds(targets);
+        if (!box) return;
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+        const height = Math.max(0.001, size.y);
+        const scale = shotTypes[token] || 1.5;
+        const framing = height * scale;
+        const fov = THREE.MathUtils.degToRad(this.camera.fov);
+        const distance = (framing / 2) / Math.tan(fov / 2);
+        const yOffset = height * 0.2 + 0.2;
+        const pos = new THREE.Vector3(center.x, center.y + yOffset, center.z + distance);
+
+        this.camera.position.copy(pos);
+        this.cameraBasePos.copy(pos);
+        this.cameraBaseLookTarget = center.clone();
+        this.camera.lookAt(center);
+
+        const baseYaw = this.mouseTiltBase?.maxYaw ?? this.mouseTilt.maxYaw;
+        const basePitch = this.mouseTiltBase?.maxPitch ?? this.mouseTilt.maxPitch;
+        const shotScale = shotTypes[token] || 1.5;
+        const tiltScale = Math.max(0.6, Math.min(2.2, 1.4 / shotScale));
+        this.mouseTilt.maxYaw = baseYaw * tiltScale;
+        this.mouseTilt.maxPitch = basePitch * tiltScale;
+    }
+
+    setShot(shotSpec) {
+        this.shotSpec = shotSpec || null;
+        if (!this.shotSpec) {
+            this.resetCameraToDefault();
+            if (this.mouseTiltBase) {
+                this.mouseTilt.maxYaw = this.mouseTiltBase.maxYaw;
+                this.mouseTilt.maxPitch = this.mouseTiltBase.maxPitch;
+            }
+            this.waitingForShot = false;
+            return;
+        }
+        if (this.pendingShotModels > 0) {
+            this.waitingForShot = true;
+            return;
+        }
+        this.waitingForShot = false;
+        this.applyShotIfReady();
+    }
+
     getModelKey(obj) {
         if (!obj) return null;
         if (typeof obj === 'string') {
@@ -832,7 +976,9 @@ export class ThreeScene {
         const yaw = -this.mouseTilt.x * this.mouseTilt.maxYaw;
         const pitch = -this.mouseTilt.y * this.mouseTilt.maxPitch;
         const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(pitch, yaw, 0));
-        const lookTarget = this.cameraBasePos.clone().add(dir.multiplyScalar(10));
+        const baseDist = this.cameraBasePos.distanceTo(this.cameraBaseLookTarget);
+        const lookScale = Math.max(0.5, baseDist * 0.05);
+        const lookTarget = this.cameraBaseLookTarget.clone().add(dir.multiplyScalar(lookScale));
         this.camera.lookAt(lookTarget);
     }
 
@@ -990,6 +1136,9 @@ export class Panel {
         if (scene?.background) {
             this.three.setBackground(scene.background);
         }
+        if (scene?.shot) {
+            this.three.setShot(scene.shot);
+        }
     }
 
     setScene(scene){
@@ -999,6 +1148,11 @@ export class Panel {
             this.three.setBackground(scene.background);
         } else {
             this.three.setBackground(null);
+        }
+        if (scene?.shot) {
+            this.three.setShot(scene.shot);
+        } else {
+            this.three.setShot(null);
         }
     }
     

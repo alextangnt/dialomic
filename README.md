@@ -23,7 +23,7 @@ Visit the [Dialomic web player](https://alextangnt.github.io/dialomic/) for a sa
 Example passage block:
 ```twine
 <<set $DL = {
-  objs: [
+  objects: [
     "rat1= RAT VERYNEAR FARLEFT LOOKFRONT",
     "rat2= RAT MID FARRIGHT LOOKFRONT",
     "RAT NEAR CENTER LOOKLEFT"
@@ -58,10 +58,10 @@ Your scene should be stored in `State.variables.DL` (i.e., `$DL` in Twine).
 
 Minimum shape:
 ```twine
-<<set $DL = { objs: ["RAT NEAR CENTER LOOKLEFT"] }>>
+<<set $DL = { objects: ["RAT NEAR CENTER LOOKLEFT"] }>>
 ```
 
-Supported `objs` formats:
+Supported `objects` formats:
 - Array of strings.
 - Object map keyed by object id.
 

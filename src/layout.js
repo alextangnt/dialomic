@@ -317,6 +317,8 @@ class LayoutUI {
         this.restartBtn.addEventListener('click', () => this.restartStory());
         document.body.appendChild(this.restartBtn);
 
+        this.selectedLinkIndex = 0;
+
         this.tick = this.tick.bind(this);
         requestAnimationFrame(this.tick);
 
@@ -347,6 +349,23 @@ class LayoutUI {
         if (event.key === 'r' || event.key === 'R') {
             this.restartStory();
         }
+        if (!this.links || this.links.length === 0) return;
+        if (event.key === 'ArrowUp' || event.key === 'ArrowLeft') {
+            event.preventDefault();
+            this.selectedLinkIndex = (this.selectedLinkIndex - 1 + this.links.length) % this.links.length;
+            this.updateSelectedLink();
+            return;
+        }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowRight') {
+            event.preventDefault();
+            this.selectedLinkIndex = (this.selectedLinkIndex + 1) % this.links.length;
+            this.updateSelectedLink();
+            return;
+        }
+        if (event.key === ' ' || event.key === 'Enter') {
+            event.preventDefault();
+            this.pressSelectedLink();
+        }
     }
 
     restartStory() {
@@ -365,11 +384,11 @@ class LayoutUI {
 
     updateLinkLayout() {
         const maxFont = (this.h * 0.8) / Math.max(1, this.links.length);
-        this.fontSize = Math.min(16.8, maxFont);
+        this.fontSize = Math.min(22, maxFont);
         this.bx = this.w / 100;
-        this.bd = this.fontSize;
-        this.linkGap = Math.max(4, this.fontSize * 0.15);
-        const bottomPad = Math.max(6, this.fontSize * 0.4);
+        this.bd = this.fontSize * 1.2;
+        this.linkGap = Math.max(8, this.fontSize * 0.3);
+        const bottomPad = Math.max(48, this.fontSize * 2);
         const totalHeight = this.links.length * this.bd +
             Math.max(0, this.links.length - 1) * this.linkGap +
             bottomPad;
@@ -390,10 +409,11 @@ class LayoutUI {
         document.body.appendChild(measure);
         const buttons = this.linksRoot.querySelectorAll('button.link-button');
         const maxWidth = Math.max(50, this.w - this.bx * 2);
+        const textPaddingX = Math.round(this.fontSize * 1.1);
         for (const btn of buttons) {
             const text = btn.textContent || '';
             measure.textContent = text;
-            const textWidth = Math.ceil(measure.getBoundingClientRect().width + 8);
+            const textWidth = Math.ceil(measure.getBoundingClientRect().width + textPaddingX);
             if (textWidth > maxWidth) {
                 btn.style.width = `${maxWidth}px`;
                 btn.style.whiteSpace = 'normal';
@@ -421,8 +441,13 @@ class LayoutUI {
             btn.className = 'link-button';
             btn.textContent = this.links[i];
             btn.style.marginBottom = `${this.linkGap}px`;
+            btn.addEventListener('mouseenter', () => {
+                this.selectedLinkIndex = i;
+                this.updateSelectedLink();
+            });
             measure.textContent = this.links[i];
-            const textWidth = Math.ceil(measure.getBoundingClientRect().width + 8);
+            const textPaddingX = Math.round(this.fontSize * 1.1);
+            const textWidth = Math.ceil(measure.getBoundingClientRect().width + textPaddingX);
             const maxWidth = Math.max(50, this.w - this.bx * 2);
             if (textWidth > maxWidth) {
                 btn.style.width = `${maxWidth}px`;
@@ -431,15 +456,33 @@ class LayoutUI {
                 btn.style.width = `${textWidth}px`;
                 btn.style.whiteSpace = 'nowrap';
             }
-            btn.addEventListener('click', () => {
-                if (this.pressed) return;
-                this.pressed = true;
-                this.makeResponse(i);
-            });
+            btn.addEventListener('click', () => this.pressLink(i));
             this.linksRoot.appendChild(btn);
         }
         measure.remove();
         this.updateLinkLayout();
+        this.updateSelectedLink();
+    }
+
+    pressSelectedLink() {
+        this.pressLink(this.selectedLinkIndex);
+    }
+
+    pressLink(index) {
+        if (this.pressed) return;
+        const buttons = this.linksRoot.querySelectorAll('button.link-button');
+        const btn = buttons[index];
+        if (!btn) return;
+        btn.classList.add('pressed');
+        this.pressed = true;
+        this.makeResponse(index);
+    }
+
+    updateSelectedLink() {
+        const buttons = this.linksRoot.querySelectorAll('button.link-button');
+        buttons.forEach((btn, idx) => {
+            btn.classList.toggle('selected', idx === this.selectedLinkIndex);
+        });
     }
 
     setPsgInfo(info) {
@@ -452,6 +495,7 @@ class LayoutUI {
         this.speakers = parsed.speakers || [];
         this.txt = parsed.narrationText || '';
         this.links = info.links || [];
+        this.selectedLinkIndex = 0;
         this.pressed = false;
         this.renderLinks();
     }
