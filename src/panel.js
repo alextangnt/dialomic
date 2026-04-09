@@ -92,6 +92,7 @@ class SpeechBubbleLayout {
                 baseTop: existing?.baseTop ?? null,
                 baseWidth: existing?.baseWidth ?? null,
                 baseHeight: existing?.baseHeight ?? null,
+                baseAnchorX: existing?.baseAnchorX ?? null,
             };
         });
     }
@@ -210,7 +211,8 @@ class SpeechBubbleLayout {
         const overlapsAnySpeaker = (rect) => speakerCircles.some((circle) => this.rectIntersectsCircle(rect, circle));
 
         let prevTop = topBound - this.minTopSeparation;
-        for (const item of this.items) {
+        for (let idx = 0; idx < this.items.length; idx++) {
+            const item = this.items[idx];
             const el = item.el;
             if (!el) continue;
             const allowWidthChange = resized || item.widthDirty || item.width == null;
@@ -245,6 +247,7 @@ class SpeechBubbleLayout {
             const canvasCenterX = (canvasRect.left + canvasRect.right) / 2;
             let anchorX;
             let anchorY;
+            let anchorXLive = null;
             if (speakerRect) {
                 const targetAnchorX = (speakerRect.left + speakerRect.right) / 2;
                 const targetAnchorY = speakerRect.top;
@@ -264,6 +267,7 @@ class SpeechBubbleLayout {
                 if (!item.side) {
                     item.side = targetAnchorX <= canvasCenterX ? 'left' : 'right';
                 }
+                anchorXLive = targetAnchorX;
             }
             if (item.anchorNorm) {
                 anchorX = canvasRect.left + item.anchorNorm.x * canvasRect.width;
@@ -287,7 +291,7 @@ class SpeechBubbleLayout {
                 : speakerRect;
 
             const liftTarget = isSpeaking
-                ? Math.min(28, canvasRect.height * 0.08)
+                ? Math.min(10, canvasRect.height * 0.08)
                 : 0;
             const liftFollow = 0.32;
             item.lift = item.lift + (liftTarget - item.lift) * liftFollow;
@@ -391,7 +395,7 @@ class SpeechBubbleLayout {
                 }
             }
 
-            if (!useBaseLayout && item.lift <= 0.5 && speakerCircle && this.rectIntersectsCircle(testRect, speakerCircle)) {
+            if (!useBaseLayout && item.lift <= 0.5 && overlapsAnySpeaker(testRect)) {
                 if (item.side === 'left') {
                     const targetRight = Math.min(rightBound, circleRect.left - 8);
                     left = Math.max(leftBound, targetRight - rect.width);
@@ -402,7 +406,7 @@ class SpeechBubbleLayout {
                 testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
             }
 
-            if (!useBaseLayout && allowWidthChange && !item.expandOnly && item.lift <= 0.5 && this.rectIntersectsCircle(testRect, speakerCircle)) {
+            if (!useBaseLayout && allowWidthChange && !item.expandOnly && item.lift <= 0.5 && overlapsAnySpeaker(testRect)) {
                 const widths = [Math.max(this.minWidth, rect.width - 60), this.minWidth];
                 for (const width of widths) {
                     el.style.maxWidth = `${width}px`;
@@ -410,7 +414,7 @@ class SpeechBubbleLayout {
                     rect = el.getBoundingClientRect();
                     left = Math.max(leftBound, Math.min(rightBound - rect.width, anchorX - rect.width / 2));
                     testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-                    if (!this.rectIntersectsCircle(testRect, speakerCircle)) {
+                    if (!overlapsAnySpeaker(testRect)) {
                         item.width = Math.min(maxWidth, rect.width);
                         el.style.maxWidth = `${item.width}px`;
                         el.style.width = `${item.width}px`;
@@ -509,7 +513,7 @@ class SpeechBubbleLayout {
                         tryRect.bottom > narrationRect.top &&
                         tryRect.top < narrationRect.bottom;
                     if (overlapsBubble || overlapsNarration) break;
-                    if (speakerCircle && placementMode === 'above' && this.rectIntersectsCircle(tryRect, speakerCircle)) {
+                    if (placementMode === 'above' && overlapsAnySpeaker(tryRect)) {
                         break;
                     }
                     best = candidate;
@@ -526,9 +530,14 @@ class SpeechBubbleLayout {
                 item.baseTop = top;
                 item.baseWidth = rect.width;
                 item.baseHeight = rect.height;
+                item.baseAnchorX = anchorX;
             } else {
                 left = item.baseLeft;
                 top = item.baseTop;
+            }
+
+            if (item.baseAnchorX == null) {
+                item.baseAnchorX = anchorXLive ?? anchorX;
             }
 
             const speakerMidY = circleRect
@@ -546,14 +555,18 @@ class SpeechBubbleLayout {
             const liftOffset = item.lift > 0 ? (visualBelowNow ? item.lift : -item.lift) : 0;
             const targetTop = top + liftOffset;
 
+            const driftXSource = anchorXLive ?? anchorX;
+            const driftX = item.baseAnchorX != null ? (driftXSource - item.baseAnchorX) : 0;
+            const driftedLeft = Math.max(leftBound, Math.min(rightBound - rect.width, left + driftX));
+
             if (!useBaseLayout) {
                 prevTop = Math.max(prevTop, top);
                 placed.push({ left, top, right: left + rect.width, bottom: top + rect.height, block: recomputeLayout ? true : !isSpeaking });
             }
 
-            if (item.x == null) item.x = left;
+            if (item.x == null) item.x = driftedLeft;
             if (item.y == null) item.y = targetTop;
-            item.x = item.x + (left - item.x) * this.smooth;
+            item.x = driftedLeft;
             if (visualBelowNow && isSpeaking) {
                 const downOnlyTarget = Math.max(item.y, targetTop);
                 item.y = item.y + (downOnlyTarget - item.y) * this.smooth;
@@ -564,7 +577,8 @@ class SpeechBubbleLayout {
 
             el.style.left = `${item.x}px`;
             el.style.top = `${item.y}px`;
-            el.style.zIndex = isSpeaking ? '60' : '50';
+            const zBase = 100;
+            el.style.zIndex = `${zBase - idx}`;
 
             const visualBelow = (item.y + rect.height / 2) >= speakerMidY;
             item.visualBelow = visualBelow;
@@ -573,6 +587,17 @@ class SpeechBubbleLayout {
                 el.dataset.isBelow = visualBelow ? 'below' : 'above';
                 el.style.outline = visualBelow ? '2px dashed #1e88e5' : '2px dashed #e53935';
                 el.style.outlineOffset = '2px';
+                // if (!item._debugLogged || (performance.now() - item._debugLogged) > 500) {
+                //     item._debugLogged = performance.now();
+                //     console.log('[bubble drift]', {
+                //         speaker: item.speaker,
+                //         anchorXLive,
+                //         baseAnchorX: item.baseAnchorX,
+                //         driftX,
+                //         left,
+                //         driftedLeft,
+                //     });
+                // }
             } else {
                 el.dataset.isBelow = '';
                 el.style.outline = '';
@@ -823,6 +848,7 @@ export class ThreeScene {
             foundLogged: new Set(),
             cyclePauseUntil: 0,
             currentKey: null,
+            startDelayUntil: 0,
         };
         this.lastTime = performance.now();
         this.cameraDefaultPos = camera.position.clone();
@@ -1564,11 +1590,15 @@ export class ThreeScene {
         this.speakerAnim.startTime = 0;
         this.speakerAnim.duration = 0;
         this.speakerAnim.active = queue.length > 0;
+        if (queue.length) {
+            this.speakerAnim.startDelayUntil = performance.now() + 1000;
+        }
     }
 
     updateSpeakerHop(now) {
         const anim = this.speakerAnim;
         if (!anim.active || anim.queue.length === 0) return;
+        if (anim.startDelayUntil && now < anim.startDelayUntil) return;
         if (anim.cyclePauseUntil && now < anim.cyclePauseUntil) return;
 
         const current = anim.queue[anim.index];
@@ -1625,7 +1655,7 @@ export class ThreeScene {
             model.position.y = baseY;
             if (model.userData) model.userData.speaking = false;
             const nextIndex = (anim.index + 1) % anim.queue.length;
-            const gap = 140;
+            const gap = 500;
             anim.cyclePauseUntil = now + gap;
             anim.index = nextIndex;
             anim.startTime = 0;
@@ -1935,14 +1965,33 @@ export class Panel {
 
     updateNarrationTarget(){
         if (this.textType !== 'narration') return;
-        const rect = this.narrationEl.getBoundingClientRect();
+        let fontSize = this.baseFontSize;
+        let lineHeight = this.baseLineHeight;
+        const minFont = 12;
+        const maxFitHeight = Math.max(0, this.target.top - (this.topInset || 0));
+        this.narrationEl.style.fontSize = `${fontSize}px`;
+        this.narrationEl.style.lineHeight = `${lineHeight}px`;
+        let rect = this.narrationEl.getBoundingClientRect();
+        while (rect.height > maxFitHeight && fontSize > minFont) {
+            fontSize = Math.max(minFont, fontSize - 1);
+            lineHeight = Math.max(minFont * 1.2, lineHeight - 1.2);
+            this.narrationEl.style.fontSize = `${fontSize}px`;
+            this.narrationEl.style.lineHeight = `${lineHeight}px`;
+            rect = this.narrationEl.getBoundingClientRect();
+        }
         const targetTop = Math.max(this.topInset || 0, this.target.top - rect.height);
         this.narrationTarget.left = this.target.left;
         this.narrationTarget.top = targetTop;
+        this.narrationEl.style.maxHeight = `${maxFitHeight}px`;
+        this.narrationEl.style.overflow = 'hidden';
         if (this.narrationData.left === this.data.left && this.narrationData.top === this.data.top) {
             this.narrationData.left = this.target.left;
-            this.narrationData.top = this.target.top + 40;
+            this.narrationData.top = targetTop;
         }
+        if (this.narrationData.top > targetTop) {
+            this.narrationData.top = targetTop;
+        }
+        this.narrationData.left = this.target.left;
         this.narrationEl.style.left = `${this.narrationData.left}px`;
         this.narrationEl.style.top = `${this.narrationData.top}px`;
     }
