@@ -424,31 +424,6 @@ class SpeechBubbleLayout {
                 }
             }
 
-            if (!useBaseLayout && circleRect &&
-                testRect.bottom > circleRect.top &&
-                testRect.top < circleRect.bottom &&
-                top >= circleRect.top) {
-                    const candidateBelow = circleRect.bottom + this.tailPad;
-                    top = Math.max(topLimit, candidateBelow);
-                testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-                placementMode = 'below';
-                forcedBottom = true;
-            }
-
-            if (!useBaseLayout) {
-                const belowByPosition = circleRect
-                    ? top >= ((circleRect.top + circleRect.bottom) / 2)
-                    : top >= anchorY;
-                item.isBelow = forcedBottom || placementMode === 'below' || belowByPosition;
-                if (item.lastIsBelow === null) {
-                    item.lastIsBelow = item.isBelow;
-                } else if (!item.lastIsBelow && item.isBelow) {
-                    item.lastIsBelow = true;
-                } else if (item.lastIsBelow && !item.isBelow) {
-                    item.lastIsBelow = false;
-                }
-            }
-
             if (!useBaseLayout && testRect.right > narrationRect.left &&
                 testRect.left < narrationRect.right &&
                 testRect.bottom > narrationRect.top &&
@@ -458,7 +433,7 @@ class SpeechBubbleLayout {
                 testRect.bottom = top + rect.height;
             }
 
-            if (!useBaseLayout && !isSpeaking) {
+            if (!useBaseLayout && !isSpeaking && this.items.length > 1) {
                 let tries = 0;
                 let shrinkTried = false;
                 while (tries < 12) {
@@ -494,10 +469,10 @@ class SpeechBubbleLayout {
                 }
             }
 
-            if (!useBaseLayout && !isSpeaking && !forcedBottom) {
+            if (!useBaseLayout && !isSpeaking && this.items.length > 1) {
                 let candidate = top;
                 let best = top;
-                for (let i = 0; i < 12; i++) {
+                for (let i = 0; i < 60; i++) {
                     candidate -= 6;
                     if (candidate < topBound) break;
                     const tryRect = {
@@ -522,6 +497,78 @@ class SpeechBubbleLayout {
                     top = best;
                     testRect.top = top;
                     testRect.bottom = top + rect.height;
+                }
+            }
+
+            if (!useBaseLayout && !isSpeaking && this.items.length > 1) {
+                const topHalfLimit = topBound + (canvasRect.height * 0.5);
+                let guard = 0;
+                while (testRect.top > topHalfLimit && guard < 20) {
+                    const candidate = testRect.top - 12;
+                    const tryRect = {
+                        left,
+                        top: candidate,
+                        right: left + rect.width,
+                        bottom: candidate + rect.height,
+                    };
+                    const overlapsBubble = overlapsPlaced(tryRect, !recomputeLayout);
+                    const overlapsNarration =
+                        tryRect.right > narrationRect.left &&
+                        tryRect.left < narrationRect.right &&
+                        tryRect.bottom > narrationRect.top &&
+                        tryRect.top < narrationRect.bottom;
+                    if (overlapsBubble || overlapsNarration) break;
+                    if (placementMode === 'above' && overlapsAnySpeaker(tryRect)) break;
+                    top = candidate;
+                    testRect = tryRect;
+                    guard += 1;
+                }
+            }
+
+            if (!useBaseLayout && circleRect &&
+                overlapsAnySpeaker(testRect) &&
+                testRect.bottom > circleRect.top &&
+                testRect.top < circleRect.bottom) {
+                const candidateBelow = circleRect.bottom + this.tailPad;
+                top = Math.max(topLimit, candidateBelow);
+                testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
+                placementMode = 'below';
+                forcedBottom = true;
+            }
+
+            if (!useBaseLayout && !isSpeaking && this.items.length > 1 && idx === 0) {
+                const pinRect = {
+                    left,
+                    top: topBound,
+                    right: left + rect.width,
+                    bottom: topBound + rect.height,
+                };
+                const overlapsBubble = overlapsPlaced(pinRect, !recomputeLayout);
+                const overlapsNarration =
+                    pinRect.right > narrationRect.left &&
+                    pinRect.left < narrationRect.right &&
+                    pinRect.bottom > narrationRect.top &&
+                    pinRect.top < narrationRect.bottom;
+                const overlapsSpeaker = overlapsAnySpeaker(pinRect);
+                if (!overlapsBubble && !overlapsNarration && !overlapsSpeaker) {
+                    top = topBound;
+                    testRect = pinRect;
+                    placementMode = 'above';
+                    forcedBottom = false;
+                }
+            }
+
+            if (!useBaseLayout) {
+                const belowByPosition = circleRect
+                    ? top >= ((circleRect.top + circleRect.bottom) / 2)
+                    : top >= anchorY;
+                item.isBelow = forcedBottom || placementMode === 'below' || belowByPosition;
+                if (item.lastIsBelow === null) {
+                    item.lastIsBelow = item.isBelow;
+                } else if (!item.lastIsBelow && item.isBelow) {
+                    item.lastIsBelow = true;
+                } else if (item.lastIsBelow && !item.isBelow) {
+                    item.lastIsBelow = false;
                 }
             }
 
@@ -575,12 +622,13 @@ class SpeechBubbleLayout {
             }
             // No bottom clamp: allow stacking beyond panel.
 
+            const visualBelow = (item.y + rect.height / 2) >= speakerMidY;
+
             el.style.left = `${item.x}px`;
             el.style.top = `${item.y}px`;
-            const zBase = 100;
-            el.style.zIndex = `${zBase - idx}`;
-
-            const visualBelow = (item.y + rect.height / 2) >= speakerMidY;
+            const zBase = 100000;
+            const z = visualBelow ? (zBase - Math.round(item.y)) : (zBase + Math.round(item.y));
+            el.style.zIndex = `${z}`;
             item.visualBelow = visualBelow;
 
             if (window.DL_DEBUG_SPEECH === true) {
@@ -1965,25 +2013,32 @@ export class Panel {
 
     updateNarrationTarget(){
         if (this.textType !== 'narration') return;
-        let fontSize = this.baseFontSize;
-        let lineHeight = this.baseLineHeight;
-        const minFont = 12;
-        const maxFitHeight = Math.max(0, this.target.top - (this.topInset || 0));
-        this.narrationEl.style.fontSize = `${fontSize}px`;
-        this.narrationEl.style.lineHeight = `${lineHeight}px`;
         let rect = this.narrationEl.getBoundingClientRect();
-        while (rect.height > maxFitHeight && fontSize > minFont) {
-            fontSize = Math.max(minFont, fontSize - 1);
-            lineHeight = Math.max(minFont * 1.2, lineHeight - 1.2);
+        const maxFitHeight = Math.max(0, this.target.top - (this.topInset || 0));
+        if (!this.isUpdating) {
+            let fontSize = this.baseFontSize;
+            let lineHeight = this.baseLineHeight;
+            const minFont = 12;
             this.narrationEl.style.fontSize = `${fontSize}px`;
             this.narrationEl.style.lineHeight = `${lineHeight}px`;
             rect = this.narrationEl.getBoundingClientRect();
+            while (rect.height > maxFitHeight && fontSize > minFont) {
+                fontSize = Math.max(minFont, fontSize - 1);
+                lineHeight = Math.max(minFont * 1.2, lineHeight - 1.2);
+                this.narrationEl.style.fontSize = `${fontSize}px`;
+                this.narrationEl.style.lineHeight = `${lineHeight}px`;
+                rect = this.narrationEl.getBoundingClientRect();
+            }
         }
+        rect = this.narrationEl.getBoundingClientRect();
         const targetTop = Math.max(this.topInset || 0, this.target.top - rect.height);
         this.narrationTarget.left = this.target.left;
         this.narrationTarget.top = targetTop;
         this.narrationEl.style.maxHeight = `${maxFitHeight}px`;
         this.narrationEl.style.overflow = 'hidden';
+        if (this.isUpdating) {
+            return;
+        }
         if (this.narrationData.left === this.data.left && this.narrationData.top === this.data.top) {
             this.narrationData.left = this.target.left;
             this.narrationData.top = targetTop;
