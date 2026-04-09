@@ -144,6 +144,14 @@ canvas {
     border-top: 11px solid #fff;
 }
 
+.debug-speaker-box {
+    position: absolute;
+    border: 1px dashed rgba(255, 0, 0, 0.8);
+    background: rgba(255, 0, 0, 0.06);
+    pointer-events: none;
+    z-index: 45;
+}
+
 iframe {
 	visibility: hidden;
 	position: absolute;

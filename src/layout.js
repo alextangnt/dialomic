@@ -6,6 +6,8 @@ let iframe;
 let vars = {};
 let layout;
 let activeSessionId = null;
+// window.DL_DEBUG_SPEECH = true
+
 
 window.onload = () =>{
     console.log("HIIIII");
