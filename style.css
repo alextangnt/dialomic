@@ -31,27 +31,17 @@ canvas {
     top: 0;
     left: 0;
     z-index: 2; /* Place this element on top of the background */
-    /* Optional: Set pointer-events to none if you want mouse interactions to pass through the canvas to the elements beneath it */
-    /* pointer-events: none; */
+    pointer-events: none;
     overflow: hidden;
 }
 
-#ui-root {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    z-index: 30;
-    pointer-events: none;
-}
-
 #link-list {
-    position: absolute;
+    position: fixed;
     display: flex;
     flex-direction: column;
     gap: 0;
     pointer-events: auto;
+    z-index: 60;
 }
 
 #link-list .link-button {
@@ -96,7 +86,7 @@ canvas {
     z-index: 30;
     color: #000;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    pointer-events: none;
+    /* pointer-events: none; */
     white-space: pre-wrap;
 }
 
@@ -105,7 +95,7 @@ canvas {
     z-index: 40;
     color: #000;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    pointer-events: none;
+    /* pointer-events: none; */
     white-space: pre-wrap;
 }
 
@@ -119,7 +109,7 @@ canvas {
     padding: 10px 12px;
     max-width: 420px;
     box-shadow: 0 3px 2px rgba(0, 0, 0, 0.18);
-    pointer-events: none;
+    /* pointer-events: none; */
     white-space: pre-wrap;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
@@ -144,13 +134,13 @@ canvas {
     border-top: 11px solid #fff;
 }
 
-.debug-speaker-box {
+/* .debug-speaker-box {
     position: absolute;
     border: 1px dashed rgba(255, 0, 0, 0.8);
     background: rgba(255, 0, 0, 0.06);
     pointer-events: none;
     z-index: 45;
-}
+} */
 
 iframe {
 	visibility: hidden;
@@ -159,6 +149,7 @@ iframe {
     left: 0;
 	z-index: 3;
     overflow: hidden;
+    pointer-events: none;
 }
 
 #topbar {

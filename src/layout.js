@@ -6,7 +6,7 @@ let iframe;
 let vars = {};
 let layout;
 let activeSessionId = null;
-// window.DL_DEBUG_SPEECH = true
+window.DL_DEBUG_DELIVERY = true
 
 
 window.onload = () =>{
@@ -211,7 +211,7 @@ function splitHtmlParagraphs(html) {
 }
 
 function parseSpeakerBlocks(text, sceneObjects) {
-    console.log(sceneObjects);
+    // console.log(sceneObjects);
     const originalParas = splitHtmlParagraphs(text);
     const cleanedParas = originalParas.map((p) => stripHtml(p));
     const narrationParas = [];
@@ -303,14 +303,9 @@ class LayoutUI {
         this.currPanel = null;
         this.panelsOnscreen = {};
 
-        this.uiRoot = document.createElement('div');
-        this.uiRoot.id = 'ui-root';
-        this.uiRoot.style.top = `${this.topInset}px`;
-        this.uiRoot.style.height = `${this.h}px`;
         this.linksRoot = document.createElement('div');
         this.linksRoot.id = 'link-list';
-        this.uiRoot.appendChild(this.linksRoot);
-        document.body.appendChild(this.uiRoot);
+        document.body.appendChild(this.linksRoot);
 
         this.restartBtn = document.createElement('button');
         this.restartBtn.id = 'restartBtn';
@@ -326,14 +321,14 @@ class LayoutUI {
 
         window.addEventListener('resize', () => this.onResize());
         window.addEventListener('keydown', (event) => this.onKeyDown(event));
+        window.addEventListener('pointermove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true });
+        window.addEventListener('mousemove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true });
     }
 
     onResize() {
         this.topInset = this.getTopInset();
         this.w = window.innerWidth;
         this.h = Math.max(0, window.innerHeight - this.topInset);
-        this.uiRoot.style.top = `${this.topInset}px`;
-        this.uiRoot.style.height = `${this.h}px`;
         for (let panel in this.panelsOnscreen){
             this.panelsOnscreen[panel].setTopInset(this.topInset);
         }
@@ -346,6 +341,110 @@ class LayoutUI {
         if (!topbar) return 0;
         return Math.max(0, Math.ceil(topbar.getBoundingClientRect().height));
     }
+
+    onGlobalPointerMove(event) {
+        if (!this.links || this.links.length === 0) return;
+        const elements = document.elementsFromPoint(event.clientX, event.clientY);
+        if (!elements || !elements.length) return;
+        const btn = elements.find((el) => el?.classList?.contains('link-button'));
+        if (!btn || !this.linksRoot.contains(btn)) return;
+        const buttons = Array.from(this.linksRoot.querySelectorAll('button.link-button'));
+        const idx = buttons.indexOf(btn);
+        if (idx >= 0 && idx !== this.selectedLinkIndex) {
+            this.selectedLinkIndex = idx;
+            this.updateSelectedLink();
+        }
+    }
+
+    // initEventDebug() {
+    //     if (!window.DL_DEBUG_EVENTS) return;
+    //     let mouseMoves = 0;
+    //     let pointerMoves = 0;
+    //     let lastEventAt = 0;
+    //     const stamp = () => {
+    //         lastEventAt = performance.now();
+    //     };
+    //     const onMouse = () => { mouseMoves += 1; stamp(); };
+    //     const onPointer = () => { pointerMoves += 1; stamp(); };
+    //     window.addEventListener('mousemove', onMouse, { capture: true, passive: true });
+    //     window.addEventListener('pointermove', onPointer, { capture: true, passive: true });
+    //     document.addEventListener('mousemove', onMouse, { capture: true, passive: true });
+    //     document.addEventListener('pointermove', onPointer, { capture: true, passive: true });
+    //     setInterval(() => {
+    //         console.log('[event-debug]', {
+    //             mouseMoves,
+    //             pointerMoves,
+    //             hasFocus: document.hasFocus(),
+    //             visibility: document.visibilityState,
+    //             msSinceEvent: Math.round(performance.now() - lastEventAt),
+    //         });
+    //         mouseMoves = 0;
+    //         pointerMoves = 0;
+    //     }, 1000);
+    // }
+
+    // initPointerDebug() {
+    //     if (!window.DL_DEBUG_POINTER) return;
+    //     const overlay = document.createElement('div');
+    //     overlay.id = 'pointer-debug-overlay';
+    //     overlay.style.position = 'fixed';
+    //     overlay.style.left = '0';
+    //     overlay.style.top = '0';
+    //     overlay.style.width = '0';
+    //     overlay.style.height = '0';
+    //     overlay.style.border = '2px solid rgba(255, 0, 0, 0.8)';
+    //     overlay.style.background = 'rgba(255, 0, 0, 0.08)';
+    //     overlay.style.zIndex = '2147483647';
+    //     overlay.style.pointerEvents = 'none';
+    //     document.body.appendChild(overlay);
+
+    //     const label = document.createElement('div');
+    //     label.id = 'pointer-debug-label';
+    //     label.style.position = 'fixed';
+    //     label.style.left = '0';
+    //     label.style.top = '0';
+    //     label.style.zIndex = '2147483647';
+    //     label.style.pointerEvents = 'none';
+    //     label.style.background = 'rgba(0, 0, 0, 0.75)';
+    //     label.style.color = '#fff';
+    //     label.style.font = '11px/1.2 "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+    //     label.style.padding = '2px 4px';
+    //     label.style.borderRadius = '3px';
+    //     document.body.appendChild(label);
+
+    //     document.addEventListener('pointermove', (e) => {
+    //         const x = e.clientX;
+    //         const y = e.clientY;
+    //         const el = document.elementFromPoint(x, y);
+    //         if (!el) return;
+    //         const rect = el.getBoundingClientRect();
+    //         overlay.style.left = `${rect.left}px`;
+    //         overlay.style.top = `${rect.top}px`;
+    //         overlay.style.width = `${rect.width}px`;
+    //         overlay.style.height = `${rect.height}px`;
+    //         const name = el.id ? `#${el.id}` : (el.className ? `.${String(el.className).split(' ').join('.')}` : el.tagName.toLowerCase());
+    //         label.textContent = `${el.tagName.toLowerCase()} ${name}`.trim();
+    //         label.style.left = `${Math.min(window.innerWidth - 10, rect.left + 4)}px`;
+    //         label.style.top = `${Math.max(0, rect.top - 18)}px`;
+    //     }, { passive: true });
+
+    //     document.addEventListener('pointerdown', (e) => {
+    //         const x = e.clientX;
+    //         const y = e.clientY;
+    //         const el = document.elementFromPoint(x, y);
+    //         if (!el) return;
+    //         const style = window.getComputedStyle(el);
+    //         const name = el.id ? `#${el.id}` : (el.className ? `.${String(el.className).split(' ').join('.')}` : el.tagName.toLowerCase());
+    //         console.log('[pointer-debug] down', {
+    //             tag: el.tagName.toLowerCase(),
+    //             name,
+    //             zIndex: style.zIndex,
+    //             pointerEvents: style.pointerEvents,
+    //             opacity: style.opacity,
+    //             position: style.position,
+    //         });
+    //     }, { passive: true });
+    // }
 
     onKeyDown(event) {
         if (event.key === 'r' || event.key === 'R') {
@@ -429,7 +528,7 @@ class LayoutUI {
     }
 
     renderLinks() {
-        this.linksRoot.innerHTML = '';
+        const existingButtons = Array.from(this.linksRoot.querySelectorAll('button.link-button'));
         const measure = document.createElement('span');
         measure.style.position = 'absolute';
         measure.style.visibility = 'hidden';
@@ -438,16 +537,32 @@ class LayoutUI {
         measure.style.fontSize = `${this.fontSize}px`;
         document.body.appendChild(measure);
         for (let i = 0; i < this.links.length; i++){
-            const btn = document.createElement('button');
-            btn.type = 'button';
-            btn.className = 'link-button';
-            btn.textContent = this.links[i];
+            const label = this.links[i];
+            let btn = existingButtons[i];
+            if (!btn) {
+                btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'link-button';
+                this.linksRoot.appendChild(btn);
+            }
+            btn.textContent = label;
             btn.style.marginBottom = `${this.linkGap}px`;
-            btn.addEventListener('mouseenter', () => {
-                this.selectedLinkIndex = i;
-                this.updateSelectedLink();
-            });
-            measure.textContent = this.links[i];
+            btn.dataset.index = String(i);
+            if (!btn.dataset.bound) {
+                btn.addEventListener('mouseenter', (event) => {
+                    const idx = Number(event.currentTarget?.dataset?.index);
+                    if (Number.isFinite(idx)) {
+                        this.selectedLinkIndex = idx;
+                        this.updateSelectedLink();
+                    }
+                });
+                btn.addEventListener('click', (event) => {
+                    const idx = Number(event.currentTarget?.dataset?.index);
+                    if (Number.isFinite(idx)) this.pressLink(idx);
+                });
+                btn.dataset.bound = 'true';
+            }
+            measure.textContent = label;
             const textPaddingX = Math.round(this.fontSize * 1.1);
             const textWidth = Math.ceil(measure.getBoundingClientRect().width + textPaddingX);
             const maxWidth = Math.max(50, this.w - this.bx * 2);
@@ -458,8 +573,9 @@ class LayoutUI {
                 btn.style.width = `${textWidth}px`;
                 btn.style.whiteSpace = 'nowrap';
             }
-            btn.addEventListener('click', () => this.pressLink(i));
-            this.linksRoot.appendChild(btn);
+        }
+        for (let i = existingButtons.length - 1; i >= this.links.length; i--) {
+            existingButtons[i].remove();
         }
         measure.remove();
         this.updateLinkLayout();
@@ -477,6 +593,15 @@ class LayoutUI {
         if (!btn) return;
         btn.classList.add('pressed');
         this.pressed = true;
+        const iframeEl = document.getElementById('logicEngine');
+        if (iframeEl && iframeEl.blur) iframeEl.blur();
+        if (document.activeElement && document.activeElement.blur) {
+            document.activeElement.blur();
+        }
+        if (document.body && document.body.focus) {
+            document.body.focus({ preventScroll: true });
+        }
+        if (window.focus) window.focus();
         this.makeResponse(index);
     }
 
@@ -491,7 +616,7 @@ class LayoutUI {
        
         this.psgName = info.psgName;
         vars = iframe.contentWindow.SugarCube.State.variables;
-        console.log(vars?.DL?.objects);
+        // console.log(vars?.DL?.objects);
         const sceneObjects = buildSceneObjectMap(vars?.DL?.objects);
         const parsed = parseSpeakerBlocks(cleanText(info.passage), sceneObjects);
         this.speakers = parsed.speakers || [];
@@ -551,8 +676,8 @@ class LayoutUI {
         target = {left: this.w * 3 / 4, top: this.topInset + this.h / 3, width: 200, height: 200};
         vars = iframe.contentWindow.SugarCube.State.variables;
         let scene = vars.DL;
-        console.log("makeresponese make response");
-        console.log(vars);
+        // console.log("makeresponese make response");
+        // console.log(vars);
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, choice, i,scene, 'narration', this.topInset);
             p.panelSize = 'small';
