@@ -94,6 +94,7 @@ window.onload = () =>{
             }
         }
         layout.uiRoot?.remove();
+        layout.destroy?.();
         layout.panels = {};
         layout.panelsOnscreen = {};
         layout.currPanel = null;
@@ -307,6 +308,11 @@ class LayoutUI {
         this.linksRoot.id = 'link-list';
         document.body.appendChild(this.linksRoot);
 
+        this.inputRoot = document.createElement('div');
+        this.inputRoot.id = 'input-list';
+        this.inputRoot.style.display = 'none';
+        document.body.appendChild(this.inputRoot);
+
         this.restartBtn = document.createElement('button');
         this.restartBtn.id = 'restartBtn';
         this.restartBtn.type = 'button';
@@ -323,6 +329,12 @@ class LayoutUI {
         window.addEventListener('keydown', (event) => this.onKeyDown(event));
         window.addEventListener('pointermove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true });
         window.addEventListener('mousemove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true });
+    }
+
+    destroy() {
+        if (this.linksRoot) this.linksRoot.remove();
+        if (this.inputRoot) this.inputRoot.remove();
+        if (this.restartBtn) this.restartBtn.remove();
     }
 
     onResize() {
@@ -447,6 +459,10 @@ class LayoutUI {
     // }
 
     onKeyDown(event) {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || this.inputRoot?.contains(active))) {
+            return;
+        }
         if (event.key === 'r' || event.key === 'R') {
             this.restartStory();
         }
@@ -525,6 +541,7 @@ class LayoutUI {
             btn.style.marginBottom = `${this.linkGap}px`;
         }
         measure.remove();
+        this.updateFormUILayout();
     }
 
     renderLinks() {
@@ -582,6 +599,114 @@ class LayoutUI {
         this.updateSelectedLink();
     }
 
+    renderFormUI() {
+        const formUI = this.formUI;
+        const fieldSpec = formUI?.field;
+        const buttonSpec = formUI?.button;
+        const hasField = Boolean(fieldSpec && (fieldSpec.tag || fieldSpec.type || fieldSpec.placeholder || fieldSpec.value));
+        const hasButton = Boolean(buttonSpec && (buttonSpec.text || buttonSpec.id));
+
+        if (!hasField && !hasButton) {
+            this.inputRoot.innerHTML = '';
+            this.inputRoot.style.display = 'none';
+            this.formFieldEl = null;
+            this.formButtonEl = null;
+            return;
+        }
+
+        this.inputRoot.style.display = 'flex';
+        this.inputRoot.style.fontSize = `${this.fontSize}px`;
+        this.inputRoot.style.lineHeight = `${this.bd}px`;
+        this.inputRoot.style.gap = `${Math.max(6, this.fontSize * 0.35)}px`;
+
+        if (hasField) {
+            let el = this.formFieldEl;
+            const tag = (fieldSpec.tag || 'input').toLowerCase();
+            const needsTextarea = tag === 'textarea';
+            if (!el || (needsTextarea && el.tagName.toLowerCase() !== 'textarea') || (!needsTextarea && el.tagName.toLowerCase() !== 'input')) {
+                if (el) el.remove();
+                el = document.createElement(needsTextarea ? 'textarea' : 'input');
+                el.className = 'ui-input';
+                if (!needsTextarea) el.type = fieldSpec.type || 'text';
+                el.addEventListener('input', (event) => {
+                    this.sendUIInput(event.currentTarget?.value || '');
+                });
+                this.inputRoot.appendChild(el);
+                this.formFieldEl = el;
+            }
+            if (typeof fieldSpec.placeholder === 'string') {
+                el.placeholder = fieldSpec.placeholder;
+            } else {
+                el.removeAttribute('placeholder');
+            }
+            if (typeof fieldSpec.value === 'string') {
+                el.value = fieldSpec.value;
+            }
+        } else if (this.formFieldEl) {
+            this.formFieldEl.remove();
+            this.formFieldEl = null;
+        }
+
+        if (hasButton) {
+            let btn = this.formButtonEl;
+            if (!btn) {
+                btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'ui-submit';
+                btn.addEventListener('click', () => this.sendUIButton());
+                this.inputRoot.appendChild(btn);
+                this.formButtonEl = btn;
+            }
+            btn.textContent = buttonSpec.text || 'submit';
+        } else if (this.formButtonEl) {
+            this.formButtonEl.remove();
+            this.formButtonEl = null;
+        }
+
+        this.updateFormUILayout();
+    }
+
+    updateFormUILayout() {
+        if (!this.inputRoot || this.inputRoot.style.display === 'none') return;
+        this.inputRoot.style.left = `${this.bx}px`;
+
+        const linkRect = this.linksRoot.getBoundingClientRect();
+        const inputRect = this.inputRoot.getBoundingClientRect();
+        const gap = Math.max(8, this.fontSize * 0.5);
+        let top = linkRect.top - inputRect.height - gap;
+        if (!this.links || this.links.length === 0 || !Number.isFinite(top)) {
+            const bottomPad = Math.max(48, this.fontSize * 2);
+            top = Math.max(this.topInset + gap, this.h - inputRect.height - bottomPad);
+        } else {
+            top = Math.max(this.topInset + gap, top);
+        }
+        this.inputRoot.style.top = `${top}px`;
+
+        const maxWidth = Math.max(180, this.w - this.bx * 2);
+        if (this.formFieldEl) {
+            this.formFieldEl.style.width = `${maxWidth}px`;
+        }
+        if (this.formButtonEl) {
+            this.formButtonEl.style.width = `${Math.min(maxWidth, Math.max(160, this.fontSize * 8))}px`;
+        }
+    }
+
+    sendUIInput(value) {
+        if (!loaded) return;
+        iframe.contentWindow.postMessage(
+            { type: 'uiInput', value: String(value ?? '') },
+            window.location.origin
+        );
+    }
+
+    sendUIButton() {
+        if (!loaded) return;
+        iframe.contentWindow.postMessage(
+            { type: 'uiButton' },
+            window.location.origin
+        );
+    }
+
     pressSelectedLink() {
         this.pressLink(this.selectedLinkIndex);
     }
@@ -622,9 +747,11 @@ class LayoutUI {
         this.speakers = parsed.speakers || [];
         this.txt = parsed.narrationText || '';
         this.links = info.links || [];
+        this.formUI = info.formUI || null;
         this.selectedLinkIndex = 0;
         this.pressed = false;
         this.renderLinks();
+        this.renderFormUI();
     }
 
     setPanel() {

@@ -50,8 +50,24 @@ window.onload = () =>{
         }
         );
 
-        // console.log("linksText: ",linksText);
-        let psgInfo = {psgName: psgName, passage: psg, links: linksText};
+        const formRoot = content.querySelector('.passage') || content;
+        const inputEl = formRoot.querySelector('input, textarea');
+        const buttonEl = formRoot.querySelector('button');
+        const formUI = {
+            field: inputEl ? {
+                tag: inputEl.tagName.toLowerCase(),
+                type: inputEl.getAttribute('type') || 'text',
+                value: inputEl.value || '',
+                placeholder: inputEl.getAttribute('placeholder') || '',
+                name: inputEl.getAttribute('name') || '',
+                id: inputEl.getAttribute('id') || '',
+            } : null,
+            button: buttonEl ? {
+                text: buttonEl.textContent || '',
+                id: buttonEl.getAttribute('id') || '',
+            } : null,
+        };
+        let psgInfo = {psgName: psgName, passage: psg, links: linksText, formUI};
 
         const targetOrigin = window.location.origin === "null" ? "*" : window.location.origin;
         if (!started){
@@ -122,6 +138,16 @@ window.onload = () =>{
             if (sessionId && event.data.sessionId && event.data.sessionId !== sessionId) return;
             // console.log(allLinks);
             allLinks[clicked].click();
+        }
+        if (event.data.type === "uiInput") {
+            const root = document.querySelector('.passage') || document.body;
+            const input = root.querySelector('input, textarea');
+            if (input) input.value = String(event.data.value ?? '');
+        }
+        if (event.data.type === "uiButton") {
+            const root = document.querySelector('.passage') || document.body;
+            const btn = root.querySelector('button');
+            if (btn) btn.click();
         }
 
     });

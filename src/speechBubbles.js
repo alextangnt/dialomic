@@ -45,8 +45,6 @@ export class SpeechBubbleLayout {
         this.minTopSeparation = 8;
         this.tailPad = 18;
         this.lastCanvasSize = { width: 0, height: 0 };
-        this.bottomTailOffset = 2;
-        this.bottomTailInset = 0;
     }
 
     sync(elements, speakers) {
@@ -644,26 +642,9 @@ export class SpeechBubbleLayout {
             el.style.zIndex = `${z}`;
             item.visualBelow = visualBelow;
 
-            if (window.DL_DEBUG_SPEECH === true) {
-                el.dataset.isBelow = visualBelow ? 'below' : 'above';
-                el.style.outline = visualBelow ? '2px dashed #1e88e5' : '2px dashed #e53935';
-                el.style.outlineOffset = '2px';
-                // if (!item._debugLogged || (performance.now() - item._debugLogged) > 500) {
-                //     item._debugLogged = performance.now();
-                //     console.log('[bubble drift]', {
-                //         speaker: item.speaker,
-                //         anchorXLive,
-                //         baseAnchorX: item.baseAnchorX,
-                //         driftX,
-                //         left,
-                //         driftedLeft,
-                //     });
-                // }
-            } else {
-                el.dataset.isBelow = '';
-                el.style.outline = '';
-                el.style.outlineOffset = '';
-            }
+            el.dataset.isBelow = '';
+            el.style.outline = '';
+            el.style.outlineOffset = '';
 
             const tailMargin = 18;
             const tailX = Math.max(tailMargin, Math.min(rect.width - tailMargin, anchorX - item.x));
