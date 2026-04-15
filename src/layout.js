@@ -289,6 +289,7 @@ class LayoutUI {
         this.psgName = "";
         this.clicked = 0;
         this.links = [];
+        this.showResponse = true;
 
         this.topInset = this.getTopInset();
         this.w = window.innerWidth;
@@ -727,7 +728,11 @@ class LayoutUI {
             document.body.focus({ preventScroll: true });
         }
         if (window.focus) window.focus();
-        this.makeResponse(index);
+        if (this.showResponse) {
+            this.makeResponse(index);
+        } else {
+            this.clickLink(index);
+        }
     }
 
     updateSelectedLink() {
@@ -747,6 +752,7 @@ class LayoutUI {
         this.speakers = parsed.speakers || [];
         this.txt = parsed.narrationText || '';
         this.links = info.links || [];
+        this.showResponse = vars?.DL?.show_response === true;
         this.formUI = info.formUI || null;
         this.selectedLinkIndex = 0;
         this.pressed = false;

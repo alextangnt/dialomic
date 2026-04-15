@@ -89,6 +89,7 @@ const facings = {
     "LOOKBACK": Math.PI
 }
 const frames = 10;
+const exitFrames = 16;
 
 function normalizeSceneObjects(scene) {
     // console.log(scene);
@@ -1053,7 +1054,8 @@ export class Panel {
     moveToTarget(){
         
         
-        let rate = 1 - Math.pow(0.1, 1 / frames);
+        const frameBudget = this.isAnimatingOut ? exitFrames : frames;
+        let rate = 1 - Math.pow(0.1, 1 / frameBudget);
         let c = this.data;
         let t = this.target;
 
