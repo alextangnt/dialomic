@@ -174,6 +174,29 @@ Examples:
 <<set $DL.shot = "MEDIUMCLOSE rat2">>
 ```
 
+#### Panel Layout Config
+You can control automatic panel stacking with `DL.config`:
+
+```twine
+<<set $DL.config = {
+  panels: "stack",
+  rows: 3,
+  cols: 1
+}>>
+```
+
+Rules:
+- `panels` defaults to `"stack"` (`"cycle"` is reserved/not fully implemented).
+- `rows` and `cols` default to `1` when omitted.
+- `rows` and `cols` are clamped to `1..3`.
+- Capacity is `rows * cols`; once full in stack mode, current panels animate out and stacking restarts.
+- If a panel already on screen is shown again, it is reordered rather than duplicated.
+
+Per-passage command tokens (inside passage text):
+- `%%solo%%`: show current panel alone, and next panel starts without the current panel.
+- `%%resets%%`: clear current stack before showing the new panel.
+- `%%rows=N%%`, `%%cols=N%%`, `%%panels=stack|cycle%%`: override layout config for that passage.
+
 #### Twine Variables and Custom State
 You can define reusable object specs as variables and reference them in `DL.objects`.
 

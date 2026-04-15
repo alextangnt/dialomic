@@ -44,40 +44,44 @@ export class SpeechBubbleLayout {
         this.maxWidth = 420;
         this.minTopSeparation = 8;
         this.tailPad = 18;
-        this.lastCanvasSize = { width: 0, height: 0 };
+        this.lastCanvasSize = { width: 0, height: 0, left: 0, top: 0 };
     }
 
     sync(elements, speakers) {
         this.items = elements.map((el, index) => {
             const existing = this.items[index];
+            const canReuse = existing?.el === el;
             return {
                 el,
                 speaker: speakers?.[index]?.speaker || '',
-                anchorNorm: existing?.anchorNorm || null,
-                circleNorm: existing?.circleNorm || null,
-                side: existing?.side || null,
-                x: existing?.x ?? null,
-                y: existing?.y ?? null,
-                lift: existing?.lift ?? 0,
-                width: existing?.width ?? null,
-                widthDirty: existing ? false : true,
-                lastIsBelow: existing?.lastIsBelow ?? null,
-                expandOnly: existing?.expandOnly ?? false,
-                baseLeft: existing?.baseLeft ?? null,
-                baseTop: existing?.baseTop ?? null,
-                baseWidth: existing?.baseWidth ?? null,
-                baseHeight: existing?.baseHeight ?? null,
-                baseAnchorX: existing?.baseAnchorX ?? null,
-                frozenOffsetX: existing?.frozenOffsetX ?? null,
-                frozenOffsetY: existing?.frozenOffsetY ?? null,
-                frozenNormX: existing?.frozenNormX ?? null,
-                frozenNormY: existing?.frozenNormY ?? null,
-                frozenAnchorNormX: existing?.frozenAnchorNormX ?? null,
-                frozenAnchorNormY: existing?.frozenAnchorNormY ?? null,
-                frozenIsBelow: existing?.frozenIsBelow ?? null,
-                frozenTailStyle: existing?.frozenTailStyle ?? null,
-                lastAnchorX: existing?.lastAnchorX ?? null,
-                lastAnchorY: existing?.lastAnchorY ?? null,
+                anchorNorm: canReuse ? (existing?.anchorNorm || null) : null,
+                circleNorm: canReuse ? (existing?.circleNorm || null) : null,
+                side: canReuse ? (existing?.side || null) : null,
+                x: canReuse ? (existing?.x ?? null) : null,
+                y: canReuse ? (existing?.y ?? null) : null,
+                lift: canReuse ? (existing?.lift ?? 0) : 0,
+                width: canReuse ? (existing?.width ?? null) : null,
+                widthDirty: canReuse ? false : true,
+                lastIsBelow: canReuse ? (existing?.lastIsBelow ?? null) : null,
+                expandOnly: canReuse ? (existing?.expandOnly ?? false) : false,
+                baseLeft: canReuse ? (existing?.baseLeft ?? null) : null,
+                baseTop: canReuse ? (existing?.baseTop ?? null) : null,
+                baseWidth: canReuse ? (existing?.baseWidth ?? null) : null,
+                baseHeight: canReuse ? (existing?.baseHeight ?? null) : null,
+                baseNormX: canReuse ? (existing?.baseNormX ?? null) : null,
+                baseNormY: canReuse ? (existing?.baseNormY ?? null) : null,
+                baseAnchorX: canReuse ? (existing?.baseAnchorX ?? null) : null,
+                baseAnchorNormX: canReuse ? (existing?.baseAnchorNormX ?? null) : null,
+                frozenOffsetX: canReuse ? (existing?.frozenOffsetX ?? null) : null,
+                frozenOffsetY: canReuse ? (existing?.frozenOffsetY ?? null) : null,
+                frozenNormX: canReuse ? (existing?.frozenNormX ?? null) : null,
+                frozenNormY: canReuse ? (existing?.frozenNormY ?? null) : null,
+                frozenAnchorNormX: canReuse ? (existing?.frozenAnchorNormX ?? null) : null,
+                frozenAnchorNormY: canReuse ? (existing?.frozenAnchorNormY ?? null) : null,
+                frozenIsBelow: canReuse ? (existing?.frozenIsBelow ?? null) : null,
+                frozenTailStyle: canReuse ? (existing?.frozenTailStyle ?? null) : null,
+                lastAnchorX: canReuse ? (existing?.lastAnchorX ?? null) : null,
+                lastAnchorY: canReuse ? (existing?.lastAnchorY ?? null) : null,
             };
         });
     }
@@ -208,6 +212,9 @@ export class SpeechBubbleLayout {
     layout() {
         if (!this.items.length) return;
         const canvasRect = this.panel.canvas.getBoundingClientRect();
+        const prevCanvasLeft = this.lastCanvasSize.left;
+        const prevCanvasTop = this.lastCanvasSize.top;
+        const moved = canvasRect.left !== prevCanvasLeft || canvasRect.top !== prevCanvasTop;
         if (this.panel.isAnimatingOut) {
             for (const item of this.items) {
                 const el = item?.el;
@@ -287,11 +294,23 @@ export class SpeechBubbleLayout {
         }
         const resized = canvasRect.width !== this.lastCanvasSize.width ||
             canvasRect.height !== this.lastCanvasSize.height;
-        if (resized) {
-            this.lastCanvasSize.width = canvasRect.width;
-            this.lastCanvasSize.height = canvasRect.height;
+        if (moved && !resized) {
+            const dx = canvasRect.left - prevCanvasLeft;
+            const dy = canvasRect.top - prevCanvasTop;
+            for (const item of this.items) {
+                if (!item) continue;
+                if (Number.isFinite(item.baseLeft)) item.baseLeft += dx;
+                if (Number.isFinite(item.baseTop)) item.baseTop += dy;
+                if (Number.isFinite(item.x)) item.x += dx;
+                if (Number.isFinite(item.y)) item.y += dy;
+            }
         }
-        const recomputeLayout = resized || this.items.some((item) => item.baseLeft == null || item.baseTop == null || item.widthDirty);
+        this.lastCanvasSize.width = canvasRect.width;
+        this.lastCanvasSize.height = canvasRect.height;
+        this.lastCanvasSize.left = canvasRect.left;
+        this.lastCanvasSize.top = canvasRect.top;
+        const panelIsMoving = Boolean(this.panel?.isUpdating) && !Boolean(this.panel?.isAnimatingOut);
+        const recomputeLayout = resized || panelIsMoving || this.items.some((item) => item.baseLeft == null || item.baseTop == null || item.widthDirty);
         const leftBound = canvasRect.left + 8;
         const rightBound = canvasRect.right - 8;
         const topBound = canvasRect.top + 8;
@@ -437,10 +456,17 @@ export class SpeechBubbleLayout {
             let placementMode = 'above';
             let forcedBottom = false;
             let testRect;
-            const useBaseLayout = !recomputeLayout && item.baseLeft != null && item.baseTop != null;
+            const useBaseLayout = !recomputeLayout && (
+                (item.baseNormX != null && item.baseNormY != null) ||
+                (item.baseLeft != null && item.baseTop != null)
+            );
             if (useBaseLayout) {
-                left = item.baseLeft;
-                top = item.baseTop;
+                left = item.baseNormX != null
+                    ? (canvasRect.left + item.baseNormX * canvasRect.width)
+                    : item.baseLeft;
+                top = item.baseNormY != null
+                    ? (canvasRect.top + item.baseNormY * canvasRect.height)
+                    : item.baseTop;
                 testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
             } else {
                 if (circleRect) {
@@ -720,12 +746,22 @@ export class SpeechBubbleLayout {
                 item.baseTop = top;
                 item.baseWidth = rect.width;
                 item.baseHeight = rect.height;
+                item.baseNormX = canvasRect.width > 0 ? ((left - canvasRect.left) / canvasRect.width) : null;
+                item.baseNormY = canvasRect.height > 0 ? ((top - canvasRect.top) / canvasRect.height) : null;
                 item.baseAnchorX = anchorX;
+                item.baseAnchorNormX = canvasRect.width > 0 ? ((anchorX - canvasRect.left) / canvasRect.width) : null;
             } else {
-                left = item.baseLeft;
-                top = item.baseTop;
+                left = item.baseNormX != null
+                    ? (canvasRect.left + item.baseNormX * canvasRect.width)
+                    : item.baseLeft;
+                top = item.baseNormY != null
+                    ? (canvasRect.top + item.baseNormY * canvasRect.height)
+                    : item.baseTop;
             }
 
+            if (item.baseAnchorX == null && item.baseAnchorNormX != null) {
+                item.baseAnchorX = canvasRect.left + item.baseAnchorNormX * canvasRect.width;
+            }
             if (item.baseAnchorX == null) {
                 item.baseAnchorX = anchorXLive ?? anchorX;
             }

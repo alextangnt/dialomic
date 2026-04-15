@@ -134,8 +134,13 @@ canvas {
 
 .panel-narration {
     position: absolute;
-    z-index: 40;
-    color: #000;
+    z-index: 55;
+    color: #fff;
+    background: #000;
+    border: 1px solid #000;
+    border-radius: 0;
+    padding: 10px 12px;
+    box-sizing: border-box;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     /* pointer-events: none; */
     white-space: pre-wrap;

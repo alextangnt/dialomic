@@ -85,13 +85,12 @@ window.onload = () =>{
 
     function resetLayout() {
         if (!layout) return;
-        for (let key in layout.panels) {
-            layout.panels[key].delete();
-        }
-        for (let key in layout.panelsOnscreen) {
-            if (layout.panelsOnscreen[key]?.delete) {
-                layout.panelsOnscreen[key].delete();
-            }
+        const uniquePanels = new Set([
+            ...Object.values(layout.panels || {}),
+            ...Object.values(layout.panelsOnscreen || {}),
+        ]);
+        for (const panel of uniquePanels) {
+            if (panel?.delete) panel.delete();
         }
         layout.uiRoot?.remove();
         layout.destroy?.();
@@ -211,6 +210,59 @@ function splitHtmlParagraphs(html) {
     return normalized.split(/<br\s*\/?>/i);
 }
 
+function extractPanelCommands(text) {
+    const commands = {};
+    const source = String(text || '');
+    const pattern = /(^|[^%])%%\s*([^%]+?)\s*%%(?!%)/g;
+    let out = '';
+    let lastIndex = 0;
+    let match;
+
+    const applyToken = (rawToken) => {
+        const token = String(rawToken || '').trim().toLowerCase();
+        if (!token) return;
+        if (token === 'solo') {
+            commands.solo = true;
+            return;
+        }
+        const pair = token.split(/[:=]/);
+        if (pair.length < 2) return;
+        const key = pair[0].trim();
+        const value = pair.slice(1).join('=').trim();
+        if (!key) return;
+        if (key === 'rows') {
+            const n = Number(value);
+            if (Number.isFinite(n)) commands.rows = Math.floor(n);
+            return;
+        }
+        if (key === 'cols') {
+            const n = Number(value);
+            if (Number.isFinite(n)) commands.cols = Math.floor(n);
+            return;
+        }
+        if (key === 'panels') {
+            const v = String(value).toLowerCase();
+            commands.panels = v === 'cycle' ? 'cycle' : 'stack';
+        }
+    };
+
+    while ((match = pattern.exec(source)) !== null) {
+        const fullStart = match.index;
+        const prefix = match[1] || '';
+        const commandBody = match[2] || '';
+        out += source.slice(lastIndex, fullStart);
+        out += prefix;
+        lastIndex = pattern.lastIndex;
+        const parts = commandBody.split(/[\s,;]+/).map((p) => p.trim()).filter(Boolean);
+        for (const part of parts) {
+            applyToken(part);
+        }
+    }
+
+    out += source.slice(lastIndex);
+    return { text: out, commands };
+}
+
 function parseSpeakerBlocks(text, sceneObjects) {
     // console.log(sceneObjects);
     const originalParas = splitHtmlParagraphs(text);
@@ -290,6 +342,11 @@ class LayoutUI {
         this.clicked = 0;
         this.links = [];
         this.showResponse = true;
+        this.panelSolo = false;
+        this.panelConfig = { panels: 'stack', rows: 1, cols: 1 };
+        this.panelCommands = {};
+        this.largePanelOrder = [];
+        this.panelOrderCounter = 0;
 
         this.topInset = this.getTopInset();
         this.w = window.innerWidth;
@@ -336,6 +393,126 @@ class LayoutUI {
         if (this.linksRoot) this.linksRoot.remove();
         if (this.inputRoot) this.inputRoot.remove();
         if (this.restartBtn) this.restartBtn.remove();
+    }
+
+    normalizePanelConfig(rawConfig) {
+        const cfg = rawConfig && typeof rawConfig === 'object' ? rawConfig : {};
+        const modeRaw = String(cfg.panels || 'stack').toLowerCase();
+        const panels = modeRaw === 'cycle' ? 'cycle' : 'stack';
+        const rows = Math.max(1, Math.min(3, Number.isFinite(Number(cfg.rows)) ? Math.floor(Number(cfg.rows)) : 1));
+        const cols = Math.max(1, Math.min(3, Number.isFinite(Number(cfg.cols)) ? Math.floor(Number(cfg.cols)) : 1));
+        return { panels, rows, cols };
+    }
+
+    getPanelCapacity() {
+        return Math.max(1, this.panelConfig.rows * this.panelConfig.cols);
+    }
+
+    logPanelCount() {
+        const count = Object.keys(this.panelsOnscreen).length;
+        console.log('[layout] panelsOnscreen:', count);
+    }
+
+    reconcileLargePanelOrder() {
+        const names = Object.keys(this.panelsOnscreen)
+            .filter((name) => {
+                const panel = this.panelsOnscreen[name];
+                if (!panel) return false;
+                if (panel.panelSize === 'small') return false;
+                if (panel.onScreen === false) return false;
+                if (panel.isAnimatingOut) return false;
+                return true;
+            })
+            .sort((a, b) => {
+                const pa = this.panelsOnscreen[a];
+                const pb = this.panelsOnscreen[b];
+                const sa = Number.isFinite(pa?.stackOrder) ? pa.stackOrder : 0;
+                const sb = Number.isFinite(pb?.stackOrder) ? pb.stackOrder : 0;
+                return sa - sb;
+            });
+        this.largePanelOrder = names;
+    }
+
+    getStackTargets(order) {
+        const count = order.length;
+        if (!count) return {};
+        const maxRows = this.panelConfig.rows;
+        const maxCols = this.panelConfig.cols;
+        const usedCols = Math.min(maxCols, Math.max(1, count));
+        const usedRows = Math.min(maxRows, Math.max(1, Math.ceil(count / usedCols)));
+
+        const leftPad = Math.max(8, this.w * 0.02);
+        const rightPad = leftPad;
+        const topPad = Math.max(10, this.h * 0.04);
+        const bottomPad = Math.max(120, this.h * 0.22);
+        const areaTop = this.topInset + topPad;
+        const areaWidth = Math.max(80, this.w - leftPad - rightPad);
+        const areaHeight = Math.max(80, this.h - topPad - bottomPad);
+        const gapX = Math.max(10, areaWidth * 0.03);
+        const gapY = Math.max(10, areaHeight * 0.04);
+        const cellWidth = Math.max(80, (areaWidth - gapX * (usedCols - 1)) / usedCols);
+        const cellHeight = Math.max(80, (areaHeight - gapY * (usedRows - 1)) / usedRows);
+
+        const targets = {};
+        for (let i = 0; i < count; i++) {
+            const name = order[i];
+            const row = Math.floor(i / usedCols);
+            const col = i % usedCols;
+            targets[name] = {
+                left: leftPad + col * (cellWidth + gapX),
+                top: areaTop + row * (cellHeight + gapY),
+                width: cellWidth,
+                height: cellHeight,
+            };
+        }
+        return targets;
+    }
+
+    applyLargePanelTargets(immediate = false) {
+        const order = this.largePanelOrder.filter((name) => this.panelsOnscreen[name] && this.panelsOnscreen[name].panelSize !== 'small');
+        this.largePanelOrder = order;
+        const targets = this.getStackTargets(order);
+        const count = order.length;
+        const maxCols = this.panelConfig.cols;
+        const usedCols = Math.min(maxCols, Math.max(1, count));
+        const narrationGap = 6;
+        for (let i = 0; i < order.length; i++) {
+            const name = order[i];
+            const panel = this.panelsOnscreen[name];
+            if (!panel) continue;
+            const target = targets[name];
+            if (!target) continue;
+            const row = Math.floor(i / usedCols);
+            let narrationMinTop = null;
+            let narrationFixedTop = this.topInset;
+            if (row > 0) {
+                const aboveName = order[i - usedCols];
+                const aboveTarget = targets[aboveName];
+                if (aboveTarget) {
+                    narrationMinTop = aboveTarget.top + aboveTarget.height + narrationGap;
+                    narrationFixedTop = narrationMinTop;
+                }
+            }
+            panel.setNarrationMinTop?.(narrationMinTop);
+            panel.setNarrationFixedTop?.(narrationFixedTop);
+            if (immediate) {
+                panel.setCurr(target, true);
+                panel.target = target;
+                panel.movingToTarget = {left:false, top:false, width:false, height:false};
+                panel.isUpdating = false;
+            } else {
+                panel.setTarget(target);
+            }
+        }
+    }
+
+    setActiveLargePanel(activeName) {
+        for (let i = 0; i < this.largePanelOrder.length; i++) {
+            const name = this.largePanelOrder[i];
+            const panel = this.panelsOnscreen[name];
+            if (!panel || panel.panelSize === 'small') continue;
+            panel.three?.setSpeakerAnimationPaused?.(name !== activeName);
+        }
     }
 
     onResize() {
@@ -489,15 +666,17 @@ class LayoutUI {
     restartStory() {
         if (!loaded) return;
         iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, window.location.origin);
-        for (let panel in this.panels){
-            if (this.panels[panel]?.delete) this.panels[panel].delete();
-        }
-        for (let panel in this.panelsOnscreen){
-            if (this.panelsOnscreen[panel]?.delete) this.panelsOnscreen[panel].delete();
+        const uniquePanels = new Set([
+            ...Object.values(this.panels || {}),
+            ...Object.values(this.panelsOnscreen || {}),
+        ]);
+        for (const panel of uniquePanels) {
+            if (panel?.delete) panel.delete();
         }
         this.panels = {};
         this.panelsOnscreen = {};
         this.currPanel = null;
+        this.largePanelOrder = [];
     }
 
     updateLinkLayout() {
@@ -746,9 +925,22 @@ class LayoutUI {
        
         this.psgName = info.psgName;
         vars = iframe.contentWindow.SugarCube.State.variables;
+        const baseConfig = this.normalizePanelConfig(vars?.DL?.config);
+        const baseSolo = vars?.DL_solo === true;
+        const cleaned = cleanText(info.passage);
+        const extracted = extractPanelCommands(cleaned);
+        this.panelCommands = extracted.commands || {};
+        const mergedConfig = {
+            ...baseConfig,
+            ...(this.panelCommands.panels ? { panels: this.panelCommands.panels } : {}),
+            ...(Number.isFinite(this.panelCommands.rows) ? { rows: this.panelCommands.rows } : {}),
+            ...(Number.isFinite(this.panelCommands.cols) ? { cols: this.panelCommands.cols } : {}),
+        };
+        this.panelConfig = this.normalizePanelConfig(mergedConfig);
+        this.panelSolo = this.panelCommands.solo === true ? true : baseSolo;
         // console.log(vars?.DL?.objects);
         const sceneObjects = buildSceneObjectMap(vars?.DL?.objects);
-        const parsed = parseSpeakerBlocks(cleanText(info.passage), sceneObjects);
+        const parsed = parseSpeakerBlocks(extracted.text, sceneObjects);
         this.speakers = parsed.speakers || [];
         this.txt = parsed.narrationText || '';
         this.links = info.links || [];
@@ -761,23 +953,56 @@ class LayoutUI {
     }
 
     setPanel() {
-        let offscreen = {left: 0, top: this.topInset - 400, width: 360, height: 150};
-        for (let i in this.panelsOnscreen){
-            let ps = this.panelsOnscreen[i];
-            ps.setTarget(offscreen);
+        const mode = this.panelConfig?.panels || 'stack';
+        const capacity = this.getPanelCapacity();
+        const name = this.psgName;
+        const isStack = mode === 'stack';
+        if (this.panelSolo) {
+            const keys = Object.keys(this.panelsOnscreen);
+            const offscreen = {left: 0, top: this.topInset - 400, width: 360, height: 150};
+            for (let i = 0; i < keys.length; i++) {
+                const key = keys[i];
+                const panel = this.panelsOnscreen[key];
+                if (!panel || key === name) continue;
+                panel.three?.setSpeakerAnimationPaused?.(true);
+                panel.setTarget(offscreen, { animateOut: true });
+            }
+            this.largePanelOrder = [];
+        }
+        this.reconcileLargePanelOrder();
+        const existingOnscreenPanel = this.panelsOnscreen[name];
+        const isAlreadyOnscreenLarge = Boolean(
+            existingOnscreenPanel &&
+            existingOnscreenPanel.panelSize !== 'small' &&
+            existingOnscreenPanel.onScreen !== false &&
+            !existingOnscreenPanel.isAnimatingOut
+        );
+        const projectedSet = new Set(this.largePanelOrder);
+        projectedSet.add(name);
+        const projectedCount = projectedSet.size;
+        if (isStack && projectedCount > capacity) {
+            const offscreen = {left: 0, top: this.topInset - 400, width: 360, height: 150};
+            for (let i = 0; i < this.largePanelOrder.length; i++) {
+                const key = this.largePanelOrder[i];
+                const ps = this.panelsOnscreen[key];
+                if (!ps) continue;
+                ps.three?.setSpeakerAnimationPaused?.(true);
+                ps.setTarget(offscreen, { animateOut: true });
+            }
+            this.largePanelOrder = [];
         }
 
-        let name = this.psgName;
         let data = {left: 0, top: this.topInset + this.h, width: 360, height: 150};
         let target = {left: 0, top: this.topInset + this.h / 4, width: this.w, height: 300};
         let vars = iframe.contentWindow.SugarCube.State.variables;
         let scene = vars.DL;
-        // console.log(vars);
+        console.log(scene);
 
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, this.txt, -1, scene, 'narration', this.topInset);
             if (this.speakers?.length) p.setSpeakers(this.speakers);
             p.panelSize = 'large';
+            p.stackOrder = ++this.panelOrderCounter;
             this.panels[name] = p;
             this.currPanel = p;
             this.panelsOnscreen[name] = p;
@@ -785,15 +1010,38 @@ class LayoutUI {
             let p = this.panels[name];
             this.currPanel = p;
             p.setLink(-1);
-            p.setCurr(data);
-            p.setTarget(target);
+            if (!isAlreadyOnscreenLarge) {
+                p.setCurr(data);
+                p.setTarget(target);
+            }
             p.setTxt(this.txt);
             p.setSpeakers(this.speakers || []);
             p.setScene(scene);
             p.setTopInset(this.topInset);
             p.panelSize = 'large';
+            p.stackOrder = ++this.panelOrderCounter;
             this.panelsOnscreen[name] = p;
         }
+        if (isStack) {
+            this.largePanelOrder = this.largePanelOrder.filter((key) => key !== name);
+            this.largePanelOrder.push(name);
+            this.applyLargePanelTargets(false);
+            this.setActiveLargePanel(name);
+        } else {
+            this.panelsOnscreen[name]?.setNarrationMinTop?.(null);
+            this.panelsOnscreen[name]?.setNarrationFixedTop?.(null);
+            let offscreen = {left: 0, top: this.topInset - 400, width: 360, height: 150};
+            for (let i in this.panelsOnscreen){
+                let ps = this.panelsOnscreen[i];
+                if (ps === this.panelsOnscreen[name]) continue;
+                ps.setNarrationMinTop?.(null);
+                ps.setNarrationFixedTop?.(null);
+                ps.setTarget(offscreen);
+            }
+            this.largePanelOrder = [name];
+            this.setActiveLargePanel(name);
+        }
+        this.logPanelCount();
     }
 
     makeResponse(i) {
@@ -848,6 +1096,8 @@ class LayoutUI {
                 // console.log(p.text + " removed");
                 this.pressed = false;
                 delete this.panelsOnscreen[panel];
+                this.largePanelOrder = this.largePanelOrder.filter((key) => key !== panel);
+                this.logPanelCount();
             } else {
                 let linkExists = p.update();
                 if (linkExists !== -1){
@@ -864,18 +1114,24 @@ class LayoutUI {
         const largePanels = panels.filter((p) => p.panelSize !== 'small');
         const smallPanels = panels.filter((p) => p.panelSize === 'small');
 
-        for (let i = 0; i < largePanels.length; i++) {
-            const p = largePanels[i];
-            const left = Math.max(0, p.data.left);
-            const width = Math.max(50, this.w - left);
-            const height = p.data.height;
-            const top = Math.max(this.topInset, p.data.top);
-            const target = {left, top, width, height};
-            const shouldScale = p.isUpdating;
-            p.setCurr(target, shouldScale);
-            p.target = target;
-            p.movingToTarget = {left:false, top:false, width:false, height:false};
-            p.isUpdating = false;
+        if ((this.panelConfig?.panels || 'stack') === 'stack' && this.largePanelOrder.length) {
+            this.applyLargePanelTargets(true);
+        } else {
+            for (let i = 0; i < largePanels.length; i++) {
+                const p = largePanels[i];
+                p.setNarrationMinTop?.(null);
+                p.setNarrationFixedTop?.(null);
+                const left = Math.max(0, p.data.left);
+                const width = Math.max(50, this.w - left);
+                const height = p.data.height;
+                const top = Math.max(this.topInset, p.data.top);
+                const target = {left, top, width, height};
+                const shouldScale = p.isUpdating;
+                p.setCurr(target, shouldScale);
+                p.target = target;
+                p.movingToTarget = {left:false, top:false, width:false, height:false};
+                p.isUpdating = false;
+            }
         }
 
         for (let i = 0; i < smallPanels.length; i++) {
