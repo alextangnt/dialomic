@@ -146,6 +146,34 @@ Slug rules:
 Defaults are applied for position/scale unless you extend the code.
 Per-background transforms can be defined in `src/backgrounds.js`.
 
+#### Shot Control
+Set a shot with:
+```twine
+<<set $DL.shot = "MEDIUM rat1">>
+```
+
+Accepted shot tokens:
+- `LONG`
+- `FULL`
+- `MEDIUMLONG`
+- `MEDIUM`
+- `MEDIUMCLOSE`
+- `CLOSE`
+
+Usage rules:
+- Format: `SHOT_TOKEN target1 [target2 ...]`
+- `LONG` and `FULL` can use multiple targets.
+- `MEDIUMLONG`, `MEDIUM`, `MEDIUMCLOSE`, and `CLOSE` use one target (if multiple are provided, only the first is used).
+- Shot framing is applied after scene models finish loading.
+- `MEDIUM`, `MEDIUMCLOSE`, and `CLOSE` adapt framing to the target model's size.
+
+Examples:
+```twine
+<<set $DL.shot = "LONG rat1 rat2">>
+<<set $DL.shot = "CLOSE rat1">>
+<<set $DL.shot = "MEDIUMCLOSE rat2">>
+```
+
 #### Twine Variables and Custom State
 You can define reusable object specs as variables and reference them in `DL.objects`.
 

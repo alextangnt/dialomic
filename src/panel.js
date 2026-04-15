@@ -55,6 +55,14 @@ const shotTypes = {
     EXTREMECLOSE: 0.5,
 };
 const multiTargetShots = new Set(['EXTREMELONG', 'LONG', 'FULL']);
+const adaptiveSingleShots = new Set(['MEDIUM', 'MEDIUMCLOSE', 'CLOSE', 'EXTREMECLOSE']);
+const adaptiveShotFraming = {
+    MEDIUM: { heightFill: 0.9, widthFill: 0.75, yOffsetMul: 0.12 },
+    MEDIUMCLOSE: { heightFill: 1.2, widthFill: 1.0, yOffsetMul: 0.1 },
+    CLOSE: { heightFill: 1.9, widthFill: 1.5, yOffsetMul: 0.1 },
+    // heightFill 3.0 targets about 1/3 of body height visible in frame.
+    EXTREMECLOSE: { heightFill: 3.0, widthFill: 2.4, yOffsetMul: 0.14 },
+};
 
 
 const locsIdx = ["FARLEFT","LEFT","CENTER","RIGHT","FARRIGHT"];
@@ -129,7 +137,7 @@ export class ThreeScene {
     constructor (width,height,canvas) {
 
         
-        let camera = new THREE.PerspectiveCamera( 25, width / height, 0.1, 500 );
+        let camera = new THREE.PerspectiveCamera( 25, width / height, 0.03, 500 );
         camera.position.set(0,0.8,9);
         camera.lookAt(0,2,-80);
 
@@ -533,11 +541,29 @@ export class ThreeScene {
         box.getSize(size);
         box.getCenter(center);
         const height = Math.max(0.001, size.y);
-        const scale = shotTypes[token] || 1.5;
-        const framing = height * scale;
-        const fov = THREE.MathUtils.degToRad(this.camera.fov);
-        const distance = (framing / 2) / Math.tan(fov / 2);
-        const yOffset = height * 0.2 + 0.2;
+        const width = Math.max(0.001, Math.max(size.x, size.z));
+        const vfov = THREE.MathUtils.degToRad(this.camera.fov);
+        const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
+        let distance;
+        let yOffset;
+
+        if (adaptiveSingleShots.has(token) && targets.length === 1) {
+            const cfg = adaptiveShotFraming[token] || adaptiveShotFraming.MEDIUM;
+            const distanceForHeight = (height / 2) / (Math.tan(vfov / 2) * Math.max(0.1, cfg.heightFill));
+            const distanceForWidth = (width / 2) / (Math.tan(hfov / 2) * Math.max(0.1, cfg.widthFill));
+            distance = Math.max(distanceForHeight, distanceForWidth);
+            yOffset = height * cfg.yOffsetMul + 0.15;
+        } else {
+            const scale = shotTypes[token] || 1.5;
+            const framing = height * scale;
+            distance = (framing / 2) / Math.tan(vfov / 2);
+            yOffset = height * 0.2 + 0.2;
+        }
+        // Keep camera in front of the nearest model surface to avoid near-plane clipping.
+        const halfDepth = Math.max(0.001, size.z * 0.5);
+        const clipSafety = Math.max(0.08, Math.max(size.x, size.y) * 0.03);
+        const minDistance = halfDepth + this.camera.near + clipSafety;
+        distance = Math.max(distance, minDistance);
         const pos = new THREE.Vector3(center.x, center.y + yOffset, center.z + distance);
 
         this.camera.position.copy(pos);
