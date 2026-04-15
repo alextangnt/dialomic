@@ -3,6 +3,8 @@ Dialomic turns Twine stories into interactive webcomics with animated 3D panels,
 
 Visit the [Dialomic web player](https://alextangnt.github.io/dialomic/) for a sample story and to play your stories!
 
+See `CHANGELOG.md` for a running list of new features.
+
 ### Getting Started
 1. Download the [Twine desktop app or use the online editor](https://twinery.org/).
 2. Make a new story.
@@ -131,6 +133,12 @@ This loads:
 ```
 public/assets/backgrounds/bus_stop.glb
 ```
+Accepted background tokens (from `src/backgrounds.js`):
+- `BUS STOP` (slug: `bus_stop`)
+- `BEACH`
+- `TENNIS COURT` (slug: `tennis_court`)
+- `BALLPARK`
+
 Slug rules:
 - Lowercase
 - Spaces and punctuation become `_`

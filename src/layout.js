@@ -795,7 +795,7 @@ class LayoutUI {
         let target = {left: 0, top: this.topInset + this.h / 5, width: this.w * 3 / 4, height: 300 * 3 / 4};
         for (let j in this.panelsOnscreen){
             let ps = this.panelsOnscreen[j];
-            ps.setTarget(target);
+            ps.setTarget(target, { animateOut: true });
         }
 
         let name = this.psgName + choice;

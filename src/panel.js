@@ -196,6 +196,7 @@ export class ThreeScene {
             startTime: 0,
             duration: 0,
             active: false,
+            paused: false,
             missingLogged: new Set(),
             foundLogged: new Set(),
             cyclePauseUntil: 0,
@@ -749,11 +750,31 @@ export class ThreeScene {
         this.speakerAnim.active = queue.length > 0;
         if (queue.length) {
             this.speakerAnim.startDelayUntil = performance.now() + 1000;
+        } else {
+            this.speakerAnim.startDelayUntil = 0;
+        }
+    }
+
+    setSpeakerAnimationPaused(paused) {
+        const anim = this.speakerAnim;
+        anim.paused = Boolean(paused);
+        if (!anim.paused) return;
+        for (const model of this.models) {
+            if (!model?.userData) continue;
+            if (Number.isFinite(model.userData.baseY)) {
+                model.position.y = model.userData.baseY;
+            }
+            model.userData.speaking = false;
+        }
+        if (anim.currentKey) {
+            const current = this.getModelByKey(anim.currentKey);
+            if (current?.userData) current.userData.speaking = false;
         }
     }
 
     updateSpeakerHop(now) {
         const anim = this.speakerAnim;
+        if (anim.paused) return;
         if (!anim.active || anim.queue.length === 0) return;
         if (anim.startDelayUntil && now < anim.startDelayUntil) return;
         if (anim.cyclePauseUntil && now < anim.cyclePauseUntil) return;
@@ -837,6 +858,7 @@ export class Panel {
         this.movingToTarget = {left:true, top:true, width:true, height:true};
         this.linked = linked;
         this.onScreen = true;
+        this.isAnimatingOut = false;
 
         // console.log(this.data);
         this.canvas = document.createElement('canvas');
@@ -977,8 +999,26 @@ export class Panel {
         this.resize(t.width,t.height, scaleText);
     }
     
-    setTarget(data){
+    setTarget(data, options = {}){
         this.target = data;
+        const explicitAnimateOut = Boolean(options?.animateOut);
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        const isOffscreenTarget =
+            (data.left + data.width < 0) ||
+            (data.top + data.height < this.topInset) ||
+            (data.left > w) ||
+            (data.top > h);
+        const nextAnimatingOut = explicitAnimateOut || Boolean(isOffscreenTarget);
+        if (nextAnimatingOut && !this.isAnimatingOut) {
+            this.isAnimatingOut = true;
+            this.speechLayout.freezeForPanelExit();
+            this.three?.setSpeakerAnimationPaused?.(true);
+        } else if (!nextAnimatingOut && this.isAnimatingOut) {
+            this.isAnimatingOut = false;
+            this.speechLayout.clearExitFreeze();
+            this.three?.setSpeakerAnimationPaused?.(false);
+        }
         this.updateNarrationTarget();
         this.startUpdates();
     }
@@ -1044,6 +1084,9 @@ export class Panel {
     stopUpdates(){
         this.isUpdating = false;
         this.movingToTarget = {left:false, top:false, width:false, height:false};
+        this.isAnimatingOut = false;
+        this.speechLayout.clearExitFreeze();
+        this.three?.setSpeakerAnimationPaused?.(false);
     }
     startUpdates(){
         this.onScreen = true;

@@ -68,8 +68,67 @@ export class SpeechBubbleLayout {
                 baseWidth: existing?.baseWidth ?? null,
                 baseHeight: existing?.baseHeight ?? null,
                 baseAnchorX: existing?.baseAnchorX ?? null,
+                frozenOffsetX: existing?.frozenOffsetX ?? null,
+                frozenOffsetY: existing?.frozenOffsetY ?? null,
+                frozenNormX: existing?.frozenNormX ?? null,
+                frozenNormY: existing?.frozenNormY ?? null,
+                frozenAnchorNormX: existing?.frozenAnchorNormX ?? null,
+                frozenAnchorNormY: existing?.frozenAnchorNormY ?? null,
+                frozenIsBelow: existing?.frozenIsBelow ?? null,
+                frozenTailStyle: existing?.frozenTailStyle ?? null,
+                lastAnchorX: existing?.lastAnchorX ?? null,
+                lastAnchorY: existing?.lastAnchorY ?? null,
             };
         });
+    }
+
+    freezeForPanelExit() {
+        const canvasRect = this.panel.canvas.getBoundingClientRect();
+        for (const item of this.items) {
+            if (!item?.el) continue;
+            const rect = item.el.getBoundingClientRect();
+            const x = Number.isFinite(item.x) ? item.x : rect.left;
+            const y = Number.isFinite(item.y) ? item.y : rect.top;
+            item.frozenOffsetX = x - canvasRect.left;
+            item.frozenOffsetY = y - canvasRect.top;
+            item.frozenNormX = canvasRect.width > 0 ? item.frozenOffsetX / canvasRect.width : null;
+            item.frozenNormY = canvasRect.height > 0 ? item.frozenOffsetY / canvasRect.height : null;
+            const anchorX = Number.isFinite(item.lastAnchorX) ? item.lastAnchorX : (canvasRect.left + canvasRect.width * 0.5);
+            const anchorY = Number.isFinite(item.lastAnchorY) ? item.lastAnchorY : (canvasRect.top + canvasRect.height * 0.2);
+            item.frozenAnchorNormX = canvasRect.width > 0 ? ((anchorX - canvasRect.left) / canvasRect.width) : null;
+            item.frozenAnchorNormY = canvasRect.height > 0 ? ((anchorY - canvasRect.top) / canvasRect.height) : null;
+            item.frozenIsBelow = Boolean(item.visualBelow);
+            const tail = item.el.querySelector('.speech-tail');
+            const tailBorder = item.el.querySelector('.speech-tail-border');
+            item.frozenTailStyle = {
+                tailLeft: tail?.style.left || '',
+                tailTop: tail?.style.top || '',
+                tailBorderTop: tailBorder?.style.top || '',
+                tailBorderLeft: tailBorder?.style.left || '',
+                tailBorderTopWidth: tailBorder?.style.borderTopWidth || '',
+                tailBorderBottomWidth: tailBorder?.style.borderBottomWidth || '',
+                tailBorderTopRule: tailBorder?.style.borderTop || '',
+                tailBorderBottomRule: tailBorder?.style.borderBottom || '',
+                tailTopWidth: tail?.style.borderTopWidth || '',
+                tailBottomWidth: tail?.style.borderBottomWidth || '',
+                tailTopRule: tail?.style.borderTop || '',
+                tailBottomRule: tail?.style.borderBottom || '',
+            };
+        }
+    }
+
+    clearExitFreeze() {
+        for (const item of this.items) {
+            if (!item) continue;
+            item.frozenOffsetX = null;
+            item.frozenOffsetY = null;
+            item.frozenNormX = null;
+            item.frozenNormY = null;
+            item.frozenAnchorNormX = null;
+            item.frozenAnchorNormY = null;
+            item.frozenIsBelow = null;
+            item.frozenTailStyle = null;
+        }
     }
 
     getSpeakerRect(speakerKey, canvasRect, yOffset = 0) {
@@ -149,6 +208,83 @@ export class SpeechBubbleLayout {
     layout() {
         if (!this.items.length) return;
         const canvasRect = this.panel.canvas.getBoundingClientRect();
+        if (this.panel.isAnimatingOut) {
+            for (const item of this.items) {
+                const el = item?.el;
+                if (!el) continue;
+                if (!Number.isFinite(item.frozenOffsetX) || !Number.isFinite(item.frozenOffsetY)) {
+                    const rect = el.getBoundingClientRect();
+                    item.frozenOffsetX = rect.left - canvasRect.left;
+                    item.frozenOffsetY = rect.top - canvasRect.top;
+                    item.frozenNormX = canvasRect.width > 0 ? item.frozenOffsetX / canvasRect.width : null;
+                    item.frozenNormY = canvasRect.height > 0 ? item.frozenOffsetY / canvasRect.height : null;
+                }
+                const x = Number.isFinite(item.frozenNormX)
+                    ? (canvasRect.left + item.frozenNormX * canvasRect.width)
+                    : (canvasRect.left + item.frozenOffsetX);
+                const y = Number.isFinite(item.frozenNormY)
+                    ? (canvasRect.top + item.frozenNormY * canvasRect.height)
+                    : (canvasRect.top + item.frozenOffsetY);
+                item.x = x;
+                item.y = y;
+                el.style.left = `${x}px`;
+                el.style.top = `${y}px`;
+                const tail = el.querySelector('.speech-tail');
+                const tailBorder = el.querySelector('.speech-tail-border');
+                const s = item.frozenTailStyle;
+                if (tail && tailBorder && Number.isFinite(item.frozenAnchorNormX) && Number.isFinite(item.frozenAnchorNormY)) {
+                    const rect = el.getBoundingClientRect();
+                    const anchorX = canvasRect.left + (item.frozenAnchorNormX * canvasRect.width);
+                    const anchorY = canvasRect.top + (item.frozenAnchorNormY * canvasRect.height);
+                    const tailMargin = 18;
+                    const tailX = Math.max(tailMargin, Math.min(rect.width - tailMargin, anchorX - item.x));
+                    const isBelow = Boolean(item.frozenIsBelow);
+                    if (tail) tail.style.left = `${tailX - 8}px`;
+                    if (tailBorder) tailBorder.style.left = `${tailX - 9}px`;
+
+                    if (isBelow) {
+                        const tailLength = Math.max(14, item.y - anchorY);
+                        tailBorder.style.top = `${-(tailLength + 2)}px`;
+                        tailBorder.style.borderBottomWidth = `${tailLength + 2}px`;
+                        tailBorder.style.borderTopWidth = '0';
+                        tailBorder.style.borderTop = '0';
+                        tailBorder.style.borderBottom = `${tailLength + 2}px solid #000`;
+                        tail.style.top = `${-(tailLength - 1)}px`;
+                        tail.style.borderBottomWidth = `${tailLength}px`;
+                        tail.style.borderTopWidth = '0';
+                        tail.style.borderTop = '0';
+                        tail.style.borderBottom = `${tailLength}px solid #fff`;
+                    } else {
+                        const tailStartY = item.y + rect.height - 4;
+                        const tailLength = Math.max(14, anchorY - tailStartY);
+                        tailBorder.style.top = `${rect.height - 2}px`;
+                        tailBorder.style.borderTopWidth = `${tailLength + 2}px`;
+                        tailBorder.style.borderBottomWidth = '0';
+                        tailBorder.style.borderBottom = '0';
+                        tailBorder.style.borderTop = `${tailLength + 2}px solid #000`;
+                        tail.style.top = `${rect.height - 4}px`;
+                        tail.style.borderTopWidth = `${tailLength}px`;
+                        tail.style.borderBottomWidth = '0';
+                        tail.style.borderBottom = '0';
+                        tail.style.borderTop = `${tailLength}px solid #fff`;
+                    }
+                } else if (s && tail && tailBorder) {
+                    tail.style.left = s.tailLeft;
+                    tail.style.top = s.tailTop;
+                    tail.style.borderTopWidth = s.tailTopWidth;
+                    tail.style.borderBottomWidth = s.tailBottomWidth;
+                    tail.style.borderTop = s.tailTopRule;
+                    tail.style.borderBottom = s.tailBottomRule;
+                    tailBorder.style.left = s.tailBorderLeft;
+                    tailBorder.style.top = s.tailBorderTop;
+                    tailBorder.style.borderTopWidth = s.tailBorderTopWidth;
+                    tailBorder.style.borderBottomWidth = s.tailBorderBottomWidth;
+                    tailBorder.style.borderTop = s.tailBorderTopRule;
+                    tailBorder.style.borderBottom = s.tailBorderBottomRule;
+                }
+            }
+            return;
+        }
         const resized = canvasRect.width !== this.lastCanvasSize.width ||
             canvasRect.height !== this.lastCanvasSize.height;
         if (resized) {
@@ -265,6 +401,8 @@ export class SpeechBubbleLayout {
                     item.side = anchorX <= canvasCenterX ? 'left' : 'right';
                 }
             }
+            item.lastAnchorX = anchorX;
+            item.lastAnchorY = anchorY;
 
             if (speakerOffscreen) {
                 const centerX = speakerRect ? (speakerRect.left + speakerRect.right) / 2 : anchorX;
