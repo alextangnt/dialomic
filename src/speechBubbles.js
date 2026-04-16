@@ -565,7 +565,7 @@ export class SpeechBubbleLayout {
                 forcedBottom = false;
             }
 
-            if (!useBaseLayout && item.lift <= 0.5 && overlapsAnySpeaker(testRect)) {
+            if (!useBaseLayout && overlapsAnySpeaker(testRect)) {
                 if (item.side === 'left') {
                     const targetRight = Math.min(rightBound, circleRect.left - 8);
                     left = Math.max(leftBound, targetRight - rect.width);
@@ -576,7 +576,7 @@ export class SpeechBubbleLayout {
                 testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
             }
 
-            if (!useBaseLayout && allowWidthChange && !item.expandOnly && item.lift <= 0.5 && overlapsAnySpeaker(testRect)) {
+            if (!useBaseLayout && allowWidthChange && !item.expandOnly && overlapsAnySpeaker(testRect)) {
                 const widths = [Math.max(this.minWidth, rect.width - 60), this.minWidth];
                 for (const width of widths) {
                     el.style.maxWidth = `${width}px`;
@@ -603,7 +603,7 @@ export class SpeechBubbleLayout {
                 testRect.bottom = top + rect.height;
             }
 
-            if (!useBaseLayout && !isSpeaking && this.items.length > 1) {
+            if (!useBaseLayout && this.items.length > 1) {
                 let tries = 0;
                 let shrinkTried = false;
                 while (tries < 12) {
@@ -639,7 +639,7 @@ export class SpeechBubbleLayout {
                 }
             }
 
-            if (!useBaseLayout && !isSpeaking && this.items.length > 1) {
+            if (!useBaseLayout && this.items.length > 1) {
                 let candidate = top;
                 let best = top;
                 for (let i = 0; i < 60; i++) {
@@ -670,7 +670,7 @@ export class SpeechBubbleLayout {
                 }
             }
 
-            if (!useBaseLayout && !isSpeaking && this.items.length > 1) {
+            if (!useBaseLayout && this.items.length > 1) {
                 const topHalfLimit = topBound + (canvasRect.height * 0.5);
                 let guard = 0;
                 while (testRect.top > topHalfLimit && guard < 20) {
@@ -706,7 +706,7 @@ export class SpeechBubbleLayout {
                 forcedBottom = true;
             }
 
-            if (!useBaseLayout && !isSpeaking && this.items.length > 1 && idx === 0) {
+            if (!useBaseLayout && this.items.length > 1 && idx === 0) {
                 const pinRect = {
                     left,
                     top: topBound,
@@ -770,13 +770,10 @@ export class SpeechBubbleLayout {
             const speakerMidY = circleRect
                 ? (circleRect.top + circleRect.bottom) / 2
                 : anchorY;
-            const currentCenterY = (item.y ?? top) + rect.height / 2;
-            const margin = 6;
-            if (item.visualBelow === undefined) {
-                item.visualBelow = currentCenterY >= speakerMidY;
-            } else {
-                if (currentCenterY <= speakerMidY - margin) item.visualBelow = false;
-                if (currentCenterY >= speakerMidY + margin) item.visualBelow = true;
+            // Keep base layout classification independent from speaking lift/drop.
+            if (!useBaseLayout || item.visualBelow === undefined) {
+                const baseCenterY = top + rect.height / 2;
+                item.visualBelow = baseCenterY >= speakerMidY;
             }
             const visualBelowNow = item.visualBelow;
             const liftOffset = item.lift > 0 ? (visualBelowNow ? item.lift : -item.lift) : 0;
@@ -788,7 +785,7 @@ export class SpeechBubbleLayout {
 
             if (!useBaseLayout) {
                 prevTop = Math.max(prevTop, top);
-                placed.push({ left, top, right: left + rect.width, bottom: top + rect.height, block: recomputeLayout ? true : !isSpeaking });
+                placed.push({ left, top, right: left + rect.width, bottom: top + rect.height, block: true });
             }
 
             if (item.x == null) item.x = driftedLeft;
@@ -808,7 +805,7 @@ export class SpeechBubbleLayout {
                 }
             }
 
-            const visualBelow = (item.y + rect.height / 2) >= speakerMidY;
+            const visualBelow = item.visualBelow;
 
             el.style.left = `${item.x}px`;
             el.style.top = `${item.y}px`;

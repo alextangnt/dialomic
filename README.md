@@ -181,7 +181,8 @@ You can control automatic panel stacking with `DL.config`:
 <<set $DL.config = {
   panels: "stack",
   rows: 3,
-  cols: 1
+  cols: 1,
+  aspect: "free"
 }>>
 ```
 
@@ -189,13 +190,18 @@ Rules:
 - `panels` defaults to `"stack"` (`"cycle"` is reserved/not fully implemented).
 - `rows` and `cols` default to `1` when omitted.
 - `rows` and `cols` are clamped to `1..3`.
+- `aspect` supports `"free"` (default) or `"fixed"`.
 - Capacity is `rows * cols`; once full in stack mode, current panels animate out and stacking restarts.
 - If a panel already on screen is shown again, it is reordered rather than duplicated.
+
+Aspect behavior:
+- `"free"`: panel containers stretch to fill each grid slot.
+- `"fixed"`: panel containers keep a consistent aspect ratio across the grid layout and scale within the available slot.
 
 Per-passage command tokens (inside passage text):
 - `%%solo%%`: show current panel alone, and next panel starts without the current panel.
 - `%%resets%%`: clear current stack before showing the new panel.
-- `%%rows=N%%`, `%%cols=N%%`, `%%panels=stack|cycle%%`: override layout config for that passage.
+- `%%rows=N%%`, `%%cols=N%%`, `%%panels=stack|cycle%%`, `%%aspect=fixed|free%%`: override layout config for that passage.
 
 #### Twine Variables and Custom State
 You can define reusable object specs as variables and reference them in `DL.objects`.

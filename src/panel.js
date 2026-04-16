@@ -1049,7 +1049,7 @@ export class Panel {
         } else {
             this.renderText();
         }
-        const reserve = this.aspectMode === 'fixed' ? (this.fixedNarrationReserve || 0) : 0;
+        const reserve = this.textType === 'narration' ? (this.fixedNarrationReserve || 0) : 0;
         this.three.resize(width, Math.max(40, height - reserve));
         
         
@@ -1246,6 +1246,7 @@ export class Panel {
     
     
     updateTextMode(){
+        const hasNarration = getHtmlTextLength(this.text || '') > 0;
         if (this.textType === 'dialogue') {
             this.textEl.style.display = 'block';
             this.narrationBgEl.style.display = 'none';
@@ -1253,8 +1254,8 @@ export class Panel {
             for (const el of this.speechEls) el.style.display = 'none';
         } else {
             this.textEl.style.display = 'none';
-            this.narrationBgEl.style.display = 'block';
-            this.narrationEl.style.display = 'block';
+            this.narrationBgEl.style.display = hasNarration ? 'block' : 'none';
+            this.narrationEl.style.display = hasNarration ? 'block' : 'none';
             for (const el of this.speechEls) el.style.display = this.speakers.length ? 'block' : 'none';
         }
     }
@@ -1270,135 +1271,73 @@ export class Panel {
 
     updateNarrationTarget(){
         if (this.textType !== 'narration') return;
-        if (this.aspectMode === 'fixed') {
-            const panelRef = this.data;
-            const width = Math.max(80, panelRef.width);
-            const height = Math.max(80, panelRef.height);
-            this.narrationEl.style.left = `${panelRef.left}px`;
-            this.narrationEl.style.top = `${panelRef.top}px`;
-            this.narrationEl.style.width = `${width}px`;
 
-            const hasNarration = getHtmlTextLength(this.text || '') > 0;
-            let reserve = 0;
-            if (hasNarration) {
-                const style = window.getComputedStyle(this.narrationEl);
-                const parsePx = (value, fallback = 0) => {
-                    const n = parseFloat(value);
-                    return Number.isFinite(n) ? n : fallback;
-                };
-                const lineHeight = parsePx(style.lineHeight, this.baseLineHeight);
-                const boxChromeHeight =
-                    parsePx(style.paddingTop) +
-                    parsePx(style.paddingBottom) +
-                    parsePx(style.borderTopWidth) +
-                    parsePx(style.borderBottomWidth);
-                const oneLineHeight = Math.max(0, lineHeight + boxChromeHeight);
-                const threeLineHeight = Math.max(0, lineHeight * 3 + boxChromeHeight);
-                this.narrationEl.style.maxHeight = '';
-                this.narrationEl.style.overflowX = 'hidden';
-                this.narrationEl.style.overflowY = 'visible';
-                const naturalHeight = this.narrationEl.getBoundingClientRect().height;
-                const cap = Math.max(oneLineHeight, Math.min(threeLineHeight, naturalHeight));
-                reserve = Math.min(height - 40, Math.max(oneLineHeight, cap));
-                this.narrationEl.style.maxHeight = `${Math.max(0, reserve)}px`;
-                this.narrationEl.style.overflowX = 'hidden';
-                this.narrationEl.style.overflowY = naturalHeight > reserve ? 'auto' : 'hidden';
-            } else {
-                this.narrationEl.style.maxHeight = '0px';
-                this.narrationEl.style.overflow = 'hidden';
-            }
-            this.fixedNarrationReserve = Math.max(0, reserve);
-            this.narrationTarget.left = panelRef.left;
-            this.narrationTarget.top = panelRef.top;
-            this.narrationData.left = panelRef.left;
-            this.narrationData.top = panelRef.top;
-            this.narrationEl.style.left = `${this.narrationData.left}px`;
-            this.narrationEl.style.top = `${this.narrationData.top}px`;
+        const panelRef = this.data;
+        const width = Math.max(80, panelRef.width);
+        const height = Math.max(80, panelRef.height);
 
-            const canvasTop = panelRef.top + this.fixedNarrationReserve;
-            const canvasHeight = Math.max(40, height - this.fixedNarrationReserve);
-            this.canvas.style.left = `${panelRef.left}px`;
-            this.canvas.style.top = `${canvasTop}px`;
-            this.canvas.style.width = `${width}px`;
-            this.canvas.style.height = `${canvasHeight}px`;
-            this.textEl.style.left = `${panelRef.left}px`;
-            this.textEl.style.top = `${canvasTop}px`;
-            this.textEl.style.width = `${width}px`;
-            this.textEl.style.height = `${canvasHeight}px`;
-            if (this.three) this.three.resize(width, canvasHeight);
-            this.syncNarrationBackground();
-            return;
-        }
-        const moving = this.isUpdating && !this.isAnimatingOut;
-        const panelRefPos = moving ? this.data : this.target;
-        const panelRefSize = this.target;
-        this.narrationEl.style.left = `${panelRefPos.left}px`;
-        this.narrationEl.style.width = `${Math.max(80, panelRefSize.width)}px`;
+        this.narrationEl.style.left = `${panelRef.left}px`;
+        this.narrationEl.style.top = `${panelRef.top}px`;
+        this.narrationEl.style.width = `${width}px`;
 
-        if (this.isAnimatingOut) {
-            const rectOut = this.narrationEl.getBoundingClientRect();
-            const targetTopOut = panelRefPos.top - rectOut.height;
-            this.narrationTarget.left = panelRefPos.left;
-            this.narrationTarget.top = targetTopOut;
+        const hasNarration = getHtmlTextLength(this.text || '') > 0;
+        let reserve = 0;
+
+        if (!hasNarration) {
+            this.narrationEl.style.maxHeight = '0px';
+            this.narrationEl.style.overflow = 'hidden';
+            this.narrationEl.style.display = 'none';
+            this.narrationBgEl.style.display = 'none';
+        } else {
+            this.narrationEl.style.display = 'block';
+            this.narrationBgEl.style.display = 'block';
+
+            const style = window.getComputedStyle(this.narrationEl);
+            const parsePx = (value, fallback = 0) => {
+                const n = parseFloat(value);
+                return Number.isFinite(n) ? n : fallback;
+            };
+            const lineHeight = parsePx(style.lineHeight, this.baseLineHeight);
+            const boxChromeHeight =
+                parsePx(style.paddingTop) +
+                parsePx(style.paddingBottom) +
+                parsePx(style.borderTopWidth) +
+                parsePx(style.borderBottomWidth);
+            const oneLineHeight = Math.max(0, lineHeight + boxChromeHeight);
+            const threeLineHeight = Math.max(0, lineHeight * 3 + boxChromeHeight);
+
             this.narrationEl.style.maxHeight = '';
-            this.narrationEl.style.overflow = 'visible';
-            if (this.isUpdating) return;
-            this.narrationData.left = panelRefPos.left;
-            this.narrationData.top = targetTopOut;
-            this.narrationEl.style.left = `${this.narrationData.left}px`;
-            this.narrationEl.style.top = `${this.narrationData.top}px`;
-            this.syncNarrationBackground();
-            return;
+            this.narrationEl.style.overflowX = 'hidden';
+            this.narrationEl.style.overflowY = 'visible';
+            const naturalHeight = this.narrationEl.getBoundingClientRect().height;
+            const cap = Math.max(oneLineHeight, Math.min(threeLineHeight, naturalHeight));
+            reserve = Math.min(height - 40, Math.max(oneLineHeight, cap));
+
+            this.narrationEl.style.maxHeight = `${Math.max(0, reserve)}px`;
+            this.narrationEl.style.overflowX = 'hidden';
+            this.narrationEl.style.overflowY = naturalHeight > reserve ? 'auto' : 'hidden';
         }
 
-        const style = window.getComputedStyle(this.narrationEl);
-        const parsePx = (value, fallback = 0) => {
-            const n = parseFloat(value);
-            return Number.isFinite(n) ? n : fallback;
-        };
-        const lineHeight = parsePx(style.lineHeight, this.baseLineHeight);
-        const boxChromeHeight =
-            parsePx(style.paddingTop) +
-            parsePx(style.paddingBottom) +
-            parsePx(style.borderTopWidth) +
-            parsePx(style.borderBottomWidth);
-        const oneLineHeight = Math.max(0, lineHeight + boxChromeHeight);
-        const hasNarrationTopBoundary = Number.isFinite(this.narrationMinTop);
-        const minTop = Math.max(this.topInset || 0, hasNarrationTopBoundary ? this.narrationMinTop : 0);
-        const threeLineHeight = Math.max(0, lineHeight * 3 + boxChromeHeight);
-        const abovePanelHeight = Math.max(0, panelRefPos.top - minTop);
-        let narrationBottomLimit = panelRefPos.top;
-        if (!moving && hasNarrationTopBoundary && abovePanelHeight < oneLineHeight) {
-            narrationBottomLimit = panelRefPos.top + panelRefSize.height * 0.35;
-        }
-        const maxFitHeight = Math.max(0, narrationBottomLimit - minTop);
-        const boxMaxHeight = Math.max(0, Math.min(maxFitHeight, threeLineHeight));
-
-        this.narrationEl.style.maxHeight = '';
-        this.narrationEl.style.overflowX = 'hidden';
-        this.narrationEl.style.overflowY = 'visible';
-        const naturalHeight = this.narrationEl.getBoundingClientRect().height;
-        const displayHeight = Math.min(naturalHeight, boxMaxHeight || naturalHeight);
-        const targetTop = Math.max(minTop, narrationBottomLimit - displayHeight);
-        this.narrationTarget.left = panelRefPos.left;
-        this.narrationTarget.top = targetTop;
-
-        this.narrationEl.style.maxHeight = `${Math.max(0, boxMaxHeight)}px`;
-        this.narrationEl.style.overflowX = 'hidden';
-        this.narrationEl.style.overflowY = naturalHeight > boxMaxHeight ? 'auto' : 'hidden';
-        if (this.isUpdating) {
-            this.syncNarrationBackground();
-            return;
-        }
-
-        if (this.narrationData.left === this.data.left && this.narrationData.top === this.data.top) {
-            this.narrationData.left = panelRefPos.left;
-            this.narrationData.top = targetTop;
-        }
-        this.narrationData.left = panelRefPos.left;
-        this.narrationData.top = targetTop;
+        this.fixedNarrationReserve = Math.max(0, reserve);
+        this.narrationTarget.left = panelRef.left;
+        this.narrationTarget.top = panelRef.top;
+        this.narrationData.left = panelRef.left;
+        this.narrationData.top = panelRef.top;
         this.narrationEl.style.left = `${this.narrationData.left}px`;
         this.narrationEl.style.top = `${this.narrationData.top}px`;
+
+        const canvasTop = panelRef.top + this.fixedNarrationReserve;
+        const canvasHeight = Math.max(40, height - this.fixedNarrationReserve);
+        this.canvas.style.left = `${panelRef.left}px`;
+        this.canvas.style.top = `${canvasTop}px`;
+        this.canvas.style.width = `${width}px`;
+        this.canvas.style.height = `${canvasHeight}px`;
+        this.textEl.style.left = `${panelRef.left}px`;
+        this.textEl.style.top = `${canvasTop}px`;
+        this.textEl.style.width = `${width}px`;
+        this.textEl.style.height = `${canvasHeight}px`;
+        if (this.three) this.three.resize(width, canvasHeight);
+
         this.syncNarrationBackground();
     }
 
