@@ -12,11 +12,14 @@
     <div id="topbar">
       <div id="storyStatus">Default story</div>
       <div id="storyControls">
-        <input id="storyFile" type="file" accept=".html,text/html">
-        <button id="storyToggleBtn" type="button">Play default story</button>
-        <span id="fileStatus"></span>
+        <input id="storyFile" type="file" accept=".html,.twee,.tw,text/html,text/plain">
+      </div>
+      <div id="storyActions">
+        <button id="storyToggleBtn" type="button">⇄ Switch Story</button>
+        <a id="editorLink" href="/visual-editor.html">✎ Edit Scenes</a>
       </div>
     </div>
+    <footer id="viewerStatusBar"><span id="fileStatus"></span></footer>
     <script id="p5" type="module" src="/src/layout.js"></script>
   </body>
 </html>

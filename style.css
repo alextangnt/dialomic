@@ -5,6 +5,7 @@ body {
     margin: 0;
     padding: 0;
     overflow: hidden;
+    font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 .background-element {
@@ -138,12 +139,28 @@ canvas {
     color: #fff;
     background: #000;
     border: 1px solid #000;
-    border-radius: 0;
+    border-radius: 10px;
     padding: 10px 12px;
     box-sizing: border-box;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     /* pointer-events: none; */
     white-space: pre-wrap;
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE/Edge Legacy */
+}
+
+.panel-narration-bg {
+    border-radius: 10px;
+}
+
+canvas[data-panel-id] {
+    border-radius: 12px;
+}
+
+.panel-narration::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
 }
 
 .panel-speech {
@@ -158,6 +175,13 @@ canvas {
     box-shadow: 0 3px 2px rgba(0, 0, 0, 0.18);
     /* pointer-events: none; */
     white-space: pre-wrap;
+    overflow: visible;
+    overflow-wrap: break-word;
+    word-break: normal;
+    hyphens: auto;
+    -webkit-hyphens: auto;
+    -ms-hyphens: auto;
+    hyphenate-character: "-";
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
@@ -209,8 +233,9 @@ iframe {
     align-items: center;
     justify-content: space-between;
     gap: 12px;
-    background: #000;
-    color: #fff;
+    background: #ffeeb9;
+    color: #1a2430;
+    border-bottom: 2px solid #dfc87d;
     padding: 8px 12px;
     pointer-events: auto;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -222,44 +247,111 @@ iframe {
     display: flex;
     gap: 8px;
     align-items: center;
+    flex: 1 1 auto;
+    margin: 0 12px;
+}
+
+#storyActions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
 }
 
 #storyControls input[type="file"] {
-    color: #fff;
+    color: #1a2430;
     font-size: 12px;
+    font-family: inherit;
 }
 
-#storyControls button {
-    background: #35a;
-    border: 1px solid #57c;
-    color: #fff;
-    padding: 2px 8px;
+#storyControls button,
+#restartBtn {
+    background: #7ed0e7;
+    border: 2px solid #2f7f9b;
+    color: #0f2e3c;
+    border-radius: 8px;
+    padding: 6px 12px;
     font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    box-shadow: 0 2px 0 #2f7f9b;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+    cursor: pointer;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    font-family: inherit;
+}
+
+#storyToggleBtn {
+    background: #3567a8;
+    border-color: #214b82;
+    color: #eef5ff;
+    box-shadow: 0 2px 0 #214b82;
+    border-radius: 999px;
+    padding: 6px 14px;
+    min-width: 164px;
+    text-align: center;
+}
+
+#editorLink {
+    background: #f3d24d;
+    border: 2px solid #b9941f;
+    color: #4b3a07;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    text-decoration: none;
+    box-shadow: 0 2px 0 #b9941f;
+    transition: transform 120ms ease, box-shadow 120ms ease;
+    white-space: nowrap;
+    font-family: inherit;
+}
+
+#storyControls button:hover:not(:disabled),
+#restartBtn:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 #2f7f9b;
+}
+
+#editorLink:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 #b9941f;
+}
+
+#storyControls button:active:not(:disabled),
+#restartBtn:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 0 #2f7f9b;
+}
+
+#editorLink:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 0 #b9941f;
+}
+
+#storyControls button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: 0 1px 0 #777;
 }
 
 #restartBtn {
     position: fixed;
-    right: 12px;
-    bottom: 12px;
+    right: 14px;
+    bottom: 44px;
     z-index: 200;
-    background: #35a;
-    border: 1px solid #57c;
-    border-radius: 0;
-    color: #fff;
     padding: 6px 10px;
     font-size: 12px;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-    cursor: pointer;
-    outline: none;
-    box-shadow: none;
-    appearance: none;
-    -webkit-appearance: none;
 }
 
 #restartBtn:focus,
 #restartBtn:focus-visible {
     outline: none;
-    box-shadow: none;
+    box-shadow: 0 2px 0 #2f7f9b;
 }
 
 #storyStatus {
@@ -269,6 +361,22 @@ iframe {
 #fileStatus {
     opacity: 0.8;
     font-size: 11px;
+}
+
+#viewerStatusBar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 9999;
+    border-top: 1px solid #d8cfb2;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #44576a;
+    background: #f5f1df;
+    box-sizing: border-box;
+    pointer-events: none;
+    font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
 @font-face {

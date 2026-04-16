@@ -7,6 +7,7 @@ let vars = {};
 let layout;
 let activeSessionId = null;
 window.DL_DEBUG_DELIVERY = true
+const EDITED_STORY_STORAGE_KEY = 'DL_IMPORTED_STORY_HTML';
 
 
 window.onload = () =>{
@@ -17,6 +18,9 @@ window.onload = () =>{
     const storyStatusEl = document.getElementById("storyStatus");
     const storyToggleBtn = document.getElementById("storyToggleBtn");
     const defaultStoryUrl = "story.with-messaging.html";
+    const defaultStoryHtmlPromise = fetch(defaultStoryUrl)
+        .then((resp) => resp.ok ? resp.text() : null)
+        .catch(() => null);
     const refreshResets = true;
     let importedHtml = null;
     let importedName = null;
@@ -24,6 +28,19 @@ window.onload = () =>{
     let pendingStart = false;
     let refreshRestarted = false;
     let awaitingRefreshInit = false;
+    try {
+        const stored = localStorage.getItem(EDITED_STORY_STORAGE_KEY);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (typeof parsed?.html === 'string' && parsed.html.trim()) {
+                importedHtml = parsed.html;
+                importedName = parsed.name || 'Edited Story.html';
+            }
+            localStorage.removeItem(EDITED_STORY_STORAGE_KEY);
+        }
+    } catch (err) {
+        console.warn('[layout] Failed to load edited story from storage', err);
+    }
 
     loaded = true;
     iframe.addEventListener("load", (event) => {
@@ -122,13 +139,13 @@ window.onload = () =>{
     function updateToggleLabel() {
         if (!storyToggleBtn) return;
         if (!importedHtml) {
-            storyToggleBtn.textContent = 'Play default story';
+            storyToggleBtn.textContent = '⇄ Switch Story';
             storyToggleBtn.disabled = true;
             return;
         }
         storyToggleBtn.disabled = false;
         storyToggleBtn.textContent =
-            currentMode === 'default' ? 'Play imported story' : 'Play default story';
+            currentMode === 'default' ? '⇄ Switch to Imported' : '⇄ Switch to Default';
     }
 
     function setMode(mode) {
@@ -146,18 +163,140 @@ window.onload = () =>{
         updateToggleLabel();
     }
 
-    function handleFile(file) {
+    function readFileText(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Failed to load file'));
+            reader.readAsText(file);
+        });
+    }
+
+    function parseTweePassages(twee) {
+        const text = String(twee || '').replace(/\r\n/g, '\n').replace(/^\uFEFF/, '');
+        const lines = text.split('\n');
+        const passages = [];
+        let current = null;
+        let body = [];
+
+        const pushCurrent = () => {
+            if (!current) return;
+            passages.push({
+                name: current.name,
+                tags: current.tags,
+                body: body.join('\n').replace(/^\n/, ''),
+            });
+            body = [];
+        };
+
+        const parseHeader = (line) => {
+            const raw = line.slice(2).trim();
+            // :: Passage [tag1 tag2] <meta>
+            const match = raw.match(/^(.*?)\s*\[(.*?)\]\s*(?:<.*?>)?\s*$/);
+            if (!match) return { name: raw, tags: [] };
+            const name = match[1].trim();
+            const tags = match[2]
+                .split(/\s+/)
+                .map((t) => t.trim())
+                .filter(Boolean);
+            return { name, tags };
+        };
+
+        for (const line of lines) {
+            if (line.startsWith('::')) {
+                pushCurrent();
+                current = parseHeader(line);
+                continue;
+            }
+            if (current) body.push(line);
+        }
+        pushCurrent();
+        return passages.filter((p) => p.name);
+    }
+
+    function compileTweeToHtml(tweeText, templateHtml, sourceName) {
+        if (!templateHtml) throw new Error('Missing default story template');
+        const passages = parseTweePassages(tweeText);
+        if (!passages.length) throw new Error('No Twee passages found');
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(templateHtml, 'text/html');
+        const storyData = doc.querySelector('tw-storydata');
+        if (!storyData) throw new Error('Template missing <tw-storydata>');
+
+        const getPassage = (name) => passages.find((p) => p.name === name);
+        const specialNames = new Set([
+            'StoryTitle',
+            'StoryAuthor',
+            'StorySubtitle',
+            'StoryCaption',
+            'StoryBanner',
+            'StoryMenu',
+            'StoryData',
+            'StoryInit',
+            'StorySettings',
+            'StoryStylesheet',
+            'StoryJavaScript',
+            'StoryDisplayTitle',
+        ]);
+        const storyTitle = getPassage('StoryTitle')?.body?.trim()
+            || sourceName?.replace(/\.[^.]+$/, '')
+            || 'Dialomic Story';
+        storyData.setAttribute('name', storyTitle);
+
+        const storyDataPassage = getPassage('StoryData');
+        if (storyDataPassage?.body) {
+            try {
+                const parsed = JSON.parse(storyDataPassage.body);
+                if (typeof parsed?.ifid === 'string' && parsed.ifid.trim()) {
+                    storyData.setAttribute('ifid', parsed.ifid.trim());
+                }
+            } catch {
+                // Ignore invalid StoryData JSON and keep template defaults.
+            }
+        }
+
+        const startCandidate = passages.find((p) => !specialNames.has(p.name)) || passages[0];
+        let startPid = 1;
+        storyData.querySelectorAll('tw-passagedata').forEach((n) => n.remove());
+
+        for (let i = 0; i < passages.length; i += 1) {
+            const p = passages[i];
+            const pid = i + 1;
+            if (p.name === startCandidate.name) startPid = pid;
+            const pass = doc.createElement('tw-passagedata');
+            pass.setAttribute('pid', String(pid));
+            pass.setAttribute('name', p.name);
+            pass.setAttribute('tags', p.tags.join(' '));
+            pass.setAttribute('position', `${100 + (i % 8) * 140},${100 + Math.floor(i / 8) * 140}`);
+            pass.setAttribute('size', '100,100');
+            pass.textContent = p.body;
+            storyData.appendChild(pass);
+        }
+
+        storyData.setAttribute('startnode', String(startPid));
+        return `<!DOCTYPE html>\n${doc.documentElement.outerHTML}`;
+    }
+
+    async function handleFile(file) {
         if (!file) return;
-        const reader = new FileReader();
-        reader.onload = () => {
-            importedHtml = reader.result;
-            importedName = file.name;
+        try {
+            const fileText = await readFileText(file);
+            const lowerName = String(file.name || '').toLowerCase();
+            if (lowerName.endsWith('.twee') || lowerName.endsWith('.tw')) {
+                const templateHtml = await defaultStoryHtmlPromise;
+                importedHtml = compileTweeToHtml(fileText, templateHtml, file.name);
+                importedName = `${file.name} (compiled)`;
+                statusEl.textContent = `Compiled and loaded: ${file.name}`;
+            } else {
+                importedHtml = fileText;
+                importedName = file.name;
+            }
             setMode('imported');
-        };
-        reader.onerror = () => {
+        } catch (err) {
+            console.error(err);
             statusEl.textContent = 'Failed to load file';
-        };
-        reader.readAsText(file);
+        }
     }
 
     if (fileInput) {
@@ -170,6 +309,10 @@ window.onload = () =>{
             if (!importedHtml) return;
             setMode(currentMode === 'default' ? 'imported' : 'default');
         });
+    }
+
+    if (importedHtml) {
+        setMode('imported');
     }
 };
 
@@ -194,6 +337,38 @@ function cleanText(s){
         return s.substring(0, i);
     }
     return s;
+}
+
+function cloneSceneSpec(scene) {
+    if (!scene || typeof scene !== 'object') return scene || {};
+    if (typeof structuredClone === 'function') {
+        try {
+            return structuredClone(scene);
+        } catch {
+            // fallback below
+        }
+    }
+    try {
+        return JSON.parse(JSON.stringify(scene));
+    } catch {
+        return { ...scene };
+    }
+}
+
+const DEFAULT_PANEL_CAMERA = Object.freeze({
+    position: [0, 0.8, 9],
+    target: [0, 2, -80],
+    fov: 25,
+    near: 0.03,
+    far: 500,
+});
+
+function withDefaultSceneCamera(scene) {
+    const next = cloneSceneSpec(scene) || {};
+    if (!next.camera || typeof next.camera !== 'object') {
+        next.camera = cloneSceneSpec(DEFAULT_PANEL_CAMERA);
+    }
+    return next;
 }
 
 function stripHtml(html) {
@@ -225,10 +400,14 @@ function extractPanelCommands(text) {
             commands.solo = true;
             return;
         }
-        const pair = token.split(/[:=]/);
-        if (pair.length < 2) return;
-        const key = pair[0].trim();
-        const value = pair.slice(1).join('=').trim();
+        const eqIdx = token.indexOf('=');
+        const colonIdx = token.indexOf(':');
+        let sepIdx = -1;
+        if (eqIdx >= 0 && colonIdx >= 0) sepIdx = Math.min(eqIdx, colonIdx);
+        else sepIdx = Math.max(eqIdx, colonIdx);
+        if (sepIdx < 1) return;
+        const key = token.slice(0, sepIdx).trim();
+        const value = token.slice(sepIdx + 1).trim();
         if (!key) return;
         if (key === 'rows') {
             const n = Number(value);
@@ -247,6 +426,15 @@ function extractPanelCommands(text) {
         }
         if (key === 'aspect') {
             const v = String(value).toLowerCase();
+            const ratioMatch = v.match(/^([0-9]*\.?[0-9]+)\s*:\s*([0-9]*\.?[0-9]+)$/);
+            if (ratioMatch) {
+                const w = Number(ratioMatch[1]);
+                const h = Number(ratioMatch[2]);
+                if (Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0) {
+                    commands.aspectRatio = w / h;
+                }
+                return;
+            }
             commands.aspect = v === 'fixed' ? 'fixed' : 'free';
         }
     };
@@ -348,8 +536,9 @@ class LayoutUI {
         this.links = [];
         this.showResponse = true;
         this.panelSolo = false;
-        this.panelConfig = { panels: 'stack', rows: 1, cols: 1, aspect: 'free' };
+        this.panelConfig = { panels: 'stack', rows: 1, cols: 1, aspect: 'free', aspectRatio: null };
         this.panelCommands = {};
+        this.panelAspectRatio = null;
         this.largePanelOrder = [];
         this.panelOrderCounter = 0;
         this.activePanelName = null;
@@ -408,9 +597,23 @@ class LayoutUI {
         const panels = modeRaw === 'cycle' ? 'cycle' : 'stack';
         const rows = Math.max(1, Math.min(3, Number.isFinite(Number(cfg.rows)) ? Math.floor(Number(cfg.rows)) : 1));
         const cols = Math.max(1, Math.min(3, Number.isFinite(Number(cfg.cols)) ? Math.floor(Number(cfg.cols)) : 1));
+        let aspectRatio = null;
+        const ratioFromKey = Number(cfg.aspectRatio);
+        if (Number.isFinite(ratioFromKey) && ratioFromKey > 0) {
+            aspectRatio = ratioFromKey;
+        }
         const aspectRaw = String(cfg.aspect || 'free').toLowerCase();
-        const aspect = aspectRaw === 'fixed' ? 'fixed' : 'free';
-        return { panels, rows, cols, aspect };
+        const ratioFromAspect = aspectRaw.match(/^([0-9]*\.?[0-9]+)\s*:\s*([0-9]*\.?[0-9]+)$/);
+        if (ratioFromAspect) {
+            const aw = Number(ratioFromAspect[1]);
+            const ah = Number(ratioFromAspect[2]);
+            if (Number.isFinite(aw) && Number.isFinite(ah) && aw > 0 && ah > 0) {
+                aspectRatio = aw / ah;
+            }
+        }
+        let aspect = aspectRaw === 'fixed' ? 'fixed' : 'free';
+        if (aspectRatio) aspect = 'fixed';
+        return { panels, rows, cols, aspect, aspectRatio };
     }
 
     getPanelCapacity() {
@@ -453,26 +656,52 @@ class LayoutUI {
         const leftPad = Math.max(8, this.w * 0.02);
         const rightPad = leftPad;
         const topPad = Math.max(10, this.h * 0.04);
-        const bottomPad = Math.max(120, this.h * 0.22);
         const areaTop = this.topInset + topPad;
+        const uiGap = Math.max(10, this.h * 0.02);
+        const fallbackBottomPad = Math.max(120, this.h * 0.22);
+        let areaBottom = Math.max(areaTop + 80, window.innerHeight - fallbackBottomPad);
+        const reserveTopCandidates = [];
+        if (this.linksRoot && this.links && this.links.length > 0) {
+            const linksRect = this.linksRoot.getBoundingClientRect();
+            if (Number.isFinite(linksRect.top) && linksRect.height > 0) {
+                reserveTopCandidates.push(linksRect.top - uiGap);
+            }
+        }
+        if (this.inputRoot && this.inputRoot.style.display !== 'none') {
+            const inputRect = this.inputRoot.getBoundingClientRect();
+            if (Number.isFinite(inputRect.top) && inputRect.height > 0) {
+                reserveTopCandidates.push(inputRect.top - uiGap);
+            }
+        }
+        if (reserveTopCandidates.length) {
+            const reserveTop = Math.min(...reserveTopCandidates);
+            if (Number.isFinite(reserveTop)) {
+                areaBottom = Math.min(areaBottom, reserveTop);
+            }
+        }
+        areaBottom = Math.max(areaTop + 80, areaBottom);
         const areaWidth = Math.max(80, this.w - leftPad - rightPad);
-        const areaHeight = Math.max(80, this.h - topPad - bottomPad);
+        const areaHeight = Math.max(80, areaBottom - areaTop);
         const gapX = Math.max(10, areaWidth * 0.03);
         const gapY = Math.max(10, areaHeight * 0.04);
         const slotWidth = Math.max(80, (areaWidth - gapX * (usedCols - 1)) / usedCols);
         const slotHeight = Math.max(80, (areaHeight - gapY * (usedRows - 1)) / usedRows);
 
-        let cellWidth = slotWidth;
-        let cellHeight = slotHeight;
+        let defaultCellWidth = slotWidth;
+        let defaultCellHeight = slotHeight;
         if (this.panelConfig.aspect === 'fixed') {
-            const fullCellWidth = Math.max(80, (areaWidth - gapX * (maxCols - 1)) / maxCols);
-            const fullCellHeight = Math.max(80, (areaHeight - gapY * (maxRows - 1)) / maxRows);
-            const baseAspect = Math.max(0.1, fullCellWidth / Math.max(1, fullCellHeight));
-            cellWidth = Math.min(slotWidth, slotHeight * baseAspect);
-            cellHeight = cellWidth / baseAspect;
-            if (cellHeight > slotHeight) {
-                cellHeight = slotHeight;
-                cellWidth = cellHeight * baseAspect;
+            const baseAspect = Number.isFinite(this.panelConfig.aspectRatio) && this.panelConfig.aspectRatio > 0
+                ? this.panelConfig.aspectRatio
+                : (() => {
+                    const fullCellWidth = Math.max(80, (areaWidth - gapX * (maxCols - 1)) / maxCols);
+                    const fullCellHeight = Math.max(80, (areaHeight - gapY * (maxRows - 1)) / maxRows);
+                    return Math.max(0.1, fullCellWidth / Math.max(1, fullCellHeight));
+                })();
+            defaultCellWidth = Math.min(slotWidth, slotHeight * baseAspect);
+            defaultCellHeight = defaultCellWidth / baseAspect;
+            if (defaultCellHeight > slotHeight) {
+                defaultCellHeight = slotHeight;
+                defaultCellWidth = defaultCellHeight * baseAspect;
             }
         }
 
@@ -483,6 +712,17 @@ class LayoutUI {
             const col = i % usedCols;
             const slotLeft = leftPad + col * (slotWidth + gapX);
             const slotTop = areaTop + row * (slotHeight + gapY);
+            let cellWidth = defaultCellWidth;
+            let cellHeight = defaultCellHeight;
+            const panelAspect = this.panelsOnscreen[name]?.customAspectRatio;
+            if (Number.isFinite(panelAspect) && panelAspect > 0) {
+                cellWidth = Math.min(slotWidth, slotHeight * panelAspect);
+                cellHeight = cellWidth / panelAspect;
+                if (cellHeight > slotHeight) {
+                    cellHeight = slotHeight;
+                    cellWidth = cellHeight * panelAspect;
+                }
+            }
             targets[name] = {
                 left: slotLeft + (slotWidth - cellWidth) * 0.5,
                 top: slotTop + (slotHeight - cellHeight) * 0.5,
@@ -1031,6 +1271,9 @@ class LayoutUI {
         };
         this.panelConfig = this.normalizePanelConfig(mergedConfig);
         this.panelSolo = this.panelCommands.solo === true ? true : baseSolo;
+        this.panelAspectRatio = Number.isFinite(this.panelCommands.aspectRatio)
+            ? this.panelCommands.aspectRatio
+            : null;
         // console.log(vars?.DL?.objects);
         const sceneObjects = buildSceneObjectMap(vars?.DL?.objects);
         const parsed = parseSpeakerBlocks(extracted.text, sceneObjects);
@@ -1088,12 +1331,13 @@ class LayoutUI {
         let data = {left: 0, top: this.topInset + this.h, width: 360, height: 150};
         let target = {left: 0, top: this.topInset + this.h / 4, width: this.w, height: 300};
         let vars = iframe.contentWindow.SugarCube.State.variables;
-        let scene = vars.DL;
+        let scene = withDefaultSceneCamera(vars.DL);
         console.log(scene);
 
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, this.txt, -1, scene, 'narration', this.topInset);
             p.setAspectMode?.(this.panelConfig.aspect);
+            p.customAspectRatio = this.panelAspectRatio;
             if (this.speakers?.length) p.setSpeakers(this.speakers);
             p.panelSize = 'large';
             p.stackOrder = ++this.panelOrderCounter;
@@ -1114,6 +1358,7 @@ class LayoutUI {
             p.setScene(scene);
             p.setTopInset(this.topInset);
             p.setAspectMode?.(this.panelConfig.aspect);
+            p.customAspectRatio = this.panelAspectRatio;
             p.panelSize = 'large';
             p.stackOrder = ++this.panelOrderCounter;
             this.panelsOnscreen[name] = p;
@@ -1155,7 +1400,7 @@ class LayoutUI {
         let data = {left: 0, top: this.topInset + this.h, width: 100, height: 100};
         target = {left: this.w * 3 / 4, top: this.topInset + this.h / 3, width: 200, height: 200};
         vars = iframe.contentWindow.SugarCube.State.variables;
-        let scene = vars.DL;
+        let scene = withDefaultSceneCamera(vars.DL);
         // console.log("makeresponese make response");
         // console.log(vars);
         if (!this.panels[name]) {

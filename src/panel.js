@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { backgroundConfigs, backgroundDefaults } from './backgrounds.js';
@@ -26,7 +27,20 @@ function slugifyAssetName(name) {
 
 function resolveBackgroundTransform(slug, backgroundSpec) {
     const config = backgroundConfigs[slug] || {};
-    const scale = backgroundSpec?.scale ?? config.scale ?? backgroundDefaults.scale;
+    const rawScale = backgroundSpec?.scale ?? config.scale ?? backgroundDefaults.scale;
+    const scale = (() => {
+        if (rawScale && typeof rawScale === 'object') {
+            const x = Number(rawScale.x);
+            const y = Number(rawScale.y);
+            const z = Number(rawScale.z);
+            if (Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z)) {
+                return { x, y, z };
+            }
+        }
+        const s = Number(rawScale);
+        const uniform = Number.isFinite(s) ? s : (Number(backgroundDefaults.scale) || 1);
+        return { x: uniform, y: uniform, z: uniform };
+    })();
     const pos = {
         ...backgroundDefaults.position,
         ...(config.position || {}),
@@ -89,6 +103,7 @@ const facings = {
     "LOOKBACK": Math.PI
 }
 const frames = 10;
+const EDITOR_BACKGROUND_KEY = '__background__';
 const exitFrames = 16;
 
 function normalizeSceneObjects(scene) {
@@ -131,6 +146,22 @@ function normalizeSceneObjects(scene) {
     }
 
     return { list, byId };
+}
+
+function clonePanelSceneData(value) {
+    if (!value || typeof value !== 'object') return value;
+    if (typeof structuredClone === 'function') {
+        try {
+            return structuredClone(value);
+        } catch {
+            // fallback below
+        }
+    }
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch {
+        return { ...value };
+    }
 }
 
 export class ThreeScene {
@@ -232,6 +263,20 @@ export class ThreeScene {
         this.mouseTiltTarget = { x: 0, y: 0 };
         this.mouseTiltLerp = 0.12;
         this.mouseTiltReady = true;
+        this.cameraSpec = null;
+        this.editorEnabled = false;
+        this.editorOrbitControls = null;
+        this.editorTransformControls = null;
+        this.editorTransformHelper = null;
+        this.editorRaycaster = new THREE.Raycaster();
+        this.editorPointer = new THREE.Vector2();
+        this.editorSelectedKey = null;
+        this.editorOnChange = null;
+        this.editorOnSelect = null;
+        this.editorPendingOptions = null;
+        this.editorIsDragging = false;
+        this.editorPointerDown = null;
+        this.editorClickHandler = null;
         this.mouseTiltHandler = (e) => {
             const cx = Number(e?.clientX);
             const cy = Number(e?.clientY);
@@ -244,6 +289,7 @@ export class ThreeScene {
         window.addEventListener('mousemove', this.mouseTiltHandler, { passive: true, capture: true });
         this.backgroundModel = null;
         this.backgroundToken = 0;
+        this.backgroundSourceSpec = null;
         this.shotSpec = null;
         this.pendingShotModels = 0;
         this.waitingForShot = false;
@@ -280,7 +326,9 @@ export class ThreeScene {
             this.applyRepulsion();
         }
         this.updateSpeakerHop(now);
-        if (this.mouseTiltReady) {
+        if (this.editorEnabled && this.editorOrbitControls) {
+            this.editorOrbitControls.update();
+        } else if (this.mouseTiltReady) {
             this.applyMouseTilt();
         }
         // this.controls.update();
@@ -295,9 +343,98 @@ export class ThreeScene {
 
     }
 
+    parseVec3(value) {
+        if (Array.isArray(value)) {
+            const [x, y, z] = value;
+            if ([x, y, z].every((n) => Number.isFinite(Number(n)))) {
+                return new THREE.Vector3(Number(x), Number(y), Number(z));
+            }
+            return null;
+        }
+        if (value && typeof value === 'object') {
+            const x = Number(value.x);
+            const y = Number(value.y);
+            const z = Number(value.z);
+            if ([x, y, z].every((n) => Number.isFinite(n))) {
+                return new THREE.Vector3(x, y, z);
+            }
+        }
+        return null;
+    }
+
+    applyCameraSpec() {
+        const spec = this.cameraSpec;
+        if (!spec || typeof spec !== 'object') return;
+        const pos = this.parseVec3(spec.position);
+        const target = this.parseVec3(spec.target);
+        if (!pos || !target) return;
+        const fov = Number(spec.fov);
+        const near = Number(spec.near);
+        const far = Number(spec.far);
+        if (Number.isFinite(fov) && fov > 1 && fov < 179) this.camera.fov = fov;
+        if (Number.isFinite(near) && near > 0) this.camera.near = near;
+        if (Number.isFinite(far) && far > this.camera.near) this.camera.far = far;
+        this.camera.updateProjectionMatrix();
+        this.camera.position.copy(pos);
+        this.camera.lookAt(target);
+        this.cameraBasePos.copy(pos);
+        this.cameraBaseLookTarget = target.clone();
+        if (this.editorOrbitControls) {
+            this.editorOrbitControls.target.copy(target);
+            this.editorOrbitControls.update();
+        }
+    }
+
+    setCameraSpec(cameraSpec) {
+        this.cameraSpec = cameraSpec && typeof cameraSpec === 'object'
+            ? clonePanelSceneData(cameraSpec)
+            : null;
+        if (this.cameraSpec) {
+            this.applyCameraSpec();
+            return;
+        }
+        // Camera data is panel-specific. If current scene has no camera override,
+        // clear any previous override and fall back to this panel's shot/default.
+        if (this.shotSpec) {
+            this.applyShotIfReady();
+        } else {
+            this.resetCameraToDefault();
+            if (this.mouseTiltBase) {
+                this.mouseTilt.maxYaw = this.mouseTiltBase.maxYaw;
+                this.mouseTilt.maxPitch = this.mouseTiltBase.maxPitch;
+            }
+        }
+        if (this.editorOrbitControls) {
+            this.editorOrbitControls.target.copy(this.cameraBaseLookTarget);
+            this.editorOrbitControls.update();
+        }
+    }
+
+    getCameraSpecSnapshot() {
+        const target = this.editorOrbitControls?.target?.clone() || this.cameraBaseLookTarget.clone();
+        return {
+            position: [
+                Number(this.camera.position.x.toFixed(4)),
+                Number(this.camera.position.y.toFixed(4)),
+                Number(this.camera.position.z.toFixed(4)),
+            ],
+            target: [
+                Number(target.x.toFixed(4)),
+                Number(target.y.toFixed(4)),
+                Number(target.z.toFixed(4)),
+            ],
+            fov: Number(this.camera.fov.toFixed(4)),
+            near: Number(this.camera.near.toFixed(5)),
+            far: Number(this.camera.far.toFixed(3)),
+        };
+    }
+
     parseModelInfo(info){
         // console.log(info);
         let specString = '';
+        let explicitPosition = null;
+        let explicitRotation = null;
+        let explicitScale = null;
         if (typeof info === 'string') {
             const trimmed = info.trim();
             const eqIdx = trimmed.indexOf('=');
@@ -315,6 +452,9 @@ export class ThreeScene {
                 ].filter(Boolean);
                 specString = bits.join(' ');
             }
+            explicitPosition = this.parseVec3(info.position);
+            explicitRotation = this.parseVec3(info.rotation);
+            explicitScale = this.parseVec3(info.scale);
         }
 
         let specs = specString.split(" ").filter(Boolean);
@@ -342,12 +482,311 @@ export class ThreeScene {
                 locKey = s;
             }
         }
-        return {filename, dist, distName, locKey, angle};
+        return {filename, dist, distName, locKey, angle, specString, explicitPosition, explicitRotation, explicitScale};
         
     }
 
+    enableEditorTools(options = {}) {
+        if (!this.models.length) {
+            // Defer editor setup until at least one model has loaded.
+            this.editorPendingOptions = options;
+            return;
+        }
+        if (this.editorEnabled) {
+            if (typeof options.onChange === 'function') this.editorOnChange = options.onChange;
+            if (typeof options.onSelect === 'function') this.editorOnSelect = options.onSelect;
+            return;
+        }
+        this.editorEnabled = true;
+        this.mouseTiltReady = false;
+        this.editorOnChange = typeof options.onChange === 'function' ? options.onChange : null;
+        this.editorOnSelect = typeof options.onSelect === 'function' ? options.onSelect : null;
+        this.editorOrbitControls = new OrbitControls(this.camera, this.renderer.domElement);
+        // Keep editor controls precise (less drift, less aggressive movement).
+        this.editorOrbitControls.enableDamping = false;
+        this.editorOrbitControls.rotateSpeed = 0.45;
+        this.editorOrbitControls.zoomSpeed = 0.6;
+        this.editorOrbitControls.panSpeed = 0.55;
+        this.editorOrbitControls.screenSpacePanning = true;
+        this.editorOrbitControls.minDistance = 0.25;
+        this.editorOrbitControls.maxDistance = 60;
+        this.editorOrbitControls.maxPolarAngle = Math.PI * 0.98;
+        // Start from the current camera view (matches what user is seeing),
+        // rather than forcing a distant default look target.
+        const lookDir = this.camera.getWorldDirection(new THREE.Vector3());
+        const lookTarget = this.camera.position.clone().add(lookDir.multiplyScalar(10));
+        this.editorOrbitControls.target.copy(lookTarget);
+        this.editorOrbitControls.addEventListener('end', () => {
+            if (this.editorOnChange) this.editorOnChange();
+        });
+        this.editorTransformControls = new TransformControls(this.camera, this.renderer.domElement);
+        this.editorTransformHelper = this.editorTransformControls.getHelper?.() || null;
+        this.editorTransformControls.setMode('translate');
+        this.editorTransformControls.setSize(1.2);
+        this.editorTransformControls.visible = true;
+        this.editorTransformControls.showX = true;
+        this.editorTransformControls.showY = true;
+        this.editorTransformControls.showZ = true;
+        this.editorTransformControls.addEventListener('dragging-changed', (event) => {
+            this.editorIsDragging = Boolean(event.value);
+            if (this.editorOrbitControls) {
+                this.editorOrbitControls.enabled = !event.value;
+            }
+        });
+        this.editorTransformControls.addEventListener('objectChange', () => {
+            if (this.editorOnChange) this.editorOnChange();
+        });
+        if (this.editorTransformHelper?.isObject3D) {
+            this.scene.add(this.editorTransformHelper);
+        }
+
+        this.editorClickHandler = {
+            down: (event) => {
+                this.editorPointerDown = {
+                    x: Number(event.clientX) || 0,
+                    y: Number(event.clientY) || 0,
+                };
+            },
+            up: (event) => {
+                if (this.editorIsDragging) return;
+                const start = this.editorPointerDown;
+                this.editorPointerDown = null;
+                if (!start) return;
+                const dx = (Number(event.clientX) || 0) - start.x;
+                const dy = (Number(event.clientY) || 0) - start.y;
+                if ((dx * dx + dy * dy) > 25) return;
+                this.selectEditableModelFromPointer(event);
+            },
+        };
+        this.renderer.domElement.addEventListener('pointerdown', this.editorClickHandler.down);
+        this.renderer.domElement.addEventListener('pointerup', this.editorClickHandler.up);
+
+        // Initialize orbit target/zoom bounds from currently loaded models.
+        this.updateEditorOrbitBounds();
+
+        // If models are already available when editor mode is enabled, attach immediately.
+        if (this.models.length && !this.editorTransformControls.object) {
+            const firstKey = this.getEditableModelKeys()[0];
+            if (firstKey) this.setSelectedEditableModel(firstKey);
+        }
+    }
+
+    updateEditorOrbitBounds() {
+        if (!this.editorOrbitControls || !this.models.length) return;
+        const box = new THREE.Box3();
+        let has = false;
+        for (const model of this.models) {
+            if (!model) continue;
+            const mbox = new THREE.Box3().setFromObject(model);
+            if (!has) {
+                box.copy(mbox);
+                has = true;
+            } else {
+                box.union(mbox);
+            }
+        }
+        if (!has) return;
+        const size = new THREE.Vector3();
+        const center = new THREE.Vector3();
+        box.getSize(size);
+        box.getCenter(center);
+        const radius = Math.max(0.5, size.length() * 0.35);
+        this.editorOrbitControls.minDistance = Math.max(0.2, radius * 0.2);
+        this.editorOrbitControls.maxDistance = Math.max(8, radius * 12);
+        // Do not retarget camera automatically in editor bounds sync.
+        // Retargeting makes initial framing diverge from viewer framing.
+    }
+
+    selectEditableModelFromPointer(event) {
+        if (!this.editorEnabled) return;
+        const rect = this.renderer.domElement.getBoundingClientRect();
+        if (!rect.width || !rect.height) return;
+        const nx = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+        const ny = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+        this.editorPointer.set(nx, ny);
+        this.editorRaycaster.setFromCamera(this.editorPointer, this.camera);
+        const pickables = this.backgroundModel
+            ? [this.backgroundModel, ...this.models]
+            : this.models;
+        const hits = this.editorRaycaster.intersectObjects(pickables, true);
+        if (!hits.length) {
+            // Clicking empty sky still enters environment selection mode.
+            if (this.backgroundModel) {
+                this.setSelectedEditableModel(EDITOR_BACKGROUND_KEY);
+            } else {
+                this.clearSelectedEditableModel(false);
+                if (this.editorOnSelect) this.editorOnSelect(EDITOR_BACKGROUND_KEY);
+            }
+            return;
+        }
+        const key = this.getModelKeyFromObject(hits[0].object);
+        if (!key) {
+            if (this.backgroundModel) {
+                this.setSelectedEditableModel(EDITOR_BACKGROUND_KEY);
+            } else {
+                this.clearSelectedEditableModel(false);
+                if (this.editorOnSelect) this.editorOnSelect(EDITOR_BACKGROUND_KEY);
+            }
+            return;
+        }
+        this.setSelectedEditableModel(key);
+    }
+
+    getModelKeyFromObject(object) {
+        let node = object;
+        while (node) {
+            const key = node.userData?.modelKey;
+            if (key) return String(key).toLowerCase();
+            node = node.parent || null;
+        }
+        return null;
+    }
+
+    setEditorTransformMode(mode = 'translate') {
+        if (!this.editorTransformControls) return;
+        const m = String(mode || '').toLowerCase();
+        const valid = m === 'rotate' || m === 'scale' ? m : 'translate';
+        this.editorTransformControls.setMode(valid);
+    }
+
+    setSelectedEditableModel(key) {
+        const model = this.getModelByKey(key);
+        if (!model || !this.editorTransformControls) return false;
+        this.editorTransformControls.attach(model);
+        this.editorTransformControls.visible = true;
+        this.editorTransformControls.showX = true;
+        this.editorTransformControls.showY = true;
+        this.editorTransformControls.showZ = true;
+        this.editorSelectedKey = String(key).toLowerCase();
+        if (this.editorOnSelect) this.editorOnSelect(this.editorSelectedKey);
+        return true;
+    }
+
+    clearSelectedEditableModel(notify = true) {
+        if (!this.editorTransformControls) return;
+        this.editorTransformControls.detach();
+        this.editorSelectedKey = null;
+        if (notify && this.editorOnSelect) this.editorOnSelect(null);
+    }
+
+    getEditableModelKeys() {
+        const keys = [];
+        for (const [key, model] of this.modelByKey.entries()) {
+            if (model?.userData?.editorSelectable === false) continue;
+            keys.push(key);
+        }
+        return keys;
+    }
+
+    removeEditableModelByKey(key) {
+        const norm = String(key || '').toLowerCase();
+        if (!norm) return false;
+        const model = this.modelByKey.get(norm);
+        if (!model) return false;
+        if (this.editorTransformControls?.object === model) {
+            this.editorTransformControls.detach();
+            this.editorSelectedKey = null;
+        }
+        this.scene.remove(model);
+        model.traverse?.((child) => {
+            if (!child?.isMesh) return;
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach((m) => m?.dispose?.());
+                } else {
+                    child.material.dispose?.();
+                }
+            }
+        });
+        this.modelByKey.delete(norm);
+        this.models = this.models.filter((m) => m !== model);
+        this.updateEditorOrbitBounds();
+        const remaining = this.getEditableModelKeys();
+        if (remaining.length) {
+            this.setSelectedEditableModel(remaining[0]);
+        }
+        if (this.editorOnChange) this.editorOnChange();
+        return true;
+    }
+
+    revertEditableModelTransformByKey(key) {
+        const norm = String(key || '').toLowerCase();
+        if (!norm) return false;
+        const model = this.modelByKey.get(norm);
+        if (!model) return false;
+        const initial = model.userData?.initialTransform;
+        if (!initial) return false;
+        model.position.copy(initial.position);
+        model.rotation.set(initial.rotation.x, initial.rotation.y, initial.rotation.z);
+        model.scale.copy(initial.scale);
+        model.userData.baseY = model.position.y;
+        model.updateMatrixWorld(true);
+        if (this.editorOnChange) this.editorOnChange();
+        return true;
+    }
+
+    getEditableSceneSnapshot() {
+        const objects = [];
+        for (const [key, model] of this.modelByKey.entries()) {
+            if (!model) continue;
+            objects.push({
+                id: model.userData?.sourceId || key,
+                spec: model.userData?.sourceSpec || '',
+                position: [
+                    Number(model.position.x.toFixed(4)),
+                    Number(model.position.y.toFixed(4)),
+                    Number(model.position.z.toFixed(4)),
+                ],
+                rotation: [
+                    Number(model.rotation.x.toFixed(4)),
+                    Number(model.rotation.y.toFixed(4)),
+                    Number(model.rotation.z.toFixed(4)),
+                ],
+                scale: [
+                    Number(model.scale.x.toFixed(4)),
+                    Number(model.scale.y.toFixed(4)),
+                    Number(model.scale.z.toFixed(4)),
+                ],
+            });
+        }
+        let background = null;
+        if (this.backgroundModel) {
+            const source = this.backgroundSourceSpec;
+            const sourceObj = (source && typeof source === 'object') ? source : {};
+            const sourceName = typeof source === 'string'
+                ? source
+                : (sourceObj.name || sourceObj.model || '');
+            background = {
+                ...sourceObj,
+                name: sourceName || sourceObj.name || '',
+                scale: {
+                    x: Number(this.backgroundModel.scale.x.toFixed(4)),
+                    y: Number(this.backgroundModel.scale.y.toFixed(4)),
+                    z: Number(this.backgroundModel.scale.z.toFixed(4)),
+                },
+                position: {
+                    x: Number(this.backgroundModel.position.x.toFixed(4)),
+                    y: Number(this.backgroundModel.position.y.toFixed(4)),
+                    z: Number(this.backgroundModel.position.z.toFixed(4)),
+                },
+                rotation: {
+                    x: Number(this.backgroundModel.rotation.x.toFixed(4)),
+                    y: Number(this.backgroundModel.rotation.y.toFixed(4)),
+                    z: Number(this.backgroundModel.rotation.z.toFixed(4)),
+                },
+            };
+        }
+
+        return {
+            objects,
+            camera: this.getCameraSpecSnapshot(),
+            background,
+        };
+    }
+
     addModel(obj){
-        let {filename, dist, distName, locKey, angle} = this.parseModelInfo(obj);
+        let {filename, dist, distName, locKey, angle, specString, explicitPosition, explicitRotation, explicitScale} = this.parseModelInfo(obj);
         // console.log(filename);
         // console.log(dist);
         // console.log(locKey);
@@ -366,6 +805,15 @@ export class ThreeScene {
         let scene = this.scene;
         let models = this.models;
         const modelKey = this.getModelKey(obj);
+        const sourceId = (() => {
+            if (obj && typeof obj === 'object' && obj.id) return String(obj.id);
+            if (typeof obj === 'string') {
+                const trimmed = obj.trim();
+                const eqIdx = trimmed.indexOf('=');
+                if (eqIdx > 0) return trimmed.slice(0, eqIdx).trim();
+            }
+            return modelKey || null;
+        })();
         this.pendingShotModels += 1;
         this.mouseTiltReady = false;
         loader.load( filename, ( gltf ) => {
@@ -383,7 +831,25 @@ export class ThreeScene {
                 model.position.z = dist;
                 model.rotation.set(0,angle,0);
             }
+            if (explicitPosition) {
+                model.position.copy(explicitPosition);
+            }
+            if (explicitRotation) {
+                model.rotation.set(explicitRotation.x, explicitRotation.y, explicitRotation.z);
+            }
+            if (explicitScale) {
+                model.scale.set(explicitScale.x, explicitScale.y, explicitScale.z);
+            }
             model.userData.layout = { dist, distName, locKey, angle };
+            model.userData.sourceSpec = specString || '';
+            model.userData.modelKey = modelKey || null;
+            model.userData.sourceId = sourceId || null;
+            model.userData.editorSelectable = true;
+            model.userData.initialTransform = {
+                position: model.position.clone(),
+                rotation: new THREE.Euler(model.rotation.x, model.rotation.y, model.rotation.z),
+                scale: model.scale.clone(),
+            };
             models.push(model);
             if (modelKey) {
                 this.modelByKey.set(modelKey, model);
@@ -407,6 +873,17 @@ export class ThreeScene {
             if (this.pendingShotModels === 0) {
                 this.mouseTiltReady = true;
             }
+            if (this.editorEnabled) {
+                this.updateEditorOrbitBounds();
+                if (this.editorTransformControls && !this.editorTransformControls.object && modelKey) {
+                    this.setSelectedEditableModel(modelKey);
+                }
+            }
+            if (!this.editorEnabled && this.editorPendingOptions && this.models.length > 0) {
+                const pending = this.editorPendingOptions;
+                this.editorPendingOptions = null;
+                this.enableEditorTools(pending);
+            }
 
         }, undefined, function ( error ) {
 
@@ -420,6 +897,9 @@ export class ThreeScene {
             this.clearBackground();
             return;
         }
+        this.backgroundSourceSpec = (backgroundSpec && typeof backgroundSpec === 'object')
+            ? { ...backgroundSpec }
+            : backgroundSpec;
         const name = typeof backgroundSpec === 'string'
             ? backgroundSpec
             : backgroundSpec.name || backgroundSpec.model || '';
@@ -443,9 +923,16 @@ export class ThreeScene {
                 pos,
                 rot,
             } = resolveBackgroundTransform(slug, backgroundSpec);
-            model.scale.set(scale, scale, scale);
+            model.scale.set(scale.x, scale.y, scale.z);
             model.position.set(pos.x, pos.y, pos.z);
             model.rotation.set(rot.x, rot.y, rot.z);
+            model.userData.editorSelectable = true;
+            model.userData.modelKey = EDITOR_BACKGROUND_KEY;
+            model.traverse((child) => {
+                if (!child?.isObject3D) return;
+                child.userData.editorSelectable = true;
+                child.userData.modelKey = EDITOR_BACKGROUND_KEY;
+            });
         }, undefined, (error) => {
             console.error(error);
         });
@@ -453,9 +940,13 @@ export class ThreeScene {
 
     clearBackground() {
         if (!this.backgroundModel) {
+            this.backgroundSourceSpec = null;
             return;
         }
         const model = this.backgroundModel;
+        if (this.editorSelectedKey === EDITOR_BACKGROUND_KEY) {
+            this.clearSelectedEditableModel();
+        }
         this.scene.remove(model);
         model.traverse((child) => {
             if (child.isMesh) {
@@ -470,6 +961,17 @@ export class ThreeScene {
             }
         });
         this.backgroundModel = null;
+        this.backgroundSourceSpec = null;
+    }
+
+    setSkyColor(skyColor) {
+        const raw = String(skyColor || '').trim();
+        if (!raw) return;
+        try {
+            this.scene.background = new THREE.Color(raw);
+        } catch (err) {
+            // Ignore invalid authored values.
+        }
     }
 
     parseShotSpec(spec) {
@@ -585,12 +1087,19 @@ export class ThreeScene {
         const tiltScale = Math.max(0.6, Math.min(2.2, 1.4 / shotScale));
         this.mouseTilt.maxYaw = baseYaw * tiltScale;
         this.mouseTilt.maxPitch = basePitch * tiltScale;
+        if (this.cameraSpec) {
+            this.applyCameraSpec();
+        }
     }
 
     setShot(shotSpec) {
-        this.shotSpec = shotSpec || null;
+        this.shotSpec = shotSpec && typeof shotSpec === 'object'
+            ? clonePanelSceneData(shotSpec)
+            : (shotSpec || null);
         if (!this.shotSpec) {
-            this.resetCameraToDefault();
+            if (!this.cameraSpec) {
+                this.resetCameraToDefault();
+            }
             if (this.mouseTiltBase) {
                 this.mouseTilt.maxYaw = this.mouseTiltBase.maxYaw;
                 this.mouseTilt.maxPitch = this.mouseTiltBase.maxPitch;
@@ -608,6 +1117,9 @@ export class ThreeScene {
         }
         this.waitingForShot = false;
         this.applyShotIfReady();
+        if (this.cameraSpec) {
+            this.applyCameraSpec();
+        }
         this.mouseTiltReady = true;
     }
 
@@ -632,7 +1144,9 @@ export class ThreeScene {
 
     getModelByKey(key) {
         if (!key) return null;
-        return this.modelByKey.get(String(key).toLowerCase()) || null;
+        const norm = String(key).toLowerCase();
+        if (norm === EDITOR_BACKGROUND_KEY) return this.backgroundModel || null;
+        return this.modelByKey.get(norm) || null;
     }
 
     getModelBoundsByKey(key) {
@@ -819,6 +1333,26 @@ export class ThreeScene {
         if (anim.cyclePauseUntil && now < anim.cyclePauseUntil) return;
 
         const current = anim.queue[anim.index];
+        const selectedKey = String(this.editorSelectedKey || '').toLowerCase();
+        const currentKey = String(current?.key || '').toLowerCase();
+        if (selectedKey && currentKey && selectedKey === currentKey) {
+            const selectedModel = this.getModelByKey(current.key);
+            if (selectedModel?.userData) {
+                if (Number.isFinite(selectedModel.userData.baseY)) {
+                    selectedModel.position.y = selectedModel.userData.baseY;
+                }
+                selectedModel.userData.speaking = false;
+                selectedModel.updateMatrixWorld(true);
+            }
+            const nextIndex = (anim.index + 1) % anim.queue.length;
+            anim.index = nextIndex;
+            anim.startTime = 0;
+            anim.duration = 0;
+            anim.baseY = undefined;
+            anim.currentKey = null;
+            anim.cyclePauseUntil = now + 120;
+            return;
+        }
         const model = this.getModelByKey(current.key);
         if (!model) {
             if (this.models.length > 0 && !anim.missingLogged.has(current.key)) {
@@ -851,6 +1385,10 @@ export class ThreeScene {
         }
 
         if (!anim.startTime) {
+            // Capture the current resting height when this line starts so
+            // editor/model transforms are preserved and not snapped back.
+            anim.baseY = model.position.y;
+            model.userData.baseY = anim.baseY;
             anim.startTime = now;
             const base = 140;
             const perChar = 10;
@@ -864,7 +1402,7 @@ export class ThreeScene {
         const height = model.userData.height || 1;
         const amp = Math.max(0.15, Math.min(1.0, height * 0.1));
         const hop = Math.abs(Math.sin(phase)) * amp;
-        const baseY = model.userData.baseY ?? model.position.y;
+        const baseY = Number.isFinite(anim.baseY) ? anim.baseY : (model.userData.baseY ?? model.position.y);
         model.position.y = baseY + hop;
         model.updateMatrixWorld(true);
 
@@ -877,7 +1415,35 @@ export class ThreeScene {
             anim.index = nextIndex;
             anim.startTime = 0;
             anim.duration = 0;
+            anim.baseY = undefined;
         }
+    }
+
+    dispose() {
+        if (this.mouseTiltHandler) {
+            window.removeEventListener('mousemove', this.mouseTiltHandler, true);
+        }
+        if (this.editorClickHandler?.down) {
+            this.renderer.domElement.removeEventListener('pointerdown', this.editorClickHandler.down);
+        }
+        if (this.editorClickHandler?.up) {
+            this.renderer.domElement.removeEventListener('pointerup', this.editorClickHandler.up);
+        }
+        this.editorClickHandler = null;
+        if (this.editorTransformControls) {
+            try { this.editorTransformControls.detach(); } catch {}
+            if (this.editorTransformHelper) {
+                this.scene.remove(this.editorTransformHelper);
+            }
+            this.editorTransformControls.dispose?.();
+            this.editorTransformControls = null;
+            this.editorTransformHelper = null;
+        }
+        if (this.editorOrbitControls) {
+            this.editorOrbitControls.dispose?.();
+            this.editorOrbitControls = null;
+        }
+        this.editorEnabled = false;
     }
 
 }
@@ -986,9 +1552,13 @@ export class Panel {
         if (scene?.background) {
             this.three.setBackground(scene.background);
         }
+        if (scene?.skyColor) {
+            this.three.setSkyColor(scene.skyColor);
+        }
         if (scene?.shot) {
             this.three.setShot(scene.shot);
         }
+        this.three.setCameraSpec(scene?.camera || null);
     }
 
     setScene(scene){
@@ -999,11 +1569,15 @@ export class Panel {
         } else {
             this.three.setBackground(null);
         }
+        if (scene?.skyColor) {
+            this.three.setSkyColor(scene.skyColor);
+        }
         if (scene?.shot) {
             this.three.setShot(scene.shot);
         } else {
             this.three.setShot(null);
         }
+        this.three.setCameraSpec(scene?.camera || null);
     }
     
     getData() {
@@ -1026,20 +1600,13 @@ export class Panel {
             this.textEl.style.lineHeight = `${this.baseLineHeight * scale}px`;
             this.narrationEl.style.fontSize = `${this.baseFontSize}px`;
             this.narrationEl.style.lineHeight = `${this.baseLineHeight}px`;
-        for (const el of this.speechEls) {
-            el.style.fontSize = `${this.baseFontSize * 0.9}px`;
-            el.style.lineHeight = `${this.baseLineHeight * 0.9}px`;
-        }
         } else {
             this.textEl.style.fontSize = `${this.baseFontSize}px`;
             this.textEl.style.lineHeight = `${this.baseLineHeight}px`;
             this.narrationEl.style.fontSize = `${this.baseFontSize}px`;
             this.narrationEl.style.lineHeight = `${this.baseLineHeight}px`;
-        for (const el of this.speechEls) {
-            el.style.fontSize = `${this.baseFontSize * 0.9}px`;
-            el.style.lineHeight = `${this.baseLineHeight * 0.9}px`;
         }
-        }
+        this.applySpeechTypography();
         if (this.isUpdating) {
             // During panel animation, avoid rebuilding bubble DOM each frame.
             // Reposition existing elements only to prevent vertical jostle.
@@ -1054,6 +1621,26 @@ export class Panel {
         
         
 
+    }
+
+    getSpeechTypography() {
+        const baseW = Math.max(1, this.baseSize?.width || this.data.width || 1);
+        const baseH = Math.max(1, this.baseSize?.height || this.data.height || 1);
+        const wScale = Math.max(0.1, this.data.width / baseW);
+        const hScale = Math.max(0.1, this.data.height / baseH);
+        const panelScale = Math.min(wScale, hScale);
+        const speechScale = Math.max(0.68, Math.min(1, panelScale));
+        const fontSize = Math.max(11.5, this.baseFontSize * 0.9 * speechScale);
+        const lineHeight = Math.max(14, this.baseLineHeight * 0.9 * speechScale);
+        return { fontSize, lineHeight };
+    }
+
+    applySpeechTypography() {
+        const { fontSize, lineHeight } = this.getSpeechTypography();
+        for (const el of this.speechEls) {
+            el.style.fontSize = `${fontSize}px`;
+            el.style.lineHeight = `${lineHeight}px`;
+        }
     }
 
     move(left,top){
@@ -1229,6 +1816,7 @@ export class Panel {
         this.narrationEl.remove();
         for (const el of this.speechEls) el.remove();
         if (this.three?.renderer) {
+            this.three.dispose?.();
             this.three.renderer.setAnimationLoop(null);
             this.three.renderer.dispose();
         }
@@ -1381,9 +1969,15 @@ export class Panel {
         this.isHovered = next;
         this.hoverScale = this.isHovered ? 1.03 : 1;
         const transform = `scale(${this.hoverScale})`;
+        const panelRect = this.canvas.getBoundingClientRect();
+        const pivotX = panelRect.left + panelRect.width / 2;
+        const pivotY = panelRect.top + panelRect.height / 2;
         const apply = (el) => {
             if (!el) return;
-            el.style.transformOrigin = 'center center';
+            const rect = el.getBoundingClientRect();
+            const originX = pivotX - rect.left;
+            const originY = pivotY - rect.top;
+            el.style.transformOrigin = `${originX}px ${originY}px`;
             el.style.transition = 'transform 140ms ease';
             el.style.transform = transform;
         };
@@ -1416,14 +2010,15 @@ export class Panel {
     renderSpeechBubbles(){
         for (const el of this.speechEls) el.remove();
         this.speechEls = [];
+        const speechType = this.getSpeechTypography();
         const speakers = this.speakers || [];
         for (const entry of speakers) {
             const el = document.createElement('div');
             el.className = 'panel-speech';
             el.dataset.panelId = String(this.id);
             el.style.width = 'auto';
-            el.style.fontSize = `${this.baseFontSize * 0.9}px`;
-            el.style.lineHeight = `${this.baseLineHeight * 0.9}px`;
+            el.style.fontSize = `${speechType.fontSize}px`;
+            el.style.lineHeight = `${speechType.lineHeight}px`;
             el.innerHTML = stripLeadingHtmlWhitespace(entry.html || '');
             const tailBorder = document.createElement('span');
             tailBorder.className = 'speech-tail-border';

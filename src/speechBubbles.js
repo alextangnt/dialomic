@@ -241,10 +241,12 @@ export class SpeechBubbleLayout {
                 const s = item.frozenTailStyle;
                 if (tail && tailBorder && Number.isFinite(item.frozenAnchorNormX) && Number.isFinite(item.frozenAnchorNormY)) {
                     const rect = el.getBoundingClientRect();
+                    const localWidth = el.offsetWidth || rect.width;
+                    const localHeight = el.offsetHeight || rect.height;
                     const anchorX = canvasRect.left + (item.frozenAnchorNormX * canvasRect.width);
                     const anchorY = canvasRect.top + (item.frozenAnchorNormY * canvasRect.height);
                     const tailMargin = 18;
-                    const tailX = Math.max(tailMargin, Math.min(rect.width - tailMargin, anchorX - item.x));
+                    const tailX = Math.max(tailMargin, Math.min(localWidth - tailMargin, anchorX - item.x));
                     const isBelow = Boolean(item.frozenIsBelow);
                     if (tail) tail.style.left = `${tailX - 8}px`;
                     if (tailBorder) tailBorder.style.left = `${tailX - 9}px`;
@@ -262,14 +264,14 @@ export class SpeechBubbleLayout {
                         tail.style.borderTop = '0';
                         tail.style.borderBottom = `${tailLength}px solid #fff`;
                     } else {
-                        const tailStartY = item.y + rect.height - 4;
+                        const tailStartY = item.y + localHeight - 4;
                         const tailLength = Math.max(14, anchorY - tailStartY);
-                        tailBorder.style.top = `${rect.height - 2}px`;
+                        tailBorder.style.top = `${localHeight - 2}px`;
                         tailBorder.style.borderTopWidth = `${tailLength + 2}px`;
                         tailBorder.style.borderBottomWidth = '0';
                         tailBorder.style.borderBottom = '0';
                         tailBorder.style.borderTop = `${tailLength + 2}px solid #000`;
-                        tail.style.top = `${rect.height - 4}px`;
+                        tail.style.top = `${localHeight - 4}px`;
                         tail.style.borderTopWidth = `${tailLength}px`;
                         tail.style.borderBottomWidth = '0';
                         tail.style.borderBottom = '0';
@@ -820,7 +822,9 @@ export class SpeechBubbleLayout {
             el.style.outlineOffset = '';
 
             const tailMargin = 18;
-            const tailX = Math.max(tailMargin, Math.min(rect.width - tailMargin, anchorX - item.x));
+            const localWidth = el.offsetWidth || rect.width;
+            const localHeight = el.offsetHeight || rect.height;
+            const tailX = Math.max(tailMargin, Math.min(localWidth - tailMargin, anchorX - item.x));
             const tail = el.querySelector('.speech-tail');
             const tailBorder = el.querySelector('.speech-tail-border');
             const isBubbleBelow = visualBelow;
@@ -846,18 +850,18 @@ export class SpeechBubbleLayout {
                     tail.style.borderBottom = `${tailLength}px solid #fff`;
                 }
             } else {
-                const tailStartY = item.y + rect.height - 4;
+                const tailStartY = item.y + localHeight - 4;
                 const desiredTipY = Math.min(bottomBound - 6, Math.max(topBound + 6, anchorY));
                 const tailLength = Math.max(14, desiredTipY - tailStartY);
                 if (tailBorder) {
-                    tailBorder.style.top = `${rect.height - 2}px`;
+                    tailBorder.style.top = `${localHeight - 2}px`;
                     tailBorder.style.borderTopWidth = `${tailLength + 2}px`;
                     tailBorder.style.borderBottomWidth = '0';
                     tailBorder.style.borderBottom = '0';
                     tailBorder.style.borderTop = `${tailLength + 2}px solid #000`;
                 }
                 if (tail) {
-                    tail.style.top = `${rect.height - 4}px`;
+                    tail.style.top = `${localHeight - 4}px`;
                     tail.style.borderTopWidth = `${tailLength}px`;
                     tail.style.borderBottomWidth = '0';
                     tail.style.borderBottom = '0';

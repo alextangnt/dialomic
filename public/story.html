@@ -137,22 +137,20 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
     panels: "stack",
     rows: 3,
     cols: 1,
-    aspect: "fixed"
+    aspect: "fill"
   }
 }&gt;&gt;
 %%solo%%
+%%aspect=16:9%%
 rat1:: My name is "rat1"
 rat1:: I'm defined with the string "rat1 = RAT NEAR FARLEFT LOOKFRONT." Each rat is defined with a string value that includes the specified model, depth in scene, placement in scene, and looking direction.
 rat2:: I'm "rat2", and I'm defined with the string "rat2 = RAT MID FARRIGHT LOOKLEFT" in the list DL.objects.
-rat3:: I'm rat3.
-rat4:: I'm rat4.
 
 This text is Twine narration or dialogue text of your choice combined with custom and Twine code.
 %%%
 [[Show a scene with two rats and a cow.|Add another rat.]]
 [[Show a scene with a deer.|Now add a deer.]]
 </tw-passagedata><tw-passagedata pid="2" name="Add another rat." tags="" position="400,350" size="100,100">&lt;&lt;set $DL.objects = [$rat1,$rat2,$cow]&gt;&gt;&lt;&lt;set $DL.background = "tennis court"&gt;&gt;
-%%aspect=free%%
   Here's that. The scene is defined by the variable $$DL with the field $$DL.objects, an array.
 cow:: I'm a cow.
 This array contains 3 strings. "RAT NEAR LEFT LOOKLEFT", "RAT VERYNEAR FARLEFT LOOKRIGHT", and "COW VERYNEAR RIGHT LOOKBACK". These strings could also be stored in variables such as $$rat1, $$rat2, and $$cow, then placed in the array.
