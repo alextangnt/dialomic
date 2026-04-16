@@ -231,6 +231,7 @@ export class ThreeScene {
         };
         this.mouseTiltTarget = { x: 0, y: 0 };
         this.mouseTiltLerp = 0.12;
+        this.mouseTiltReady = true;
         this.mouseTiltHandler = (e) => {
             const cx = Number(e?.clientX);
             const cy = Number(e?.clientY);
@@ -279,7 +280,9 @@ export class ThreeScene {
             this.applyRepulsion();
         }
         this.updateSpeakerHop(now);
-        this.applyMouseTilt();
+        if (this.mouseTiltReady) {
+            this.applyMouseTilt();
+        }
         // this.controls.update();
         this.renderer.render( this.scene, this.camera );
         
@@ -364,6 +367,7 @@ export class ThreeScene {
         let models = this.models;
         const modelKey = this.getModelKey(obj);
         this.pendingShotModels += 1;
+        this.mouseTiltReady = false;
         loader.load( filename, ( gltf ) => {
             let model = gltf.scene;
             scene.add( model );
@@ -399,6 +403,9 @@ export class ThreeScene {
             if (this.shotSpec && this.pendingShotModels === 0 && this.waitingForShot) {
                 this.waitingForShot = false;
                 this.applyShotIfReady();
+            }
+            if (this.pendingShotModels === 0) {
+                this.mouseTiltReady = true;
             }
 
         }, undefined, function ( error ) {
@@ -589,14 +596,19 @@ export class ThreeScene {
                 this.mouseTilt.maxPitch = this.mouseTiltBase.maxPitch;
             }
             this.waitingForShot = false;
+            if (this.pendingShotModels === 0) {
+                this.mouseTiltReady = true;
+            }
             return;
         }
         if (this.pendingShotModels > 0) {
             this.waitingForShot = true;
+            this.mouseTiltReady = false;
             return;
         }
         this.waitingForShot = false;
         this.applyShotIfReady();
+        this.mouseTiltReady = true;
     }
 
     getModelKey(obj) {
@@ -897,6 +909,8 @@ export class Panel {
         this.canvas.style.height = `${curr.height}px`;
         this.canvas.style.display = 'block';
         this.canvas.style.zIndex = '20';
+        this.canvas.style.pointerEvents = 'auto';
+        this.canvas.dataset.panelId = String(this.id);
         document.body.appendChild(this.canvas);
 
         this.textEl = document.createElement('div');
@@ -908,6 +922,7 @@ export class Panel {
         this.textEl.style.fontSize = '16.8px';
         this.textEl.style.lineHeight = '20.16px';
         this.textEl.innerHTML = this.text || '';
+        this.textEl.dataset.panelId = String(this.id);
         document.body.appendChild(this.textEl);
 
         this.narrationEl = document.createElement('div');
@@ -918,6 +933,18 @@ export class Panel {
         this.narrationEl.style.fontSize = '16.8px';
         this.narrationEl.style.lineHeight = '20.16px';
         this.narrationEl.innerHTML = this.text || '';
+        this.narrationEl.dataset.panelId = String(this.id);
+        this.narrationBgEl = document.createElement('div');
+        this.narrationBgEl.className = 'panel-narration-bg';
+        this.narrationBgEl.style.position = 'absolute';
+        this.narrationBgEl.style.left = `${curr.left}px`;
+        this.narrationBgEl.style.top = `${curr.top}px`;
+        this.narrationBgEl.style.width = `${curr.width}px`;
+        this.narrationBgEl.style.height = '0px';
+        this.narrationBgEl.style.background = '#000';
+        this.narrationBgEl.style.pointerEvents = 'none';
+        this.narrationBgEl.dataset.panelId = String(this.id);
+        document.body.appendChild(this.narrationBgEl);
         document.body.appendChild(this.narrationEl);
 
         this.speechEls = [];
@@ -931,6 +958,13 @@ export class Panel {
         this.narrationTarget = {left: curr.left, top: curr.top};
         this.narrationMinTop = null;
         this.narrationFixedTop = null;
+        this.aspectMode = 'free';
+        this.fixedNarrationReserve = 0;
+        this.layerBaseZ = 100;
+        this.speechLayerBaseZ = 300;
+        this.isHovered = false;
+        this.hoverScale = 1;
+        this.setLayerPriority(0, false);
         this.updateTextMode();
         this.renderText();
         
@@ -1006,8 +1040,17 @@ export class Panel {
             el.style.lineHeight = `${this.baseLineHeight * 0.9}px`;
         }
         }
-        this.renderText();
-        this.three.resize(width,height);
+        if (this.isUpdating) {
+            // During panel animation, avoid rebuilding bubble DOM each frame.
+            // Reposition existing elements only to prevent vertical jostle.
+            this.updateTextMode();
+            this.updateNarrationTarget();
+            this.positionSpeechBubbles();
+        } else {
+            this.renderText();
+        }
+        const reserve = this.aspectMode === 'fixed' ? (this.fixedNarrationReserve || 0) : 0;
+        this.three.resize(width, Math.max(40, height - reserve));
         
         
 
@@ -1066,71 +1109,51 @@ export class Panel {
         
         
         const frameBudget = this.isAnimatingOut ? exitFrames : frames;
-        let rate = 1 - Math.pow(0.1, 1 / frameBudget);
+        const rate = 1 - Math.pow(0.1, 1 / frameBudget);
         const snapEpsilon = 1;
-        let c = this.data;
-        let t = this.target;
+        const c = this.data;
+        const t = this.target;
 
         let wwidth = window.innerWidth;
         let wheight = window.innerHeight;
+        const next = { left: c.left, top: c.top, width: c.width, height: c.height };
+        const updateAxis = (axis) => {
+            if (!this.movingToTarget[axis]) return;
+            const current = c[axis];
+            const target = t[axis];
+            next[axis] = lerp(current, target, rate);
+        };
+        updateAxis('left');
+        updateAxis('top');
+        updateAxis('width');
+        updateAxis('height');
 
-        
-
-        
-
-        if (this.movingToTarget.left){
-            this.move(lerp(c.left,t.left,rate), c.top);
-            if (Math.abs(c.left - t.left) < snapEpsilon) {
-                this.move(t.left, c.top);
-                this.movingToTarget.left = false;
-            }
+        if (next.left !== c.left || next.top !== c.top) {
+            this.move(next.left, next.top);
         }
-        if (this.movingToTarget.top){
-            this.move(c.left,lerp(c.top,t.top,rate));
-            if (Math.abs(c.top - t.top) < snapEpsilon) {
-                this.move(c.left, t.top);
-                this.movingToTarget.top = false;
-            }
-        }
-        if (this.textType === 'narration' && this.movingToTarget.top) {
-            const rect = this.narrationEl.getBoundingClientRect();
-            const minTop = Math.max(
-                this.topInset || 0,
-                Number.isFinite(this.narrationMinTop) ? this.narrationMinTop : 0
-            );
-            const top = this.isAnimatingOut
-                ? (c.top - rect.height)
-                : Math.max(minTop, c.top - rect.height);
-            this.narrationEl.style.left = `${c.left}px`;
-            this.narrationEl.style.top = `${top}px`;
-            this.narrationData.left = c.left;
-            this.narrationData.top = top;
-        }
-        if (this.movingToTarget.width){
-            this.resize(lerp(c.width,t.width,rate), c.height);
-            if (Math.abs(c.width - t.width) < snapEpsilon) {
-                this.resize(t.width, c.height);
-                this.movingToTarget.width = false;
-            }
-        }
-        if (this.movingToTarget.height){
-            this.resize(c.width,lerp(c.height,t.height,rate));
-            if (Math.abs(c.height - t.height) < snapEpsilon) {
-                this.resize(c.width, t.height);
-                this.movingToTarget.height = false;
-            }
+        if (next.width !== c.width || next.height !== c.height) {
+            this.resize(next.width, next.height);
         }
 
-        if (!this.movingToTarget.width && !this.movingToTarget.height && !this.movingToTarget.top && !this.movingToTarget.left) {
+        if (this.textType === 'narration') {
+            this.updateNarrationTarget();
+            this.narrationData.left = this.narrationTarget.left;
+            this.narrationData.top = this.narrationTarget.top;
+            this.narrationEl.style.left = `${this.narrationData.left}px`;
+            this.narrationEl.style.top = `${this.narrationData.top}px`;
+        }
+
+        const done =
+            Math.abs(c.left - t.left) < snapEpsilon &&
+            Math.abs(c.top - t.top) < snapEpsilon &&
+            Math.abs(c.width - t.width) < snapEpsilon &&
+            Math.abs(c.height - t.height) < snapEpsilon;
+        if (done) {
+            this.move(t.left, t.top);
+            this.resize(t.width, t.height);
+            this.movingToTarget = {left:false, top:false, width:false, height:false};
             // console.log(this.id + " is done updating");
             this.isUpdating = false;
-            if (this.textType === 'narration') {
-                this.updateNarrationTarget();
-                this.narrationData.left = this.narrationTarget.left;
-                this.narrationData.top = this.narrationTarget.top;
-                this.narrationEl.style.left = `${this.narrationData.left}px`;
-                this.narrationEl.style.top = `${this.narrationData.top}px`;
-            }
         }
         
         if (c.left+c.width<0 || c.top+c.height<0 || c.left>wwidth || c.top>wheight){
@@ -1139,6 +1162,7 @@ export class Panel {
             this.onScreen = false;
             this.canvas.style.display = 'none';
             this.textEl.style.display = 'none';
+            this.narrationBgEl.style.display = 'none';
             this.narrationEl.style.display = 'none';
             for (const el of this.speechEls) el.style.display = 'none';
             this.stopUpdates();
@@ -1158,6 +1182,7 @@ export class Panel {
         this.onScreen = true;
         this.isUpdating = true;
         this.canvas.style.display = 'block';
+        this.narrationBgEl.style.display = 'block';
         this.updateTextMode();
         this.three.renderer.setAnimationLoop(this.three.animate);
         this.movingToTarget = {left:true, top:true, width:true, height:true};
@@ -1200,6 +1225,7 @@ export class Panel {
         this.isDeleted = true;
         this.canvas.remove();
         this.textEl.remove();
+        this.narrationBgEl?.remove();
         this.narrationEl.remove();
         for (const el of this.speechEls) el.remove();
         if (this.three?.renderer) {
@@ -1222,32 +1248,106 @@ export class Panel {
     updateTextMode(){
         if (this.textType === 'dialogue') {
             this.textEl.style.display = 'block';
+            this.narrationBgEl.style.display = 'none';
             this.narrationEl.style.display = 'none';
             for (const el of this.speechEls) el.style.display = 'none';
         } else {
             this.textEl.style.display = 'none';
+            this.narrationBgEl.style.display = 'block';
             this.narrationEl.style.display = 'block';
             for (const el of this.speechEls) el.style.display = this.speakers.length ? 'block' : 'none';
         }
     }
 
+    syncNarrationBackground(){
+        if (!this.narrationBgEl || !this.narrationEl) return;
+        this.narrationBgEl.style.left = this.narrationEl.style.left;
+        this.narrationBgEl.style.top = this.narrationEl.style.top;
+        this.narrationBgEl.style.width = this.narrationEl.style.width;
+        const rect = this.narrationEl.getBoundingClientRect();
+        this.narrationBgEl.style.height = `${Math.max(0, rect.height)}px`;
+    }
+
     updateNarrationTarget(){
         if (this.textType !== 'narration') return;
-        this.narrationEl.style.left = `${this.target.left}px`;
-        this.narrationEl.style.width = `${Math.max(80, this.target.width)}px`;
+        if (this.aspectMode === 'fixed') {
+            const panelRef = this.data;
+            const width = Math.max(80, panelRef.width);
+            const height = Math.max(80, panelRef.height);
+            this.narrationEl.style.left = `${panelRef.left}px`;
+            this.narrationEl.style.top = `${panelRef.top}px`;
+            this.narrationEl.style.width = `${width}px`;
+
+            const hasNarration = getHtmlTextLength(this.text || '') > 0;
+            let reserve = 0;
+            if (hasNarration) {
+                const style = window.getComputedStyle(this.narrationEl);
+                const parsePx = (value, fallback = 0) => {
+                    const n = parseFloat(value);
+                    return Number.isFinite(n) ? n : fallback;
+                };
+                const lineHeight = parsePx(style.lineHeight, this.baseLineHeight);
+                const boxChromeHeight =
+                    parsePx(style.paddingTop) +
+                    parsePx(style.paddingBottom) +
+                    parsePx(style.borderTopWidth) +
+                    parsePx(style.borderBottomWidth);
+                const oneLineHeight = Math.max(0, lineHeight + boxChromeHeight);
+                const threeLineHeight = Math.max(0, lineHeight * 3 + boxChromeHeight);
+                this.narrationEl.style.maxHeight = '';
+                this.narrationEl.style.overflowX = 'hidden';
+                this.narrationEl.style.overflowY = 'visible';
+                const naturalHeight = this.narrationEl.getBoundingClientRect().height;
+                const cap = Math.max(oneLineHeight, Math.min(threeLineHeight, naturalHeight));
+                reserve = Math.min(height - 40, Math.max(oneLineHeight, cap));
+                this.narrationEl.style.maxHeight = `${Math.max(0, reserve)}px`;
+                this.narrationEl.style.overflowX = 'hidden';
+                this.narrationEl.style.overflowY = naturalHeight > reserve ? 'auto' : 'hidden';
+            } else {
+                this.narrationEl.style.maxHeight = '0px';
+                this.narrationEl.style.overflow = 'hidden';
+            }
+            this.fixedNarrationReserve = Math.max(0, reserve);
+            this.narrationTarget.left = panelRef.left;
+            this.narrationTarget.top = panelRef.top;
+            this.narrationData.left = panelRef.left;
+            this.narrationData.top = panelRef.top;
+            this.narrationEl.style.left = `${this.narrationData.left}px`;
+            this.narrationEl.style.top = `${this.narrationData.top}px`;
+
+            const canvasTop = panelRef.top + this.fixedNarrationReserve;
+            const canvasHeight = Math.max(40, height - this.fixedNarrationReserve);
+            this.canvas.style.left = `${panelRef.left}px`;
+            this.canvas.style.top = `${canvasTop}px`;
+            this.canvas.style.width = `${width}px`;
+            this.canvas.style.height = `${canvasHeight}px`;
+            this.textEl.style.left = `${panelRef.left}px`;
+            this.textEl.style.top = `${canvasTop}px`;
+            this.textEl.style.width = `${width}px`;
+            this.textEl.style.height = `${canvasHeight}px`;
+            if (this.three) this.three.resize(width, canvasHeight);
+            this.syncNarrationBackground();
+            return;
+        }
+        const moving = this.isUpdating && !this.isAnimatingOut;
+        const panelRefPos = moving ? this.data : this.target;
+        const panelRefSize = this.target;
+        this.narrationEl.style.left = `${panelRefPos.left}px`;
+        this.narrationEl.style.width = `${Math.max(80, panelRefSize.width)}px`;
 
         if (this.isAnimatingOut) {
             const rectOut = this.narrationEl.getBoundingClientRect();
-            const targetTopOut = this.target.top - rectOut.height;
-            this.narrationTarget.left = this.target.left;
+            const targetTopOut = panelRefPos.top - rectOut.height;
+            this.narrationTarget.left = panelRefPos.left;
             this.narrationTarget.top = targetTopOut;
             this.narrationEl.style.maxHeight = '';
             this.narrationEl.style.overflow = 'visible';
             if (this.isUpdating) return;
-            this.narrationData.left = this.target.left;
+            this.narrationData.left = panelRefPos.left;
             this.narrationData.top = targetTopOut;
             this.narrationEl.style.left = `${this.narrationData.left}px`;
             this.narrationEl.style.top = `${this.narrationData.top}px`;
+            this.syncNarrationBackground();
             return;
         }
 
@@ -1265,14 +1365,13 @@ export class Panel {
         const oneLineHeight = Math.max(0, lineHeight + boxChromeHeight);
         const hasNarrationTopBoundary = Number.isFinite(this.narrationMinTop);
         const minTop = Math.max(this.topInset || 0, hasNarrationTopBoundary ? this.narrationMinTop : 0);
-        const fixedTop = Number.isFinite(this.narrationFixedTop) ? Math.max(minTop, this.narrationFixedTop) : null;
         const threeLineHeight = Math.max(0, lineHeight * 3 + boxChromeHeight);
-        const abovePanelHeight = Math.max(0, this.target.top - (fixedTop ?? minTop));
-        let narrationBottomLimit = this.target.top;
-        if (hasNarrationTopBoundary && abovePanelHeight < oneLineHeight) {
-            narrationBottomLimit = this.target.top + this.target.height * 0.35;
+        const abovePanelHeight = Math.max(0, panelRefPos.top - minTop);
+        let narrationBottomLimit = panelRefPos.top;
+        if (!moving && hasNarrationTopBoundary && abovePanelHeight < oneLineHeight) {
+            narrationBottomLimit = panelRefPos.top + panelRefSize.height * 0.35;
         }
-        const maxFitHeight = Math.max(0, narrationBottomLimit - (fixedTop ?? minTop));
+        const maxFitHeight = Math.max(0, narrationBottomLimit - minTop);
         const boxMaxHeight = Math.max(0, Math.min(maxFitHeight, threeLineHeight));
 
         this.narrationEl.style.maxHeight = '';
@@ -1280,23 +1379,27 @@ export class Panel {
         this.narrationEl.style.overflowY = 'visible';
         const naturalHeight = this.narrationEl.getBoundingClientRect().height;
         const displayHeight = Math.min(naturalHeight, boxMaxHeight || naturalHeight);
-        const targetTop = fixedTop ?? Math.max(minTop, narrationBottomLimit - displayHeight);
-        this.narrationTarget.left = this.target.left;
+        const targetTop = Math.max(minTop, narrationBottomLimit - displayHeight);
+        this.narrationTarget.left = panelRefPos.left;
         this.narrationTarget.top = targetTop;
 
         this.narrationEl.style.maxHeight = `${Math.max(0, boxMaxHeight)}px`;
         this.narrationEl.style.overflowX = 'hidden';
         this.narrationEl.style.overflowY = naturalHeight > boxMaxHeight ? 'auto' : 'hidden';
-        if (this.isUpdating) return;
+        if (this.isUpdating) {
+            this.syncNarrationBackground();
+            return;
+        }
 
         if (this.narrationData.left === this.data.left && this.narrationData.top === this.data.top) {
-            this.narrationData.left = this.target.left;
+            this.narrationData.left = panelRefPos.left;
             this.narrationData.top = targetTop;
         }
-        this.narrationData.left = this.target.left;
+        this.narrationData.left = panelRefPos.left;
         this.narrationData.top = targetTop;
         this.narrationEl.style.left = `${this.narrationData.left}px`;
         this.narrationEl.style.top = `${this.narrationData.top}px`;
+        this.syncNarrationBackground();
     }
 
     setTopInset(inset){
@@ -1314,13 +1417,61 @@ export class Panel {
         this.updateNarrationTarget();
     }
 
+    setAspectMode(mode){
+        this.aspectMode = mode === 'fixed' ? 'fixed' : 'free';
+        this.updateNarrationTarget();
+    }
+
+    setLayerPriority(order, isSelected = false){
+        const o = Number.isFinite(order) ? order : 0;
+        const base = 100 + o * 1000;
+        this.layerBaseZ = base;
+        this.speechLayerBaseZ = base + (isSelected ? 900 : 220);
+        this.canvas.style.zIndex = `${base + 100}`;
+        this.textEl.style.zIndex = `${base + 120}`;
+        this.narrationBgEl.style.zIndex = `${base + 130}`;
+        this.narrationEl.style.zIndex = `${base + 140}`;
+        for (const el of this.speechEls) {
+            el.style.zIndex = `${this.speechLayerBaseZ}`;
+        }
+    }
+
+    setHovered(isHovered){
+        const next = Boolean(isHovered);
+        if (this.isHovered === next) return;
+        this.isHovered = next;
+        this.hoverScale = this.isHovered ? 1.03 : 1;
+        const transform = `scale(${this.hoverScale})`;
+        const apply = (el) => {
+            if (!el) return;
+            el.style.transformOrigin = 'center center';
+            el.style.transition = 'transform 140ms ease';
+            el.style.transform = transform;
+        };
+        apply(this.canvas);
+        apply(this.textEl);
+        apply(this.narrationBgEl);
+        apply(this.narrationEl);
+        for (const el of this.speechEls) apply(el);
+    }
+
+    syncNarrationPosition(){
+        if (this.textType !== 'narration') return;
+        this.updateNarrationTarget();
+        this.narrationData.left = this.narrationTarget.left;
+        this.narrationData.top = this.narrationTarget.top;
+        this.narrationEl.style.left = `${this.narrationData.left}px`;
+        this.narrationEl.style.top = `${this.narrationData.top}px`;
+        this.syncNarrationBackground();
+    }
+
     renderText(){
         this.textEl.innerHTML = this.text || '';
         this.narrationEl.innerHTML = this.text || '';
         this.renderSpeechBubbles();
         this.updateTextMode();
-        this.positionSpeechBubbles();
         this.updateNarrationTarget();
+        this.positionSpeechBubbles();
     }
 
     renderSpeechBubbles(){
@@ -1330,6 +1481,7 @@ export class Panel {
         for (const entry of speakers) {
             const el = document.createElement('div');
             el.className = 'panel-speech';
+            el.dataset.panelId = String(this.id);
             el.style.width = 'auto';
             el.style.fontSize = `${this.baseFontSize * 0.9}px`;
             el.style.lineHeight = `${this.baseLineHeight * 0.9}px`;
@@ -1342,6 +1494,10 @@ export class Panel {
             el.appendChild(tail);
             document.body.appendChild(el);
             this.speechEls.push(el);
+            el.style.zIndex = `${this.speechLayerBaseZ}`;
+            el.style.transformOrigin = 'center center';
+            el.style.transition = 'transform 140ms ease';
+            el.style.transform = `scale(${this.hoverScale})`;
         }
         this.speechLayout.sync(this.speechEls, this.speakers);
     }

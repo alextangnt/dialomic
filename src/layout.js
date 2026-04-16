@@ -243,6 +243,11 @@ function extractPanelCommands(text) {
         if (key === 'panels') {
             const v = String(value).toLowerCase();
             commands.panels = v === 'cycle' ? 'cycle' : 'stack';
+            return;
+        }
+        if (key === 'aspect') {
+            const v = String(value).toLowerCase();
+            commands.aspect = v === 'fixed' ? 'fixed' : 'free';
         }
     };
 
@@ -343,10 +348,12 @@ class LayoutUI {
         this.links = [];
         this.showResponse = true;
         this.panelSolo = false;
-        this.panelConfig = { panels: 'stack', rows: 1, cols: 1 };
+        this.panelConfig = { panels: 'stack', rows: 1, cols: 1, aspect: 'free' };
         this.panelCommands = {};
         this.largePanelOrder = [];
         this.panelOrderCounter = 0;
+        this.activePanelName = null;
+        this.hoverPanelName = null;
 
         this.topInset = this.getTopInset();
         this.w = window.innerWidth;
@@ -401,7 +408,9 @@ class LayoutUI {
         const panels = modeRaw === 'cycle' ? 'cycle' : 'stack';
         const rows = Math.max(1, Math.min(3, Number.isFinite(Number(cfg.rows)) ? Math.floor(Number(cfg.rows)) : 1));
         const cols = Math.max(1, Math.min(3, Number.isFinite(Number(cfg.cols)) ? Math.floor(Number(cfg.cols)) : 1));
-        return { panels, rows, cols };
+        const aspectRaw = String(cfg.aspect || 'free').toLowerCase();
+        const aspect = aspectRaw === 'fixed' ? 'fixed' : 'free';
+        return { panels, rows, cols, aspect };
     }
 
     getPanelCapacity() {
@@ -450,17 +459,33 @@ class LayoutUI {
         const areaHeight = Math.max(80, this.h - topPad - bottomPad);
         const gapX = Math.max(10, areaWidth * 0.03);
         const gapY = Math.max(10, areaHeight * 0.04);
-        const cellWidth = Math.max(80, (areaWidth - gapX * (usedCols - 1)) / usedCols);
-        const cellHeight = Math.max(80, (areaHeight - gapY * (usedRows - 1)) / usedRows);
+        const slotWidth = Math.max(80, (areaWidth - gapX * (usedCols - 1)) / usedCols);
+        const slotHeight = Math.max(80, (areaHeight - gapY * (usedRows - 1)) / usedRows);
+
+        let cellWidth = slotWidth;
+        let cellHeight = slotHeight;
+        if (this.panelConfig.aspect === 'fixed') {
+            const fullCellWidth = Math.max(80, (areaWidth - gapX * (maxCols - 1)) / maxCols);
+            const fullCellHeight = Math.max(80, (areaHeight - gapY * (maxRows - 1)) / maxRows);
+            const baseAspect = Math.max(0.1, fullCellWidth / Math.max(1, fullCellHeight));
+            cellWidth = Math.min(slotWidth, slotHeight * baseAspect);
+            cellHeight = cellWidth / baseAspect;
+            if (cellHeight > slotHeight) {
+                cellHeight = slotHeight;
+                cellWidth = cellHeight * baseAspect;
+            }
+        }
 
         const targets = {};
         for (let i = 0; i < count; i++) {
             const name = order[i];
             const row = Math.floor(i / usedCols);
             const col = i % usedCols;
+            const slotLeft = leftPad + col * (slotWidth + gapX);
+            const slotTop = areaTop + row * (slotHeight + gapY);
             targets[name] = {
-                left: leftPad + col * (cellWidth + gapX),
-                top: areaTop + row * (cellHeight + gapY),
+                left: slotLeft + (slotWidth - cellWidth) * 0.5,
+                top: slotTop + (slotHeight - cellHeight) * 0.5,
                 width: cellWidth,
                 height: cellHeight,
             };
@@ -482,6 +507,7 @@ class LayoutUI {
             if (!panel) continue;
             const target = targets[name];
             if (!target) continue;
+            panel.setAspectMode?.(this.panelConfig.aspect);
             const row = Math.floor(i / usedCols);
             let narrationMinTop = null;
             let narrationFixedTop = this.topInset;
@@ -520,10 +546,14 @@ class LayoutUI {
         this.w = window.innerWidth;
         this.h = Math.max(0, window.innerHeight - this.topInset);
         for (let panel in this.panelsOnscreen){
-            this.panelsOnscreen[panel].setTopInset(this.topInset);
+            this.panelsOnscreen[panel].topInset = this.topInset;
         }
         this.updateLinkLayout();
         this.updatePanelLayoutImmediate();
+        for (let panel in this.panelsOnscreen){
+            this.panelsOnscreen[panel].syncNarrationPosition?.();
+        }
+        this.applyPanelLayering();
     }
 
     getTopInset() {
@@ -533,16 +563,78 @@ class LayoutUI {
     }
 
     onGlobalPointerMove(event) {
-        if (!this.links || this.links.length === 0) return;
         const elements = document.elementsFromPoint(event.clientX, event.clientY);
         if (!elements || !elements.length) return;
-        const btn = elements.find((el) => el?.classList?.contains('link-button'));
-        if (!btn || !this.linksRoot.contains(btn)) return;
-        const buttons = Array.from(this.linksRoot.querySelectorAll('button.link-button'));
-        const idx = buttons.indexOf(btn);
-        if (idx >= 0 && idx !== this.selectedLinkIndex) {
-            this.selectedLinkIndex = idx;
-            this.updateSelectedLink();
+        if (this.links && this.links.length > 0) {
+            const btn = elements.find((el) => el?.classList?.contains('link-button'));
+            if (btn && this.linksRoot.contains(btn)) {
+                const buttons = Array.from(this.linksRoot.querySelectorAll('button.link-button'));
+                const idx = buttons.indexOf(btn);
+                if (idx >= 0 && idx !== this.selectedLinkIndex) {
+                    this.selectedLinkIndex = idx;
+                    this.updateSelectedLink();
+                }
+            }
+        }
+
+        const panelEl = elements.find((el) => el?.dataset?.panelId);
+        const hoveredPanel = panelEl?.dataset?.panelId || null;
+        if (hoveredPanel && this.panelsOnscreen[hoveredPanel]) {
+            if (this.hoverPanelName !== hoveredPanel) {
+                this.hoverPanelName = hoveredPanel;
+                this.applyPanelLayering();
+            }
+        } else if (this.hoverPanelName) {
+            this.hoverPanelName = null;
+            this.applyPanelLayering();
+        }
+    }
+
+    bindPanelHover(name, panel) {
+        if (!panel || panel._layerHoverBound) return;
+        const onEnter = () => {
+            this.hoverPanelName = name;
+            this.applyPanelLayering();
+        };
+        const onLeave = () => {
+            if (this.hoverPanelName === name) {
+                this.hoverPanelName = null;
+                this.applyPanelLayering();
+            }
+        };
+        for (const el of [panel.canvas, panel.textEl, panel.narrationEl]) {
+            if (!el) continue;
+            el.addEventListener('pointerenter', onEnter, { passive: true });
+            el.addEventListener('pointerleave', onLeave, { passive: true });
+        }
+        panel._layerHoverBound = true;
+    }
+
+    applyPanelLayering() {
+        const names = Object.keys(this.panelsOnscreen).filter((name) => {
+            const p = this.panelsOnscreen[name];
+            return p && p.onScreen !== false;
+        });
+        if (!names.length) return;
+        names.sort((a, b) => {
+            const pa = this.panelsOnscreen[a];
+            const pb = this.panelsOnscreen[b];
+            const sa = Number.isFinite(pa?.stackOrder) ? pa.stackOrder : 0;
+            const sb = Number.isFinite(pb?.stackOrder) ? pb.stackOrder : 0;
+            return sa - sb;
+        });
+        const hoverValid = this.hoverPanelName && this.panelsOnscreen[this.hoverPanelName];
+        const activeValid = this.activePanelName && this.panelsOnscreen[this.activePanelName];
+        const focus = hoverValid ? this.hoverPanelName : (activeValid ? this.activePanelName : names[names.length - 1]);
+        this.activePanelName = focus;
+        const ordered = names.filter((n) => n !== focus);
+        if (focus) ordered.push(focus);
+        for (let i = 0; i < ordered.length; i++) {
+            const name = ordered[i];
+            const panel = this.panelsOnscreen[name];
+            if (!panel) continue;
+            panel.setLayerPriority?.(i, name === focus);
+            panel.setHovered?.(name === this.hoverPanelName);
         }
     }
 
@@ -935,6 +1027,7 @@ class LayoutUI {
             ...(this.panelCommands.panels ? { panels: this.panelCommands.panels } : {}),
             ...(Number.isFinite(this.panelCommands.rows) ? { rows: this.panelCommands.rows } : {}),
             ...(Number.isFinite(this.panelCommands.cols) ? { cols: this.panelCommands.cols } : {}),
+            ...(this.panelCommands.aspect ? { aspect: this.panelCommands.aspect } : {}),
         };
         this.panelConfig = this.normalizePanelConfig(mergedConfig);
         this.panelSolo = this.panelCommands.solo === true ? true : baseSolo;
@@ -1000,12 +1093,14 @@ class LayoutUI {
 
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, this.txt, -1, scene, 'narration', this.topInset);
+            p.setAspectMode?.(this.panelConfig.aspect);
             if (this.speakers?.length) p.setSpeakers(this.speakers);
             p.panelSize = 'large';
             p.stackOrder = ++this.panelOrderCounter;
             this.panels[name] = p;
             this.currPanel = p;
             this.panelsOnscreen[name] = p;
+            this.bindPanelHover(name, p);
         } else {
             let p = this.panels[name];
             this.currPanel = p;
@@ -1018,9 +1113,11 @@ class LayoutUI {
             p.setSpeakers(this.speakers || []);
             p.setScene(scene);
             p.setTopInset(this.topInset);
+            p.setAspectMode?.(this.panelConfig.aspect);
             p.panelSize = 'large';
             p.stackOrder = ++this.panelOrderCounter;
             this.panelsOnscreen[name] = p;
+            this.bindPanelHover(name, p);
         }
         if (isStack) {
             this.largePanelOrder = this.largePanelOrder.filter((key) => key !== name);
@@ -1041,6 +1138,8 @@ class LayoutUI {
             this.largePanelOrder = [name];
             this.setActiveLargePanel(name);
         }
+        this.activePanelName = name;
+        this.applyPanelLayering();
         this.logPanelCount();
     }
 
@@ -1065,6 +1164,7 @@ class LayoutUI {
             this.panels[name] = p;
             this.currPanel = p;
             this.panelsOnscreen[name] = p;
+            this.bindPanelHover(name, p);
         } else {
             let p = this.panels[name];
             p.setLink(i);
@@ -1074,7 +1174,10 @@ class LayoutUI {
             p.setTopInset(this.topInset);
             p.panelSize = 'small';
             this.panelsOnscreen[name] = p;
+            this.bindPanelHover(name, p);
         }
+        this.activePanelName = name;
+        this.applyPanelLayering();
     }
 
     clickLink(i){
@@ -1097,6 +1200,9 @@ class LayoutUI {
                 this.pressed = false;
                 delete this.panelsOnscreen[panel];
                 this.largePanelOrder = this.largePanelOrder.filter((key) => key !== panel);
+                if (this.activePanelName === panel) this.activePanelName = null;
+                if (this.hoverPanelName === panel) this.hoverPanelName = null;
+                this.applyPanelLayering();
                 this.logPanelCount();
             } else {
                 let linkExists = p.update();

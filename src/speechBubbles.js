@@ -309,8 +309,9 @@ export class SpeechBubbleLayout {
         this.lastCanvasSize.height = canvasRect.height;
         this.lastCanvasSize.left = canvasRect.left;
         this.lastCanvasSize.top = canvasRect.top;
-        const panelIsMoving = Boolean(this.panel?.isUpdating) && !Boolean(this.panel?.isAnimatingOut);
-        const recomputeLayout = resized || panelIsMoving || this.items.some((item) => item.baseLeft == null || item.baseTop == null || item.widthDirty);
+        // Recompute only when geometry truly changes (resize/new content), not on simple panel translation.
+        // Translation is handled by shifting cached base coordinates below to avoid vertical jostle.
+        const recomputeLayout = resized || this.items.some((item) => item.baseLeft == null || item.baseTop == null || item.widthDirty);
         const leftBound = canvasRect.left + 8;
         const rightBound = canvasRect.right - 8;
         const topBound = canvasRect.top + 8;
@@ -811,8 +812,9 @@ export class SpeechBubbleLayout {
 
             el.style.left = `${item.x}px`;
             el.style.top = `${item.y}px`;
-            const zBase = 100000;
-            const z = visualBelow ? (zBase - Math.round(item.y)) : (zBase + Math.round(item.y));
+            const panelSpeechBase = Number.isFinite(this.panel?.speechLayerBaseZ) ? this.panel.speechLayerBaseZ : 300;
+            const yOrder = Math.max(-999, Math.min(999, Math.round(item.y - canvasRect.top)));
+            const z = panelSpeechBase + (visualBelow ? (1000 - yOrder) : (2000 + yOrder));
             el.style.zIndex = `${z}`;
             item.visualBelow = visualBelow;
 

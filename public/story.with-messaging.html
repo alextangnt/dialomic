@@ -135,15 +135,14 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   ], background: "beach",
   config: {
     panels: "stack",
-    rows: 1,
-    cols: 3
+    rows: 3,
+    cols: 1,
+    aspect: "fixed"
   }
 }&gt;&gt;
 %%solo%%
 rat1:: My name is "rat1"
-rat1:: I'm defined with the string
-rat2::"rat1 = RAT NEAR FARLEFT LOOKFRONT."
-rat1:: Each rat is defined with a string value that includes the specified model, depth in scene, placement in scene, and looking direction.
+rat1:: I'm defined with the string "rat1 = RAT NEAR FARLEFT LOOKFRONT." Each rat is defined with a string value that includes the specified model, depth in scene, placement in scene, and looking direction.
 rat2:: I'm "rat2", and I'm defined with the string "rat2 = RAT MID FARRIGHT LOOKLEFT" in the list DL.objects.
 rat3:: I'm rat3.
 rat4:: I'm rat4.
@@ -180,7 +179,7 @@ Wonderful. You have $&lt;&lt;print $test&gt;&gt;.
 &lt;&lt;set $deer = &quot;DEER VERYFAR FARRIGHT LOOKFRONT&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="8" name="Now add a cat." tags="" position="400,575" size="100,100">&lt;&lt;set $DL.objects = [$cat]&gt;&gt;\
 Cat has been added.
 %%%
-[[Go back to the start.|start]]</tw-passagedata><tw-passagedata pid="9" name="Now add a deer." tags="" position="625,675" size="100,100">&lt;&lt;set $DL.objects = [$deer]&gt;&gt;\
+[[Go back to the start.|start]]</tw-passagedata><tw-passagedata pid="9" name="Now add a deer." tags="" position="625,675" size="100,100">&lt;&lt;set $DL.objects = [$deer]&gt;&gt;&lt;&lt;set $DL.background = "beach"&gt;&gt;
 Deer has been added. THE END! Press r to restart, or press the button in the corner.</tw-passagedata></tw-storydata>
 	<script id="script-sugarcube" type="text/javascript">
 	/*! SugarCube JS */
