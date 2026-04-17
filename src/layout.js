@@ -8,6 +8,15 @@ let layout;
 let activeSessionId = null;
 window.DL_DEBUG_DELIVERY = true
 const EDITED_STORY_STORAGE_KEY = 'DL_IMPORTED_STORY_HTML';
+const EDITOR_BOOT_STORY_KEY = 'DL_VISUAL_EDITOR_BOOT_STORY';
+
+function getSugarCubeVars() {
+    try {
+        return iframe?.contentWindow?.SugarCube?.State?.variables || null;
+    } catch {
+        return null;
+    }
+}
 
 
 window.onload = () =>{
@@ -16,15 +25,39 @@ window.onload = () =>{
     const fileInput = document.getElementById("storyFile");
     const statusEl = document.getElementById("fileStatus");
     const storyStatusEl = document.getElementById("storyStatus");
-    const storyToggleBtn = document.getElementById("storyToggleBtn");
-    const defaultStoryUrl = "story.with-messaging.html";
-    const defaultStoryHtmlPromise = fetch(defaultStoryUrl)
-        .then((resp) => resp.ok ? resp.text() : null)
-        .catch(() => null);
+    const defaultStorySelect = document.getElementById("defaultStorySelect");
+    const editorLink = document.getElementById("editorLink");
+    const defaultStories = [
+        { label: 'Template', url: 'defaultstories/template.html' },
+        { label: 'Story', url: 'defaultstories/story.html' },
+    ];
+    const templateStoryUrl = defaultStories[0].url;
+    const defaultStoryHtmlCache = new Map();
+    const fetchDefaultStoryHtml = async (url) => {
+        const key = String(url || '');
+        if (!key) return null;
+        if (defaultStoryHtmlCache.has(key)) return defaultStoryHtmlCache.get(key);
+        const p = fetch(key)
+            .then(async (resp) => {
+                if (resp.ok) return resp.text();
+                // Backward compatibility before defaultstories migration.
+                const fallback = key.split('/').pop();
+                if (fallback && fallback !== key) {
+                    const alt = await fetch(fallback);
+                    if (alt.ok) return alt.text();
+                }
+                return null;
+            })
+            .catch(() => null);
+        defaultStoryHtmlCache.set(key, p);
+        return p;
+    };
+    const defaultStoryHtmlPromise = fetchDefaultStoryHtml(templateStoryUrl);
     const refreshResets = true;
     let importedHtml = null;
     let importedName = null;
     let currentMode = 'default';
+    let currentDefaultStoryUrl = defaultStories[1]?.url || defaultStories[0]?.url;
     let pendingStart = false;
     let refreshRestarted = false;
     let awaitingRefreshInit = false;
@@ -126,41 +159,57 @@ window.onload = () =>{
         return html + '\n<script src="messaging.js"></script>\n';
     }
 
-    function loadStoryHtml(html, name) {
+    function loadStoryHtml(html, name, opts = {}) {
         resetLayout();
         const patched = injectMessaging(html);
         iframe.removeAttribute("src");
         iframe.setAttribute("srcdoc", patched);
         statusEl.textContent = name ? `Loaded: ${name}` : 'Loaded';
-        if (storyStatusEl) storyStatusEl.textContent = 'Your imported story';
+        if (storyStatusEl) storyStatusEl.textContent = String(opts.storyStatus || 'Your imported story');
         pendingStart = true;
     }
 
-    function updateToggleLabel() {
-        if (!storyToggleBtn) return;
-        if (!importedHtml) {
-            storyToggleBtn.textContent = '⇄ Switch Story';
-            storyToggleBtn.disabled = true;
-            return;
-        }
-        storyToggleBtn.disabled = false;
-        storyToggleBtn.textContent =
-            currentMode === 'default' ? '⇄ Switch to Imported' : '⇄ Switch to Default';
-    }
-
-    function setMode(mode) {
+    function setMode(mode, options = {}) {
         currentMode = mode;
         if (mode === 'default') {
-            resetLayout();
-            iframe.removeAttribute('srcdoc');
-            iframe.setAttribute('src', defaultStoryUrl);
-            statusEl.textContent = 'Loaded default story';
-            if (storyStatusEl) storyStatusEl.textContent = 'Default story';
-            pendingStart = true;
+            const targetUrl = String(options.defaultUrl || currentDefaultStoryUrl || defaultStories[0]?.url || '').trim();
+            if (targetUrl) currentDefaultStoryUrl = targetUrl;
+            const selectedLabel = defaultStories.find((s) => s.url === currentDefaultStoryUrl)?.label || 'Default story';
+            // Always load defaults through HTML injection path so messaging.js is attached.
+            fetchDefaultStoryHtml(currentDefaultStoryUrl).then((html) => {
+                if (typeof html === 'string' && html.trim()) {
+                    loadStoryHtml(html, `${selectedLabel}.html`, { storyStatus: selectedLabel });
+                } else {
+                    resetLayout();
+                    iframe.removeAttribute('srcdoc');
+                    iframe.setAttribute('src', currentDefaultStoryUrl);
+                    statusEl.textContent = `Loaded default: ${selectedLabel}`;
+                    if (storyStatusEl) storyStatusEl.textContent = selectedLabel;
+                    pendingStart = true;
+                }
+                if (defaultStorySelect) defaultStorySelect.value = currentDefaultStoryUrl;
+            });
         } else if (importedHtml) {
             loadStoryHtml(importedHtml, importedName);
         }
-        updateToggleLabel();
+    }
+
+    async function getCurrentDisplayedStoryForEditor() {
+        if (currentMode === 'imported' && importedHtml) {
+            return {
+                html: importedHtml,
+                name: importedName || 'Imported Story.html',
+            };
+        }
+        const html = await fetchDefaultStoryHtml(currentDefaultStoryUrl);
+        if (typeof html === 'string' && html.trim()) {
+            const selectedLabel = defaultStories.find((s) => s.url === currentDefaultStoryUrl)?.label || 'Default story';
+            return {
+                html,
+                name: `${selectedLabel}.html`,
+            };
+        }
+        return null;
     }
 
     function readFileText(file) {
@@ -303,17 +352,40 @@ window.onload = () =>{
         fileInput.addEventListener('change', () => handleFile(fileInput.files?.[0]));
     }
 
-    if (storyToggleBtn) {
-        updateToggleLabel();
-        storyToggleBtn.addEventListener('click', () => {
-            if (!importedHtml) return;
-            setMode(currentMode === 'default' ? 'imported' : 'default');
+    if (defaultStorySelect) {
+        defaultStorySelect.innerHTML = '';
+        for (const story of defaultStories) {
+            const opt = document.createElement('option');
+            opt.value = story.url;
+            opt.textContent = story.label;
+            defaultStorySelect.appendChild(opt);
+        }
+        defaultStorySelect.value = currentDefaultStoryUrl;
+        defaultStorySelect.addEventListener('change', () => {
+            const url = String(defaultStorySelect.value || '').trim();
+            if (!url) return;
+            importedHtml = null;
+            importedName = null;
+            setMode('default', { defaultUrl: url });
         });
     }
 
-    if (importedHtml) {
-        setMode('imported');
+    if (editorLink) {
+        editorLink.addEventListener('click', async (event) => {
+            event.preventDefault();
+            try {
+                const payload = await getCurrentDisplayedStoryForEditor();
+                if (payload?.html) {
+                    localStorage.setItem(EDITOR_BOOT_STORY_KEY, JSON.stringify(payload));
+                }
+            } catch (err) {
+                console.warn('[layout] Failed to stage current story for editor', err);
+            }
+            window.location.href = editorLink.getAttribute('href') || './visual-editor.html';
+        });
     }
+
+    setMode(importedHtml ? 'imported' : 'default');
 };
 
 function init(info){
@@ -324,7 +396,12 @@ function init(info){
         started = true;
     }
 
-    vars = iframe.contentWindow.SugarCube.State.variables;
+    const sugarVars = getSugarCubeVars();
+    if (!sugarVars) {
+        console.warn('[layout] SugarCube vars unavailable during init; skipping this init tick.');
+        return;
+    }
+    vars = sugarVars;
     layout.lo = vars.DL_setup;
     layout.loCurr = vars.DL_curr;
     layout.setPsgInfo(info);
@@ -1268,7 +1345,7 @@ class LayoutUI {
     setPsgInfo(info) {
        
         this.psgName = info.psgName;
-        vars = iframe.contentWindow.SugarCube.State.variables;
+        vars = getSugarCubeVars() || {};
         const baseConfig = this.normalizePanelConfig(vars?.DL?.config);
         const baseSolo = vars?.DL_solo === true;
         const cleaned = cleanText(info.passage);
@@ -1342,7 +1419,7 @@ class LayoutUI {
 
         let data = {left: 0, top: this.topInset + this.h, width: 360, height: 150};
         let target = {left: 0, top: this.topInset + this.h / 4, width: this.w, height: 300};
-        let vars = iframe.contentWindow.SugarCube.State.variables;
+        let vars = getSugarCubeVars() || {};
         let scene = withDefaultSceneCamera(vars.DL);
         console.log(scene);
 
@@ -1423,7 +1500,7 @@ class LayoutUI {
         let name = this.psgName + choice;
         let data = {left: 0, top: this.topInset + this.h, width: 100, height: 100};
         target = {left: this.w * 3 / 4, top: this.topInset + this.h / 3, width: 200, height: 200};
-        vars = iframe.contentWindow.SugarCube.State.variables;
+        vars = getSugarCubeVars() || {};
         let scene = withDefaultSceneCamera(vars.DL);
         // console.log("makeresponese make response");
         // console.log(vars);

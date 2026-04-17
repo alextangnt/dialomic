@@ -263,6 +263,7 @@ export class ThreeScene {
         this.mouseTiltTarget = { x: 0, y: 0 };
         this.mouseTiltLerp = 0.12;
         this.mouseTiltReady = true;
+        this.mouseTiltEnabled = true;
         this.cameraSpec = null;
         this.editorEnabled = false;
         this.editorOrbitControls = null;
@@ -278,6 +279,7 @@ export class ThreeScene {
         this.editorPointerDown = null;
         this.editorClickHandler = null;
         this.mouseTiltHandler = (e) => {
+            if (!this.mouseTiltEnabled) return;
             const cx = Number(e?.clientX);
             const cy = Number(e?.clientY);
             if (!Number.isFinite(cx) || !Number.isFinite(cy)) return;
@@ -328,7 +330,7 @@ export class ThreeScene {
         this.updateSpeakerHop(now);
         if (this.editorEnabled && this.editorOrbitControls) {
             this.editorOrbitControls.update();
-        } else if (this.mouseTiltReady) {
+        } else if (this.mouseTiltReady && this.mouseTiltEnabled) {
             this.applyMouseTilt();
         }
         // this.controls.update();
@@ -655,6 +657,38 @@ export class ThreeScene {
         return true;
     }
 
+    focusEditableModelByKey(key) {
+        const model = this.getModelByKey(key);
+        if (!model) return false;
+        const box = new THREE.Box3().setFromObject(model);
+        if (box.isEmpty()) return false;
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const vfov = THREE.MathUtils.degToRad(this.camera.fov);
+        const hfov = 2 * Math.atan(Math.tan(vfov / 2) * this.camera.aspect);
+        const fitPad = 1.25;
+        const distY = (size.y * 0.5 * fitPad) / Math.max(0.001, Math.tan(vfov / 2));
+        const distX = (size.x * 0.5 * fitPad) / Math.max(0.001, Math.tan(hfov / 2));
+        const distZ = size.z * 0.75;
+        const minDistance = this.camera.near + 0.2;
+        const distance = Math.max(minDistance, distX, distY, distZ);
+        const currentTarget = this.editorOrbitControls?.target?.clone() || this.cameraBaseLookTarget.clone();
+        const dir = this.camera.position.clone().sub(currentTarget);
+        if (dir.lengthSq() < 1e-8) dir.set(0, 0.2, 1);
+        dir.normalize();
+        const pos = center.clone().addScaledVector(dir, distance);
+
+        this.camera.position.copy(pos);
+        this.camera.lookAt(center);
+        this.cameraBasePos.copy(pos);
+        this.cameraBaseLookTarget.copy(center);
+        if (this.editorOrbitControls) {
+            this.editorOrbitControls.target.copy(center);
+            this.editorOrbitControls.update();
+        }
+        return true;
+    }
+
     clearSelectedEditableModel(notify = true) {
         if (!this.editorTransformControls) return;
         this.editorTransformControls.detach();
@@ -769,6 +803,16 @@ export class ThreeScene {
                     z: Number(this.backgroundModel.rotation.z.toFixed(4)),
                 },
             };
+        } else if (this.backgroundSourceSpec) {
+            const source = this.backgroundSourceSpec;
+            const sourceObj = (source && typeof source === 'object') ? source : {};
+            const sourceName = typeof source === 'string'
+                ? source
+                : (sourceObj.name || sourceObj.model || 'none');
+            background = {
+                ...sourceObj,
+                name: String(sourceName || 'none'),
+            };
         }
 
         return {
@@ -871,6 +915,9 @@ export class ThreeScene {
                 if (this.editorTransformControls && !this.editorTransformControls.object && modelKey) {
                     this.setSelectedEditableModel(modelKey);
                 }
+                // In editor mode, model creation should immediately propagate to
+                // the passage's dirty scene text state.
+                if (this.editorOnChange) this.editorOnChange();
             }
             if (!this.editorEnabled && this.editorPendingOptions && this.models.length > 0) {
                 const pending = this.editorPendingOptions;
@@ -890,20 +937,40 @@ export class ThreeScene {
             this.clearBackground();
             return;
         }
+        const currentSource = (this.backgroundSourceSpec && typeof this.backgroundSourceSpec === 'object')
+            ? { ...this.backgroundSourceSpec }
+            : {};
         this.backgroundSourceSpec = (backgroundSpec && typeof backgroundSpec === 'object')
-            ? { ...backgroundSpec }
+            ? { ...currentSource, ...backgroundSpec }
             : backgroundSpec;
         const name = typeof backgroundSpec === 'string'
             ? backgroundSpec
             : backgroundSpec.name || backgroundSpec.model || '';
+        if (String(name || '').trim().toLowerCase() === 'none') {
+            this.backgroundSourceSpec = {
+                ...currentSource,
+                ...(typeof this.backgroundSourceSpec === 'object' ? this.backgroundSourceSpec : {}),
+                name: 'none',
+            };
+            this.clearBackground(true);
+            return;
+        }
         const slug = slugifyAssetName(name);
-        if (!slug) return;
+        if (!slug) {
+            this.backgroundSourceSpec = {
+                ...currentSource,
+                ...(typeof this.backgroundSourceSpec === 'object' ? this.backgroundSourceSpec : {}),
+                name: 'none',
+            };
+            this.clearBackground(true);
+            return;
+        }
 
         const base = import.meta.env.BASE_URL;
         const filename = `${base}assets/backgrounds/${slug}.glb`;
         const token = ++this.backgroundToken;
 
-        this.clearBackground();
+        this.clearBackground(true);
 
         this.loader.load(filename, (gltf) => {
             if (token !== this.backgroundToken) return;
@@ -931,9 +998,9 @@ export class ThreeScene {
         });
     }
 
-    clearBackground() {
+    clearBackground(preserveSourceSpec = false) {
         if (!this.backgroundModel) {
-            this.backgroundSourceSpec = null;
+            if (!preserveSourceSpec) this.backgroundSourceSpec = null;
             return;
         }
         const model = this.backgroundModel;
@@ -954,7 +1021,7 @@ export class ThreeScene {
             }
         });
         this.backgroundModel = null;
-        this.backgroundSourceSpec = null;
+        if (!preserveSourceSpec) this.backgroundSourceSpec = null;
     }
 
     setSkyColor(skyColor) {
@@ -1116,6 +1183,18 @@ export class ThreeScene {
         this.mouseTiltReady = true;
     }
 
+    setMouseTiltEnabled(enabled) {
+        this.mouseTiltEnabled = Boolean(enabled);
+        if (!this.mouseTiltEnabled) {
+            this.mouseTilt.x = 0;
+            this.mouseTilt.y = 0;
+            this.mouseTiltTarget.x = 0;
+            this.mouseTiltTarget.y = 0;
+            // Ensure camera remains on current base framing when tilt is disabled.
+            this.camera.lookAt(this.cameraBaseLookTarget);
+        }
+    }
+
     getModelKey(obj) {
         if (!obj) return null;
         if (typeof obj === 'string') {
@@ -1158,6 +1237,7 @@ export class ThreeScene {
         const canvas = this.renderer.domElement;
         const width = canvas.clientWidth || canvas.width;
         const height = canvas.clientHeight || canvas.height;
+        this.camera.updateMatrixWorld?.(true);
         const vector = position.clone().project(this.camera);
         return {
             x: (vector.x + 1) * 0.5 * width,
@@ -1563,9 +1643,95 @@ export class Panel {
         this.three.setCameraSpec(scene?.camera || null);
     }
 
+    getSceneObjectModelToken(obj) {
+        const parsed = this.three?.parseModelInfo?.(obj);
+        const spec = String(parsed?.specString || '').trim();
+        if (spec) return spec.split(/\s+/)[0]?.toLowerCase() || '';
+        if (obj && typeof obj === 'object') {
+            return String(obj.model || obj.name || '').trim().toLowerCase();
+        }
+        if (typeof obj === 'string') {
+            const rhs = obj.includes('=') ? obj.split('=').slice(1).join('=').trim() : obj.trim();
+            return rhs.split(/\s+/)[0]?.toLowerCase() || '';
+        }
+        return '';
+    }
+
+    syncSceneObjects(normalized) {
+        if (!this.three) return;
+        const desiredById = normalized?.byId || {};
+        const desiredKeys = new Set(Object.keys(desiredById).map((k) => String(k || '').toLowerCase()).filter(Boolean));
+        const currentKeys = this.three.getEditableModelKeys?.() || [];
+
+        for (const key of currentKeys) {
+            const norm = String(key || '').toLowerCase();
+            if (!desiredKeys.has(norm)) {
+                this.three.removeEditableModelByKey?.(norm);
+            }
+        }
+
+        for (const [rawKey, obj] of Object.entries(desiredById)) {
+            const key = String(rawKey || '').toLowerCase();
+            if (!key) continue;
+            const existing = this.three.getModelByKey?.(key);
+            if (!existing) {
+                this.three.addModel(obj);
+                continue;
+            }
+
+            const oldToken = this.getSceneObjectModelToken(existing.userData?.sourceSpec || '');
+            const newToken = this.getSceneObjectModelToken(obj);
+            if (newToken && oldToken && newToken !== oldToken) {
+                this.three.removeEditableModelByKey?.(key);
+                this.three.addModel(obj);
+                continue;
+            }
+
+            const parsed = this.three.parseModelInfo?.(obj);
+            if (parsed?.explicitPosition) {
+                existing.position.copy(parsed.explicitPosition);
+            } else if (typeof parsed?.dist === 'number') {
+                const xPos = this.three.getScreenXForLocation(parsed.locKey, parsed.distName);
+                const alignedX = this.three.screenXToWorldX(existing, xPos, parsed.dist);
+                if (typeof alignedX === 'number') existing.position.x = alignedX;
+                existing.position.y = 0;
+                existing.position.z = parsed.dist;
+            }
+            if (parsed?.explicitRotation) {
+                existing.rotation.set(parsed.explicitRotation.x, parsed.explicitRotation.y, parsed.explicitRotation.z);
+            } else if (Number.isFinite(parsed?.angle)) {
+                existing.rotation.set(0, parsed.angle, 0);
+            }
+            if (parsed?.explicitScale) {
+                existing.scale.set(parsed.explicitScale.x, parsed.explicitScale.y, parsed.explicitScale.z);
+            }
+
+            existing.userData.layout = {
+                dist: parsed?.dist,
+                distName: parsed?.distName,
+                locKey: parsed?.locKey,
+                angle: parsed?.angle,
+            };
+            existing.userData.sourceSpec = parsed?.specString || existing.userData?.sourceSpec || '';
+            existing.userData.sourceId = (obj && typeof obj === 'object' && obj.id)
+                ? String(obj.id)
+                : (existing.userData?.sourceId || key);
+            existing.userData.baseY = existing.position.y;
+            existing.updateMatrixWorld(true);
+
+            const box = new THREE.Box3().setFromObject(existing);
+            const sphere = new THREE.Sphere();
+            box.getBoundingSphere(sphere);
+            existing.userData.radius = Math.max(sphere.radius || this.three.repulsion.minRadius, this.three.repulsion.minRadius);
+            existing.userData.height = box.max.y - box.min.y;
+            existing.userData.localMinY = box.min.y - existing.position.y;
+        }
+    }
+
     setScene(scene){
         const normalized = normalizeSceneObjects(scene);
         this.sceneObjects = normalized.byId;
+        this.syncSceneObjects(normalized);
         if (scene?.background) {
             this.three.setBackground(scene.background);
         } else {
@@ -1985,8 +2151,10 @@ export class Panel {
         const next = Boolean(isHovered);
         if (this.isHovered === next) return;
         this.isHovered = next;
-        this.hoverScale = next ? 1.015 : 1;
-        const t = `scale(${this.hoverScale})`;
+        // Disable transform-scaling hover to keep worldToScreen-derived bubble tails
+        // and bubble bodies aligned with rendered model positions.
+        this.hoverScale = 1;
+        const t = 'none';
         this.canvas.style.transform = t;
         this.textEl.style.transform = t;
         this.narrationBgEl.style.transform = t;

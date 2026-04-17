@@ -3,6 +3,7 @@ import { Panel } from './panel.js';
 
 const VISUAL_EDITOR_STATE_KEY = 'DL_VISUAL_EDITOR_STATE_V1';
 const VIEWER_IMPORTED_STORY_KEY = 'DL_IMPORTED_STORY_HTML';
+const VIEWER_EDITOR_BOOT_STORY_KEY = 'DL_VISUAL_EDITOR_BOOT_STORY';
 const BACKGROUND_KEY = '__background__';
 const FALLBACK_ANIMAL_ASSET_NAMES = ['cat', 'cow', 'deer', 'hare', 'rat', 'wolf'];
 const FALLBACK_BACKGROUND_ASSET_NAMES = ['ballpark', 'beach', 'bus_stop', 'tennis_court'];
@@ -20,7 +21,6 @@ const el = {
     modelSelect: document.getElementById('modelSelect'),
     gizmoMode: document.getElementById('gizmoMode'),
     saveSceneBtn: document.getElementById('saveSceneBtn'),
-    viewerLink: document.getElementById('viewerLink'),
     stage: document.getElementById('previewStage'),
     previewPane: document.querySelector('.preview-pane'),
     panelAspectHandle: document.getElementById('panelAspectHandle'),
@@ -35,9 +35,11 @@ const el = {
     addModelAssetSelect: document.getElementById('addModelAssetSelect'),
     addModelBtn: document.getElementById('addModelBtn'),
     clearSceneBtn: document.getElementById('clearSceneBtn'),
+    revertSceneBtn: document.getElementById('revertSceneBtn'),
     floatingModelButtons: document.getElementById('floatingModelButtons'),
     floatingAddSpeechBtn: document.getElementById('floatingAddSpeechBtn'),
     cameraTools: document.getElementById('cameraTools'),
+    focusModelBtn: document.getElementById('focusModelBtn'),
     saveCameraBtn: document.getElementById('saveCameraBtn'),
     revertCameraBtn: document.getElementById('revertCameraBtn'),
     floatingDeleteModelBtn: document.getElementById('floatingDeleteModelBtn'),
@@ -80,6 +82,9 @@ const state = {
     selectedBubbleIndex: null,
     savedCameraByPassage: {},
     implicitCameraByPassage: {},
+    sceneSyncTimer: 0,
+    stableBodyByPassage: {},
+    aspectDirtyByPassage: {},
 };
 const IGNORED_PASSAGES = new Set(['StoryTitle', 'StoryData']);
 
@@ -95,17 +100,53 @@ function setDirty(next) {
 function setTextDirty(next) {
     state.hasTextEdits = Boolean(next);
     setDirty(state.hasTextEdits || state.hasSceneEdits);
+    refreshRevertSceneButton();
 }
 
 function setSceneDirty(next) {
     state.hasSceneEdits = Boolean(next);
     setDirty(state.hasTextEdits || state.hasSceneEdits);
+    refreshRevertSceneButton();
 }
 
 function getCurrentPassageKey() {
     const p = state.passages[state.selected];
     if (!p) return '';
     return `${state.selected}:${p.name}`;
+}
+
+function refreshRevertSceneButton() {
+    if (!el.revertSceneBtn) return;
+    const key = getCurrentPassageKey();
+    const p = state.passages[state.selected];
+    if (!key || !p) {
+        el.revertSceneBtn.disabled = true;
+        return;
+    }
+    const stable = state.stableBodyByPassage[key];
+    el.revertSceneBtn.disabled = !(typeof stable === 'string' && stable !== String(p.body || ''));
+}
+
+function ensureStableBodySnapshot(passageIndex = state.selected) {
+    const p = state.passages[passageIndex];
+    if (!p) return;
+    const key = `${passageIndex}:${p.name}`;
+    if (!key) return;
+    if (typeof state.stableBodyByPassage[key] !== 'string') {
+        state.stableBodyByPassage[key] = String(p.body || '');
+    }
+}
+
+function initializeStableBodySnapshots() {
+    state.stableBodyByPassage = {};
+    state.aspectDirtyByPassage = {};
+    for (let i = 0; i < state.passages.length; i += 1) {
+        const p = state.passages[i];
+        const key = `${i}:${p?.name || ''}`;
+        if (!p || !key) continue;
+        state.stableBodyByPassage[key] = String(p.body || '');
+        state.aspectDirtyByPassage[key] = false;
+    }
 }
 
 function refreshCameraButtons() {
@@ -123,7 +164,20 @@ function refreshCameraButtons() {
     if (el.revertCameraBtn) {
         el.revertCameraBtn.disabled = !hasPanel || !baseline || sameAsBaseline;
     }
+    refreshFocusButton();
     positionCameraTools();
+}
+
+function refreshFocusButton() {
+    if (!el.focusModelBtn) return;
+    const three = state.panel?.three;
+    const key = String(state.selectedModelKey || '').trim();
+    if (!three || !key) {
+        el.focusModelBtn.disabled = true;
+        return;
+    }
+    const model = three.getModelByKey?.(key);
+    el.focusModelBtn.disabled = !model;
 }
 
 function maybeCaptureImplicitCamera() {
@@ -227,6 +281,7 @@ function refreshSelectedModelBadge() {
     if (!state.selectedModelKey) {
         if (el.selectedModelBadge) el.selectedModelBadge.style.display = 'none';
         if (el.selectedEnvironmentControls) el.selectedEnvironmentControls.style.display = 'none';
+        refreshFocusButton();
         return;
     }
     const paneRect = el.previewPane.getBoundingClientRect();
@@ -253,6 +308,7 @@ function refreshSelectedModelBadge() {
             el.selectedModelBadge.style.left = left;
             el.selectedModelBadge.style.top = top;
         }
+        refreshFocusButton();
         return;
     }
 
@@ -262,6 +318,7 @@ function refreshSelectedModelBadge() {
         el.selectedEnvironmentControls.style.left = left;
         el.selectedEnvironmentControls.style.top = top;
     }
+    refreshFocusButton();
 }
 
 function refreshEnvironmentControlsFromPassage() {
@@ -334,6 +391,9 @@ function refreshFloatingDeleteButton() {
     if (!el.floatingModelButtons || !el.previewPane || !state.panel || !state.selectedModelKey) {
         if (el.floatingModelButtons) el.floatingModelButtons.style.display = 'none';
         if (el.floatingAddSpeechBtn) el.floatingAddSpeechBtn.style.display = 'none';
+        if (el.floatingModeTranslateBtn) el.floatingModeTranslateBtn.disabled = true;
+        if (el.floatingModeRotateBtn) el.floatingModeRotateBtn.disabled = true;
+        if (el.floatingModeScaleBtn) el.floatingModeScaleBtn.disabled = true;
         return;
     }
     const paneRect = el.previewPane.getBoundingClientRect();
@@ -353,6 +413,11 @@ function refreshFloatingDeleteButton() {
         el.floatingDeleteModelBtn.title = isEnvironment ? 'Undo environment change' : 'Undo selected model transform';
         el.floatingDeleteModelBtn.setAttribute('aria-label', el.floatingDeleteModelBtn.title);
     }
+    const hasSelectedModel = Boolean(state.panel?.three?.getModelByKey?.(state.selectedModelKey));
+    const disableTransforms = !hasSelectedModel;
+    if (el.floatingModeTranslateBtn) el.floatingModeTranslateBtn.disabled = disableTransforms;
+    if (el.floatingModeRotateBtn) el.floatingModeRotateBtn.disabled = disableTransforms;
+    if (el.floatingModeScaleBtn) el.floatingModeScaleBtn.disabled = disableTransforms;
     if (el.floatingAddSpeechBtn) {
         const isEnvironment = state.selectedModelKey === BACKGROUND_KEY;
         if (isEnvironment) {
@@ -363,6 +428,50 @@ function refreshFloatingDeleteButton() {
             el.floatingAddSpeechBtn.style.top = `${Math.max(0, cy - paneRect.top - (ringDistancePx + 16))}px`;
         }
     }
+}
+
+function applySceneFromBodyLive(body, { ignoreCamera = false } = {}) {
+    if (!state.panel) return;
+    const scene = buildSceneFromPassage(body, state.vars) || {};
+    const sceneForApply = cloneSceneSpec(scene) || {};
+    if (ignoreCamera && sceneForApply && typeof sceneForApply === 'object') {
+        const liveCamera = state.panel?.three?.getCameraSpecSnapshot?.() || null;
+        if (liveCamera) {
+            sceneForApply.camera = cloneSceneSpec(liveCamera);
+        } else {
+            delete sceneForApply.camera;
+        }
+    }
+    state.lastSceneConfig = scene?.config || state.lastSceneConfig || null;
+    const aspectMode = String(sceneForApply?.config?.aspect || 'free').toLowerCase() === 'fixed' ? 'fixed' : 'free';
+    state.panel.setAspectMode?.(aspectMode);
+    state.panel.setScene?.(sceneForApply);
+    state.panel.setSpeakers?.(draftToPanelSpeakers());
+    suppressPreviewSpeakerAnimation();
+    wireInlineTextEditors();
+    refreshSpeechBubbleDeleteButtons();
+    refreshModelSelect();
+    refreshSelectedModelBadge();
+    refreshEnvironmentControlsFromPassage();
+    refreshFloatingDeleteButton();
+}
+
+function syncSceneToBodyNow() {
+    if (state.sceneSyncTimer) {
+        clearTimeout(state.sceneSyncTimer);
+        state.sceneSyncTimer = 0;
+    }
+    const p = state.passages[state.selected];
+    if (!p) return;
+    const nextBody = composeBodyWithCurrentSceneSnapshot(p.body || '');
+    if (nextBody === String(p.body || '')) return;
+    p.body = nextBody;
+    if (el.passageBody) el.passageBody.value = nextBody;
+    if (state.activeInlineEditor?.setSceneText) {
+        state.activeInlineEditor.setSceneText(extractSceneLines(nextBody), { applyLive: false });
+    }
+    refreshDraftFromPassageBody();
+    setSceneDirty(true);
 }
 
 function showUnsavedDialog() {
@@ -574,19 +683,30 @@ function buildSceneObjectMap(objs) {
                     spec = trimmed.slice(eqIdx + 1).trim();
                 }
                 if (key) map[key] = spec;
+                if (key) map[String(key).toLowerCase()] = spec;
                 else {
                     const modelKey = (trimmed.split(/\s+/)[0] || '').toLowerCase();
                     if (modelKey) map[modelKey] = obj;
                 }
             } else if (obj && typeof obj === 'object') {
                 const key = (obj.id || obj.name || obj.model || `obj_${i}`);
-                if (key) map[String(key)] = obj;
+                if (key) {
+                    map[String(key)] = obj;
+                    map[String(key).toLowerCase()] = obj;
+                }
             }
             map[`obj_${i}`] = obj;
         });
         return map;
     }
-    if (typeof objs === 'object') return objs;
+    if (typeof objs === 'object') {
+        const map = { ...objs };
+        for (const [k, v] of Object.entries(objs)) {
+            if (!k) continue;
+            map[String(k).toLowerCase()] = v;
+        }
+        return map;
+    }
     return {};
 }
 
@@ -1021,7 +1141,7 @@ function refreshDraftFromPassageBody() {
     const visibleBody = split.visible;
     const scene = buildSceneFromPassage(p.body, state.vars) || {};
     const sceneObjects = buildSceneObjectMap(scene?.objects);
-    const parsed = parseSpeakerBlocks(visibleBody, sceneObjects, state.format);
+    const parsed = parseSpeakerBlocks(visibleBody, sceneObjects, state.format, { requireKnownSpeaker: false });
     state.textDraft.narrationRaw = visibleBody;
     state.textDraft.narration = parseNarrationRawBlock(visibleBody);
     state.textDraft.hiddenTail = split.hidden;
@@ -1029,7 +1149,38 @@ function refreshDraftFromPassageBody() {
         speaker: String(s.speaker || ''),
         text: htmlToPlainText(s.html || ''),
         raw: String(s.raw || ''),
+        sourceIndex: Number.isFinite(Number(s.sourceIndex)) ? Number(s.sourceIndex) : null,
     }));
+}
+
+function replaceSpeakerBlockAtSourceIndex(visibleRaw, sourceIndex, nextRaw) {
+    const idx = Number(sourceIndex);
+    if (!Number.isFinite(idx) || idx < 0) return null;
+    const parts = splitParagraphs(visibleRaw, state.format);
+    if (idx >= parts.length) return null;
+    const replacement = String(nextRaw || '').trim();
+    if (!replacement) {
+        parts.splice(idx, 1);
+    } else {
+        parts[idx] = replacement;
+    }
+    const sep = state.format === 'twee' ? '\n' : '\n\n';
+    return parts.join(sep);
+}
+
+function getLastSpeechDraftIndex() {
+    const speakers = state.textDraft.speakers || [];
+    if (!speakers.length) return -1;
+    let bestIdx = speakers.length - 1;
+    let bestSource = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < speakers.length; i += 1) {
+        const src = Number(speakers[i]?.sourceIndex);
+        if (Number.isFinite(src) && src >= bestSource) {
+            bestSource = src;
+            bestIdx = i;
+        }
+    }
+    return bestIdx;
 }
 
 function updatePanelFromTextDraft() {
@@ -1050,6 +1201,9 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         state.panel.three.setSpeakerAnimationPaused?.(true);
         state.panel.three.renderer?.setAnimationLoop?.(null);
     }
+    const backdrop = document.createElement('div');
+    backdrop.className = 'inline-text-editor-backdrop';
+    document.body.appendChild(backdrop);
     const rect = hostEl.getBoundingClientRect();
     hostEl.classList.add('is-inline-editing');
     const wrapper = document.createElement('div');
@@ -1060,6 +1214,19 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     wrapper.style.left = `${rect.left}px`;
     wrapper.style.top = `${rect.top}px`;
     wrapper.style.width = `${Math.max(220, rect.width)}px`;
+    const actions = document.createElement('div');
+    actions.className = 'inline-text-editor-actions';
+    const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
+    cancelBtn.className = 'inline-editor-cancel';
+    cancelBtn.textContent = 'Cancel';
+    const doneBtn = document.createElement('button');
+    doneBtn.type = 'button';
+    doneBtn.className = 'inline-editor-done';
+    doneBtn.textContent = 'Done';
+    actions.appendChild(cancelBtn);
+    actions.appendChild(doneBtn);
+    wrapper.appendChild(actions);
     const ta = document.createElement('textarea');
     ta.className = 'inline-text-editor-input';
     ta.value = getValue();
@@ -1153,7 +1320,7 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         }
         options.onLiveText(textVal);
     };
-    const commit = () => {
+    const getCompositeValue = () => {
         let val;
         if (typeof options.composeValue === 'function') {
             val = options.composeValue({
@@ -1170,53 +1337,40 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
                 val = options.onChoicesChange(choicesTa.value, val);
             }
         }
+        return val;
+    };
+    const cleanup = () => {
         wrapper.remove();
+        backdrop.remove();
         hostEl.classList.remove('is-inline-editing');
         state.activeInlineEditor = null;
         if (state.panel?.three) {
             state.panel.three.setSpeakerAnimationPaused?.(false);
             state.panel.three.renderer?.setAnimationLoop?.(state.panel.three.animate);
         }
+    };
+    const commit = () => {
+        const val = getCompositeValue();
+        cleanup();
         onCommit(val);
+        // Rebind handlers in case panel/bubbles were re-rendered by commit.
+        wireInlineTextEditors();
         refreshSpeechBubbleDeleteButtons();
     };
     const cancel = () => {
-        wrapper.remove();
-        hostEl.classList.remove('is-inline-editing');
-        state.activeInlineEditor = null;
-        if (state.panel?.three) {
-            state.panel.three.setSpeakerAnimationPaused?.(false);
-            state.panel.three.renderer?.setAnimationLoop?.(state.panel.three.animate);
-        }
+        cleanup();
+        if (typeof options.onCancel === 'function') options.onCancel();
+        // Always restore inline bubble editing hooks after editor exit.
+        wireInlineTextEditors();
         refreshSpeechBubbleDeleteButtons();
     };
-    ta.addEventListener('blur', () => {
-        // Don't auto-commit when moving between tabs/inputs inside wrapper.
-        requestAnimationFrame(() => {
-            if (!wrapper.contains(document.activeElement)) {
-                commit();
-            }
-        });
-    });
+    doneBtn.addEventListener('click', () => commit());
+    cancelBtn.addEventListener('click', () => cancel());
     ta.addEventListener('input', autoSize);
     ta.addEventListener('input', applyLiveComposite);
-    if (sceneTa) sceneTa.addEventListener('blur', () => {
-        requestAnimationFrame(() => {
-            if (!wrapper.contains(document.activeElement)) {
-                commit();
-            }
-        });
-    });
     if (sceneTa) sceneTa.addEventListener('input', () => {
         autoSize();
         applyLiveComposite();
-    });
-    if (choicesTa) choicesTa.addEventListener('blur', () => {
-        requestAnimationFrame(() => {
-            if (!wrapper.contains(document.activeElement)) {
-                commit();
-            }
-        });
     });
     if (choicesTa) choicesTa.addEventListener('input', () => {
         autoSize();
@@ -1232,7 +1386,21 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     autoSize();
     ta.focus();
     ta.select();
-    state.activeInlineEditor = { el: wrapper, commit, cancel, host: hostEl };
+    const setSceneText = (nextScene, { applyLive = false } = {}) => {
+        if (!sceneTa) return;
+        const value = String(nextScene || '');
+        if (sceneTa.value === value) return;
+        sceneTa.value = value;
+        autoSize();
+        if (applyLive) applyLiveComposite();
+    };
+    state.activeInlineEditor = {
+        el: wrapper,
+        commit,
+        cancel,
+        host: hostEl,
+        setSceneText,
+    };
     refreshSpeechBubbleDeleteButtons();
 }
 
@@ -1241,6 +1409,7 @@ function openNarrationTabbedEditor(hostEl) {
     const p = state.passages[state.selected];
     if (!p) return;
     const raw = String(p.body || '');
+    const initialRaw = raw;
     const textRaw = extractTextLines(raw);
     const sceneRaw = extractSceneLines(raw);
     const choicesRaw = extractChoiceLines(raw);
@@ -1249,14 +1418,34 @@ function openNarrationTabbedEditor(hostEl) {
         () => textRaw,
         (val) => {
             const nextRaw = String(val || '');
-            if (nextRaw === String(p.body || '')) return;
-            logBodyDiff(p.body, nextRaw, `narration-tabs:${p.name || state.selected}`);
-            p.body = nextRaw;
-            if (el.passageBody) el.passageBody.value = nextRaw;
-            refreshDraftFromPassageBody();
-            updatePanelFromTextDraft();
-            renderPreviewLinks(parseLinkLabels(p.body || ''));
-            setTextDirty(true);
+            const validScene = validateDlMacroInPassage(nextRaw, state.vars);
+            if (!validScene.ok) {
+                p.body = initialRaw;
+                if (el.passageBody) el.passageBody.value = initialRaw;
+                refreshDraftFromPassageBody();
+                updatePanelFromTextDraft();
+                renderPreviewLinks(parseLinkLabels(initialRaw));
+                setStatus(`Scene update canceled: ${validScene.error}`);
+                return;
+            }
+            const prevRaw = String(p.body || '');
+            const sceneChanged = extractSceneLines(nextRaw) !== extractSceneLines(prevRaw);
+            const cameraChanged = didCameraSpecChange(prevRaw, nextRaw);
+            if (nextRaw !== prevRaw) {
+                logBodyDiff(prevRaw, nextRaw, `narration-tabs:${p.name || state.selected}`);
+                p.body = nextRaw;
+                if (el.passageBody) el.passageBody.value = nextRaw;
+                refreshDraftFromPassageBody();
+                updatePanelFromTextDraft();
+                renderPreviewLinks(parseLinkLabels(p.body || ''));
+                setTextDirty(true);
+            }
+            // Always apply live scene on commit (click-off) so scene tab edits
+            // propagate even if the text body was already updated by live input.
+            applySceneFromBodyLive(nextRaw, { ignoreCamera: !cameraChanged });
+            if (sceneChanged) {
+                state.panel?.positionSpeechBubbles?.();
+            }
         },
         {
             sceneMacro: sceneRaw,
@@ -1294,17 +1483,18 @@ function openNarrationTabbedEditor(hostEl) {
                 const choiceIdx = getChoiceLineIndices(textRaw);
                 return mergeLinesAtIndices(textRaw, choiceIdx, String(choicesVal || ''), 'bottom');
             },
-            onLiveText: (nextRaw) => {
-                const value = String(nextRaw || '');
-                if (value === String(p.body || '')) return;
-                logBodyDiff(p.body, value, `narration-live:${p.name || state.selected}`);
-                p.body = value;
-                if (el.passageBody) el.passageBody.value = value;
+            onCancel: () => {
+                const currentRaw = String(p.body || '');
+                if (currentRaw === initialRaw) return;
+                const cameraChanged = didCameraSpecChange(currentRaw, initialRaw);
+                p.body = initialRaw;
+                if (el.passageBody) el.passageBody.value = initialRaw;
                 refreshDraftFromPassageBody();
                 updatePanelFromTextDraft();
-                renderPreviewLinks(parseLinkLabels(p.body || ''));
-                setTextDirty(true);
+                applySceneFromBodyLive(initialRaw, { ignoreCamera: !cameraChanged });
+                renderPreviewLinks(parseLinkLabels(initialRaw));
             },
+            // Commit-only update mode: apply to scene only when exiting editor.
         }
     );
 }
@@ -1324,31 +1514,57 @@ function wireInlineTextEditors() {
     for (let i = 0; i < (state.panel.speechEls || []).length; i += 1) {
         const bubble = state.panel.speechEls[i];
         if (!bubble || bubble.dataset.inlineEditBound) continue;
-        const draftSpeaker = state.textDraft.speakers?.[i] || null;
+        const bubbleIndex = i;
         bubble.dataset.inlineEditBound = '1';
+        bubble.addEventListener('pointerdown', (event) => {
+            event.stopPropagation();
+            if (state.activeInlineEditor) return;
+            state.selectedBubbleIndex = bubbleIndex;
+            refreshSpeechBubbleDeleteButtons();
+        });
         bubble.addEventListener('click', (event) => {
             event.stopPropagation();
             if (state.activeInlineEditor) return;
-            state.selectedBubbleIndex = i;
+            state.selectedBubbleIndex = bubbleIndex;
             refreshSpeechBubbleDeleteButtons();
-        });
-        bubble.addEventListener('dblclick', (event) => {
-            event.stopPropagation();
-            if (state.activeInlineEditor) return;
-            state.selectedBubbleIndex = i;
+            if (event.detail < 2) return;
+            state.selectedBubbleIndex = bubbleIndex;
             refreshSpeechBubbleDeleteButtons();
+            const captured = state.textDraft.speakers?.[bubbleIndex] || null;
+            const capturedSourceIndex = Number(captured?.sourceIndex);
+            const findCurrentSpeaker = () => {
+                if (Number.isFinite(capturedSourceIndex)) {
+                    const bySource = (state.textDraft.speakers || []).find(
+                        (s) => Number(s?.sourceIndex) === capturedSourceIndex
+                    );
+                    if (bySource) return bySource;
+                }
+                return state.textDraft.speakers?.[bubbleIndex] || null;
+            };
             openInlineTextEditor(
                 bubble,
-                () => String(getSpeakerPayloadFromRaw(draftSpeaker?.raw || '', draftSpeaker?.speaker || '')),
+                () => {
+                    const current = findCurrentSpeaker();
+                    return String(getSpeakerPayloadFromRaw(current?.raw || '', current?.speaker || ''));
+                },
                 (val) => {
-                    if (!draftSpeaker) return;
-                    const idx = state.textDraft.speakers.indexOf(draftSpeaker);
-                    if (idx < 0) return;
-                    const oldRaw = String(state.textDraft.speakers[idx].raw || '');
-                    const raw = withSpeakerTag(String(val || ''), state.textDraft.speakers[idx].speaker || '', oldRaw).trim();
+                    let idx = bubbleIndex;
+                    if (Number.isFinite(capturedSourceIndex)) {
+                        const matchIdx = (state.textDraft.speakers || []).findIndex(
+                            (s) => Number(s?.sourceIndex) === capturedSourceIndex
+                        );
+                        if (matchIdx >= 0) idx = matchIdx;
+                    }
+                    const speakerEntry = state.textDraft.speakers?.[idx];
+                    if (!speakerEntry) return;
+                    const oldRaw = String(speakerEntry.raw || '');
+                    const raw = withSpeakerTag(String(val || ''), speakerEntry.speaker || '', oldRaw).trim();
                     if (raw === oldRaw.trim()) return;
                     let visible = String(state.textDraft.narrationRaw || '');
-                    if (!raw) {
+                    const byIndex = replaceSpeakerBlockAtSourceIndex(visible, speakerEntry.sourceIndex, raw);
+                    if (byIndex != null) {
+                        visible = byIndex;
+                    } else if (!raw) {
                         const oldLine = oldRaw.split('\n').find((ln) => String(ln || '').trim()) || '';
                         visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
                     } else if (oldRaw && visible.includes(oldRaw)) {
@@ -1372,9 +1588,14 @@ function removeSpeechBubbleAt(index) {
     if (!Number.isFinite(i) || i < 0) return;
     if (!state.textDraft?.speakers?.[i]) return;
     const oldRaw = String(state.textDraft.speakers[i].raw || '');
-    const oldLine = oldRaw.split('\n').find((ln) => String(ln || '').trim()) || '';
     let visible = String(state.textDraft.narrationRaw || '');
-    visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
+    const byIndex = replaceSpeakerBlockAtSourceIndex(visible, state.textDraft.speakers[i].sourceIndex, '');
+    if (byIndex != null) {
+        visible = byIndex;
+    } else {
+        const oldLine = oldRaw.split('\n').find((ln) => String(ln || '').trim()) || '';
+        visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
+    }
     state.textDraft.narrationRaw = visible;
     state.selectedBubbleIndex = null;
     syncDraftIntoPassageBody();
@@ -1429,7 +1650,8 @@ function refreshCurrentPanelTextAndBubbles() {
     refreshSpeechBubbleDeleteButtons();
 }
 
-function parseSpeakerBlocks(text, sceneObjects, format) {
+function parseSpeakerBlocks(text, sceneObjects, format, options = {}) {
+    const requireKnownSpeaker = Boolean(options?.requireKnownSpeaker);
     const originalParas = splitParagraphs(text, format);
     const cleanedParas = originalParas.map((p) => stripHtml(p));
     const narrationParas = [];
@@ -1447,7 +1669,12 @@ function parseSpeakerBlocks(text, sceneObjects, format) {
             continue;
         }
         const speaker = match[1].trim();
-        if (!speaker || !sceneObjects || !sceneObjects[speaker]) {
+        const speakerNorm = speaker.toLowerCase();
+        if (!speaker) {
+            narrationParas.push(originalParas[i] || '');
+            continue;
+        }
+        if (requireKnownSpeaker && (!sceneObjects || (!sceneObjects[speaker] && !sceneObjects[speakerNorm]))) {
             narrationParas.push(originalParas[i] || '');
             continue;
         }
@@ -1458,7 +1685,7 @@ function parseSpeakerBlocks(text, sceneObjects, format) {
             const after = originalPara.slice(splitIdx + 2);
             updatedPara = after.replace(/^\s+/, '').replace(/^(?:<br\s*\/?>\s*)+/gi, '');
         }
-        speakers.push({ speaker, html: updatedPara.trim(), raw: originalPara });
+        speakers.push({ speaker: speakerNorm, html: updatedPara.trim(), raw: originalPara, sourceIndex: i });
     }
 
     return {
@@ -1517,9 +1744,10 @@ function saveCurrentPassageBody() {
 
 function getSceneEnvironment(scene) {
     const bg = scene?.background;
-    const backgroundName = typeof bg === 'string'
+    let backgroundName = typeof bg === 'string'
         ? bg
         : String(bg?.name || bg?.model || '');
+    if (backgroundName.toLowerCase() === 'none') backgroundName = '';
     let skyColor = String(scene?.skyColor || '').trim();
     if (!/^#[0-9a-f]{6}$/i.test(skyColor)) skyColor = '#bfe3ff';
     return { backgroundName, skyColor };
@@ -1540,24 +1768,25 @@ function updateCurrentPassageEnvironment({ backgroundName, skyColor }) {
         state.environmentUndo = getSceneEnvironment(scene);
     }
 
-    if (nextBackground) {
-        const bg = scene.background;
-        if (bg && typeof bg === 'object') {
-            scene.background = { ...bg, name: nextBackground };
-        } else {
-            scene.background = { name: nextBackground };
-        }
-    } else {
-        delete scene.background;
-    }
+    const bg = (scene.background && typeof scene.background === 'object')
+        ? { ...scene.background }
+        : {};
+    const normalizedBackground = nextBackground && nextBackground.toLowerCase() !== 'none'
+        ? nextBackground
+        : 'none';
+    scene.background = { ...bg, name: normalizedBackground };
     scene.skyColor = nextSkyColor;
     const nextBody = writeDlExprToPassage(p.body, toPrettyDlExpression(scene));
     p.body = nextBody;
     el.passageBody.value = nextBody;
     persistVisualEditorState();
     setSceneDirty(true);
+    state.selectedModelKey = BACKGROUND_KEY;
     state.pendingSelectionKey = BACKGROUND_KEY;
-    renderPreview();
+    applySceneFromBodyLive(nextBody, { ignoreCamera: true });
+    renderPreviewLinks(parseLinkLabels(nextBody));
+    refreshSelectedModelBadge();
+    refreshFloatingDeleteButton();
 }
 
 function undoEnvironmentChanges() {
@@ -1655,6 +1884,7 @@ function restoreVisualEditorState() {
             .filter((p) => p.name && !IGNORED_PASSAGES.has(p.name));
         state.selected = Number.isFinite(Number(parsed.selected)) ? Number(parsed.selected) : 0;
         if (!state.passages.length) return false;
+        initializeStableBodySnapshots();
         state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
         state.vars = parseStoryInitGlobals(state.storyInitBody);
         el.formatText.textContent = `Type: ${state.format}`;
@@ -1663,6 +1893,38 @@ function restoreVisualEditorState() {
         return true;
     } catch (err) {
         console.warn('[visual-editor] Failed to restore state', err);
+        return false;
+    }
+}
+
+function restoreBootStoryFromViewer() {
+    try {
+        const raw = localStorage.getItem(VIEWER_EDITOR_BOOT_STORY_KEY);
+        if (!raw) return false;
+        localStorage.removeItem(VIEWER_EDITOR_BOOT_STORY_KEY);
+        const parsed = JSON.parse(raw);
+        const html = String(parsed?.html || '');
+        if (!html.trim()) return false;
+        const story = parseHtmlStory(html);
+        state.format = 'html';
+        state.filename = String(parsed?.name || 'Viewer Story.html');
+        state.sourceHtmlTemplate = story.template;
+        state.passages = story.passages.filter((p) => !IGNORED_PASSAGES.has(p.name));
+        if (!state.passages.length) return false;
+        state.selected = 0;
+        state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
+        state.vars = parseStoryInitGlobals(state.storyInitBody);
+        initializeStableBodySnapshots();
+        setTextDirty(false);
+        setSceneDirty(false);
+        el.formatText.textContent = `Type: ${state.format}`;
+        updatePreviewStoryButton();
+        renderPassageList();
+        persistVisualEditorState();
+        setStatus(`Loaded from viewer: ${state.filename}`);
+        return true;
+    } catch (err) {
+        console.warn('[visual-editor] Failed to restore viewer boot story', err);
         return false;
     }
 }
@@ -1776,6 +2038,30 @@ function buildSceneFromPassage(passageBody, vars) {
     }
 }
 
+function validateDlMacroInPassage(passageBody, vars) {
+    const expr = extractDlExpr(passageBody);
+    if (!expr) return { ok: true, error: '' };
+    try {
+        const dl = evalWithVars(expr, vars);
+        if (!dl || typeof dl !== 'object') {
+            return { ok: false, error: '$DL must evaluate to an object.' };
+        }
+        return { ok: true, error: '' };
+    } catch (err) {
+        return { ok: false, error: err?.message || String(err) };
+    }
+}
+
+function didCameraSpecChange(prevRaw, nextRaw) {
+    const prevScene = buildSceneFromPassage(prevRaw, state.vars) || {};
+    const nextScene = buildSceneFromPassage(nextRaw, state.vars) || {};
+    const prevCam = (prevScene.camera && typeof prevScene.camera === 'object') ? prevScene.camera : null;
+    const nextCam = (nextScene.camera && typeof nextScene.camera === 'object') ? nextScene.camera : null;
+    if (!prevCam && !nextCam) return false;
+    if (!prevCam || !nextCam) return true;
+    return !cameraSpecsEqual(prevCam, nextCam);
+}
+
 function toPrettyDlExpression(dl) {
     return JSON.stringify(dl, null, 2);
 }
@@ -1798,6 +2084,10 @@ function writeDlExprToPassage(body, dlExpr) {
 }
 
 function destroyPanel() {
+    if (state.sceneSyncTimer) {
+        clearTimeout(state.sceneSyncTimer);
+        state.sceneSyncTimer = 0;
+    }
     if (state.previewRaf) {
         cancelAnimationFrame(state.previewRaf);
         state.previewRaf = 0;
@@ -1843,7 +2133,9 @@ function refreshModelSelect() {
         el.modelSelect.appendChild(opt);
         el.modelSelect.disabled = true;
         if (el.gizmoMode) el.gizmoMode.disabled = true;
-        state.selectedModelKey = null;
+        if (state.selectedModelKey !== BACKGROUND_KEY) {
+            state.selectedModelKey = null;
+        }
         if (el.saveSceneBtn) el.saveSceneBtn.disabled = true;
         refreshSelectedModelBadge();
         refreshFloatingDeleteButton();
@@ -1874,8 +2166,13 @@ function refreshModelSelect() {
 
 function setupSceneEditor() {
     if (!state.panel?.three) return;
+    state.panel.three.setMouseTiltEnabled?.(false);
+    // Enable editor-specific speech bubble behavior (live model-following anchors,
+    // deterministic editor stacking, debug target visibility).
+    state.panel.editorEnabled = true;
     state.panel.three.enableEditorTools?.({
         onChange: () => {
+            syncSceneToBodyNow();
             setSceneDirty(true);
         },
         onSelect: (key) => {
@@ -1907,9 +2204,49 @@ function getSceneSnapshotForSave() {
     return state.panel?.three?.getEditableSceneSnapshot?.() || null;
 }
 
+function composeBodyWithCurrentSceneSnapshot(baseBody) {
+    let nextBody = String(baseBody || '');
+    const snapshot = getSceneSnapshotForSave();
+    if (!snapshot) return nextBody;
+    const scene = buildSceneFromPassage(nextBody, state.vars) || {};
+    const selectedBackgroundName = String(el.selectedBackgroundSelect?.value || '').trim();
+    const selectedSkyColor = String(el.selectedSkyColorInput?.value || '').trim();
+    scene.objects = snapshot.objects || [];
+    if (/^#[0-9a-f]{6}$/i.test(selectedSkyColor)) {
+        scene.skyColor = selectedSkyColor;
+    }
+    const bgPrev = (scene.background && typeof scene.background === 'object')
+        ? { ...scene.background }
+        : {};
+    const selectedName = selectedBackgroundName && selectedBackgroundName.toLowerCase() !== 'none'
+        ? selectedBackgroundName
+        : '';
+    if (snapshot.background && typeof snapshot.background === 'object') {
+        scene.background = {
+            ...bgPrev,
+            ...snapshot.background,
+            name: selectedName || snapshot.background.name || snapshot.background.model || bgPrev.name || 'none',
+        };
+    } else {
+        scene.background = {
+            ...bgPrev,
+            name: selectedName || bgPrev.name || 'none',
+        };
+    }
+    nextBody = writeDlExprToPassage(nextBody, toPrettyDlExpression(scene));
+    const passageKey = getCurrentPassageKey();
+    const aspectDirty = Boolean(passageKey && state.aspectDirtyByPassage[passageKey]);
+    if (aspectDirty && Number.isFinite(state.panelAspectOverride) && state.panelAspectOverride > 0) {
+        nextBody = upsertPanelAspectCommand(nextBody, state.panelAspectOverride);
+    }
+    return nextBody;
+}
+
 function saveSceneTransformsToPassage() {
     const p = state.passages[state.selected];
     if (!p || !state.panel?.three) return;
+    const passageKey = getCurrentPassageKey();
+    ensureStableBodySnapshot(state.selected);
     const prevBody = String(p.body || '');
     let nextBody = prevBody;
     if (state.hasTextEdits) {
@@ -1919,50 +2256,34 @@ function saveSceneTransformsToPassage() {
 
     let savedSceneCount = null;
     if (state.hasSceneEdits) {
-        const snapshot = getSceneSnapshotForSave();
-        if (!snapshot) {
+        if (!getSceneSnapshotForSave()) {
             setStatus('No editable scene to save.');
             return;
         }
-        const scene = buildSceneFromPassage(nextBody, state.vars) || {};
-        const selectedBackgroundName = String(el.selectedBackgroundSelect?.value || '').trim();
-        const selectedSkyColor = String(el.selectedSkyColorInput?.value || '').trim();
-        scene.objects = snapshot.objects || [];
-        scene.camera = snapshot.camera || null;
-        if (/^#[0-9a-f]{6}$/i.test(selectedSkyColor)) {
-            scene.skyColor = selectedSkyColor;
-        }
-        if (snapshot.background && (snapshot.background.name || snapshot.background.model || selectedBackgroundName)) {
-            scene.background = {
-                ...snapshot.background,
-                name: snapshot.background.name || selectedBackgroundName || snapshot.background.model || '',
-            };
-        } else if (selectedBackgroundName) {
-            scene.background = { name: selectedBackgroundName };
-        } else {
-            delete scene.background;
-        }
-        nextBody = writeDlExprToPassage(nextBody, toPrettyDlExpression(scene));
-        if (Number.isFinite(state.panelAspectOverride) && state.panelAspectOverride > 0) {
-            nextBody = upsertPanelAspectCommand(nextBody, state.panelAspectOverride);
-        }
-        savedSceneCount = scene.objects.length;
+        const snapshot = getSceneSnapshotForSave();
+        nextBody = composeBodyWithCurrentSceneSnapshot(nextBody);
+        savedSceneCount = snapshot?.objects?.length || 0;
     }
 
     if (nextBody !== prevBody) {
         p.body = nextBody;
         el.passageBody.value = nextBody;
+        if (passageKey) state.stableBodyByPassage[passageKey] = nextBody;
+        if (passageKey) state.aspectDirtyByPassage[passageKey] = false;
         persistVisualEditorState();
         if (savedSceneCount == null) {
             setStatus(`Saved text updates in "${p.name}".`);
         } else {
-            setStatus(`Saved ${savedSceneCount} model transforms + camera + environment to "$DL" in "${p.name}".`);
+            setStatus(`Saved ${savedSceneCount} model transforms + environment to "$DL" in "${p.name}".`);
         }
     } else {
+        if (passageKey) state.stableBodyByPassage[passageKey] = nextBody;
+        if (passageKey) state.aspectDirtyByPassage[passageKey] = false;
         setStatus('No changes to save.');
     }
     setTextDirty(false);
     setSceneDirty(false);
+    refreshRevertSceneButton();
 }
 
 function startPreviewLoop() {
@@ -2033,6 +2354,7 @@ function refreshPanelAspectHandle() {
 function renderPreview() {
     const p = state.passages[state.selected];
     if (!p || !el.stage) return;
+    ensureStableBodySnapshot(state.selected);
     const scene = buildSceneFromPassage(p.body, state.vars);
     const inlineAspect = extractPanelAspectCommand(p.body);
     state.panelAspectOverride = Number.isFinite(inlineAspect) ? inlineAspect : (16 / 9);
@@ -2065,6 +2387,7 @@ function renderPreview() {
         ? plainTextToHtml(state.textDraft.narrationRaw || '')
         : '&#8203;';
     state.panel = new Panel(curr, target, `visual_${Date.now()}`, narrationForPanel, -1, scene, 'narration', topInset);
+    state.panel?.three?.setMouseTiltEnabled?.(false);
     if (state.panel?.three?.scene) {
         state.panel.three.scene.background = new THREE.Color(env.skyColor);
     }
@@ -2095,6 +2418,7 @@ function renderPreview() {
     refreshPanelAspectHandle();
     refreshFloatingDeleteButton();
     refreshCameraButtons();
+    refreshRevertSceneButton();
     wireInlineTextEditors();
     refreshSpeechBubbleDeleteButtons();
     if (!String(el.status?.textContent || '').includes('editor tools unavailable')) {
@@ -2147,6 +2471,7 @@ async function loadFile(file) {
     }
     state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
     state.vars = parseStoryInitGlobals(state.storyInitBody);
+    initializeStableBodySnapshots();
     state.selected = 0;
     setTextDirty(false);
     setSceneDirty(false);
@@ -2316,8 +2641,8 @@ el.saveCameraBtn?.addEventListener('click', () => {
     if (!key) return;
     const spec = three.getCameraSpecSnapshot();
     state.savedCameraByPassage[key] = cloneSceneSpec(spec);
-    setSceneDirty(true);
-    setStatus('Saved camera position for this passage. Press Save Scene to persist.');
+    setStatus('Saved camera position for this passage.');
+    refreshCameraButtons();
 });
 
 el.revertCameraBtn?.addEventListener('click', () => {
@@ -2340,8 +2665,18 @@ el.revertCameraBtn?.addEventListener('click', () => {
         return;
     }
     three.setCameraSpec?.(cloneSceneSpec(spec));
-    setSceneDirty(true);
-    setStatus('Reverted camera. Press Save Scene to persist.');
+    setStatus('Reverted camera.');
+    refreshCameraButtons();
+});
+
+el.focusModelBtn?.addEventListener('click', () => {
+    const three = state.panel?.three;
+    const key = String(state.selectedModelKey || '').trim();
+    if (!three || !key) return;
+    const focused = three.focusEditableModelByKey?.(key);
+    if (!focused) return;
+    setStatus(`Focused view on "${key}".`);
+    refreshCameraButtons();
 });
 
 el.addModelBtn?.addEventListener('click', () => {
@@ -2370,22 +2705,29 @@ el.floatingAddSpeechBtn?.addEventListener('click', () => {
     updatePanelFromTextDraft();
     setTextDirty(true);
     wireInlineTextEditors();
-    const draftSpeaker = state.textDraft.speakers[state.textDraft.speakers.length - 1];
+    const idx = getLastSpeechDraftIndex();
+    if (idx < 0) return;
+    const draftSpeaker = state.textDraft.speakers?.[idx];
     if (!draftSpeaker) return;
-    const idx = state.textDraft.speakers.indexOf(draftSpeaker);
+    const draftSourceIndex = Number.isFinite(Number(draftSpeaker.sourceIndex)) ? Number(draftSpeaker.sourceIndex) : null;
     const bubble = idx >= 0 ? state.panel?.speechEls?.[idx] : null;
     if (bubble) {
         openInlineTextEditor(
             bubble,
             () => String(getSpeakerPayloadFromRaw(draftSpeaker.raw || '', draftSpeaker.speaker || speaker)),
             (val) => {
-                const i = state.textDraft.speakers.indexOf(draftSpeaker);
+                const i = idx;
                 if (i < 0) return;
-                const oldRaw = String(state.textDraft.speakers[i].raw || '');
-                const raw = withSpeakerTag(String(val || ''), state.textDraft.speakers[i].speaker || speaker, oldRaw).trim();
+                const sp = state.textDraft.speakers?.[i];
+                if (!sp) return;
+                const oldRaw = String(sp.raw || '');
+                const raw = withSpeakerTag(String(val || ''), sp.speaker || speaker, oldRaw).trim();
                 if (raw === oldRaw.trim()) return;
                 let visible = String(state.textDraft.narrationRaw || '');
-                if (!raw) {
+                const byIndex = replaceSpeakerBlockAtSourceIndex(visible, sp.sourceIndex, raw);
+                if (byIndex != null) {
+                    visible = byIndex;
+                } else if (!raw) {
                     const oldLine = oldRaw.split('\n').find((ln) => String(ln || '').trim()) || '';
                     visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
                 } else if (oldRaw && visible.includes(oldRaw)) {
@@ -2398,6 +2740,26 @@ el.floatingAddSpeechBtn?.addEventListener('click', () => {
                 refreshDraftFromPassageBody();
                 updatePanelFromTextDraft();
                 setTextDirty(true);
+            },
+            {
+                onCancel: () => {
+                    const visible = String(state.textDraft.narrationRaw || '');
+                    const fromIdx = state.textDraft.speakers?.find(
+                        (s) => Number.isFinite(Number(draftSourceIndex)) && Number(s?.sourceIndex) === Number(draftSourceIndex)
+                    );
+                    const fallback = state.textDraft.speakers?.[idx] || null;
+                    const target = fromIdx || fallback;
+                    if (!target) return;
+                    const payload = getSpeakerPayloadFromRaw(target.raw || '', target.speaker || speaker).trim();
+                    if (payload.length > 0) return;
+                    const removed = replaceSpeakerBlockAtSourceIndex(visible, target.sourceIndex, '');
+                    if (removed == null) return;
+                    state.textDraft.narrationRaw = removed;
+                    syncDraftIntoPassageBody();
+                    refreshDraftFromPassageBody();
+                    updatePanelFromTextDraft();
+                    setTextDirty(true);
+                },
             }
         );
     }
@@ -2471,12 +2833,22 @@ el.selectedDeleteModelBtn?.addEventListener('click', () => {
 el.clearSceneBtn?.addEventListener('click', () => {
     if (!state.panel?.three) return;
     const keys = state.panel.three.getEditableModelKeys?.() || [];
-    if (!keys.length) return;
+    const hadModels = keys.length > 0;
+    const hadBackground = Boolean(state.panel.three.getModelByKey?.(BACKGROUND_KEY));
+    if (!hadModels && !hadBackground) {
+        // Still force environment selection mode in an already-cleared scene.
+        state.selectedModelKey = BACKGROUND_KEY;
+        refreshSelectedModelBadge();
+        refreshFloatingDeleteButton();
+        return;
+    }
     const ok = window.confirm(`Clear ${keys.length} model${keys.length === 1 ? '' : 's'} from this scene?`);
     if (!ok) return;
     for (const key of keys) {
         state.panel.three.removeEditableModelByKey?.(key);
     }
+    updateCurrentPassageEnvironment({ backgroundName: 'none' });
+    state.selectedModelKey = BACKGROUND_KEY;
     setSceneDirty(true);
     refreshModelSelect();
     refreshSelectedModelBadge();
@@ -2487,6 +2859,29 @@ el.clearSceneBtn?.addEventListener('click', () => {
 el.saveSceneBtn?.addEventListener('click', () => {
     saveCurrentPassageBody();
     saveSceneTransformsToPassage();
+});
+
+el.revertSceneBtn?.addEventListener('click', () => {
+    const p = state.passages[state.selected];
+    if (!p) return;
+    const key = getCurrentPassageKey();
+    const stable = key ? state.stableBodyByPassage[key] : null;
+    if (typeof stable !== 'string') return;
+    if (stable === String(p.body || '')) {
+        refreshRevertSceneButton();
+        return;
+    }
+    p.body = stable;
+    if (el.passageBody) el.passageBody.value = stable;
+    refreshDraftFromPassageBody();
+    updatePanelFromTextDraft();
+    applySceneFromBodyLive(stable, { ignoreCamera: true });
+    renderPreviewLinks(parseLinkLabels(stable));
+    setTextDirty(false);
+    setSceneDirty(false);
+    persistVisualEditorState();
+    setStatus(`Reverted "${p.name}" to last saved scene.`);
+    refreshRevertSceneButton();
 });
 
 el.panelAspectHandle?.addEventListener('pointerdown', (event) => {
@@ -2511,6 +2906,8 @@ el.panelAspectHandle?.addEventListener('pointermove', (event) => {
         width: fitted.width,
         height: fitted.height,
     }, false);
+    const key = getCurrentPassageKey();
+    if (key) state.aspectDirtyByPassage[key] = true;
     refreshPanelAspectHandle();
     setSceneDirty(true);
 });
@@ -2566,15 +2963,6 @@ el.previewStoryBtn?.addEventListener('click', async () => {
     });
 });
 
-el.viewerLink?.addEventListener('click', async (event) => {
-    event.preventDefault();
-    await runWithUnsavedGuard(() => {
-        window.location.href = import.meta.env.BASE_URL || './';
-    }, {
-        onSave: () => saveSceneTransformsToPassage(),
-    });
-});
-
 window.addEventListener('resize', onResize);
 window.addEventListener('beforeunload', () => {
     persistVisualEditorState();
@@ -2598,6 +2986,6 @@ updatePreviewStoryButton();
 
 initDebugMode();
 
-if (!restoreVisualEditorState()) {
+if (!restoreBootStoryFromViewer() && !restoreVisualEditorState()) {
     setStatus('Load a file to start visual passage preview.');
 }

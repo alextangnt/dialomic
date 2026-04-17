@@ -1,5 +1,11 @@
 import * as THREE from 'three';
 
+// Global debug toggle for projected speaker target circles.
+export let SPEECH_BUBBLE_DEBUG_TARGET = false;
+export function setSpeechBubbleDebugTarget(enabled) {
+    SPEECH_BUBBLE_DEBUG_TARGET = Boolean(enabled);
+}
+
 export function stripLeadingHtmlWhitespace(html) {
     if (!html) return '';
     const container = document.createElement('div');
@@ -49,6 +55,12 @@ export class SpeechBubbleLayout {
     }
 
     sync(elements, speakers) {
+        const prevItems = this.items || [];
+        const reused = new Set(elements);
+        for (const prev of prevItems) {
+            if (!prev?.debugTargetEl) continue;
+            if (!reused.has(prev.el)) prev.debugTargetEl.remove();
+        }
         this.items = elements.map((el, index) => {
             const existing = this.items[index];
             const canReuse = existing?.el === el;
@@ -84,8 +96,98 @@ export class SpeechBubbleLayout {
                 lastAnchorX: canReuse ? (existing?.lastAnchorX ?? null) : null,
                 lastAnchorY: canReuse ? (existing?.lastAnchorY ?? null) : null,
                 narrationSide: canReuse ? (existing?.narrationSide ?? null) : null,
+                debugTargetEl: canReuse ? (existing?.debugTargetEl ?? null) : null,
             };
         });
+    }
+
+    shouldShowDebugTarget() {
+        return Boolean(SPEECH_BUBBLE_DEBUG_TARGET);
+    }
+
+    ensureDebugTargetEl(item) {
+        if (!item) return null;
+        if (item.debugTargetEl?.isConnected) return item.debugTargetEl;
+        const el = document.createElement('div');
+        el.setAttribute('aria-hidden', 'true');
+        el.style.position = 'fixed';
+        el.style.pointerEvents = 'none';
+        el.style.zIndex = '2147483647';
+        el.style.border = '2px dashed rgba(255, 84, 84, 0.95)';
+        el.style.background = 'rgba(255, 84, 84, 0.12)';
+        el.style.borderRadius = '999px';
+        el.style.boxSizing = 'border-box';
+        el.style.display = 'none';
+        document.body.appendChild(el);
+        item.debugTargetEl = el;
+        return el;
+    }
+
+    updateDebugTarget(item, cx, cy, r) {
+        const marker = this.ensureDebugTargetEl(item);
+        if (!marker) return;
+        const canvasRect = this.panel?.canvas?.getBoundingClientRect?.();
+        const panelVisible = Boolean(
+            this.panel?.onScreen &&
+            this.panel?.canvas &&
+            this.panel.canvas.style.display !== 'none' &&
+            canvasRect &&
+            canvasRect.width > 0 &&
+            canvasRect.height > 0 &&
+            canvasRect.right > 0 &&
+            canvasRect.bottom > 0 &&
+            canvasRect.left < window.innerWidth &&
+            canvasRect.top < window.innerHeight
+        );
+        if (
+            !this.shouldShowDebugTarget() ||
+            !panelVisible ||
+            !Number.isFinite(cx) ||
+            !Number.isFinite(cy) ||
+            !Number.isFinite(r) ||
+            r <= 0
+        ) {
+            marker.style.display = 'none';
+            return;
+        }
+        const radius = Math.max(6, r);
+        marker.style.display = 'block';
+        // Keep debug marker just above this panel's speech layer.
+        const layerBase = Number.isFinite(this.panel?.speechLayerBaseZ) ? this.panel.speechLayerBaseZ : 300;
+        marker.style.zIndex = String(layerBase + 10);
+        marker.style.left = `${cx - radius}px`;
+        marker.style.top = `${cy - radius}px`;
+        marker.style.width = `${radius * 2}px`;
+        marker.style.height = `${radius * 2}px`;
+    }
+
+    getClosestTipOnCircle(centerX, centerY, radius, bubbleRect) {
+        if (![centerX, centerY, radius].every((n) => Number.isFinite(n)) || radius <= 0) {
+            return { x: centerX, y: centerY };
+        }
+        const base = this.getTailBaseCenterWorld(bubbleRect, centerX, centerY);
+        let dx = base.x - centerX;
+        let dy = base.y - centerY;
+        const len = Math.hypot(dx, dy);
+        if (len < 0.001) {
+            dx = 0;
+            dy = -1;
+        } else {
+            dx /= len;
+            dy /= len;
+        }
+        return {
+            x: centerX + dx * radius,
+            y: centerY + dy * radius,
+        };
+    }
+
+    getSpeakerRadius(speakerRect, fallback = 10) {
+        if (!speakerRect) return fallback;
+        const w = speakerRect.right - speakerRect.left;
+        const h = speakerRect.bottom - speakerRect.top;
+        // Radius from average of horizontal and vertical screen dimensions.
+        return Math.max(6, (w + h) * 0.25);
     }
 
     freezeForPanelExit() {
@@ -131,6 +233,10 @@ export class SpeechBubbleLayout {
         if (!speakerKey) return null;
         const bounds = this.panel.three?.getModelBoundsByKey(speakerKey);
         if (!bounds) return null;
+        const logicalW = Math.max(1, this.panel.canvas?.clientWidth || this.panel.data?.width || canvasRect.width || 1);
+        const logicalH = Math.max(1, this.panel.canvas?.clientHeight || this.panel.data?.height || canvasRect.height || 1);
+        const sx = canvasRect.width / logicalW;
+        const sy = canvasRect.height / logicalH;
         const box = bounds.box;
         const corners = [
             new THREE.Vector3(box.min.x, box.min.y + yOffset, box.min.z),
@@ -148,8 +254,8 @@ export class SpeechBubbleLayout {
         let maxY = -Infinity;
         for (const c of corners) {
             const s = this.panel.three.worldToScreen(c);
-            const x = canvasRect.left + s.x;
-            const y = canvasRect.top + s.y;
+            const x = canvasRect.left + s.x * sx;
+            const y = canvasRect.top + s.y * sy;
             minX = Math.min(minX, x);
             maxX = Math.max(maxX, x);
             minY = Math.min(minY, y);
@@ -201,16 +307,53 @@ export class SpeechBubbleLayout {
         };
     }
 
-    applyTriangleTail(el, bubbleLeft, bubbleTop, bubbleWidth, bubbleHeight, anchorX, anchorY, canvasRect = null) {
+    getImmediateSpeakerCircle(speakerRect) {
+        if (!speakerRect) return null;
+        const cx = (speakerRect.left + speakerRect.right) / 2;
+        const cy = (speakerRect.top + speakerRect.bottom) / 2;
+        const r = Math.max(1, Math.min(speakerRect.right - speakerRect.left, speakerRect.bottom - speakerRect.top) / 2);
+        return { cx, cy, r };
+    }
+
+    getLiveModelScreenAnchor(speakerKey, canvasRect, speakerRect = null) {
+        if (!speakerKey) return null;
+        const three = this.panel?.three;
+        const model = three?.getModelByKey?.(speakerKey);
+        if (!model || !three?.worldToScreen) return null;
+        model.updateMatrixWorld?.(true);
+        const bounds = three.getModelBoundsByKey?.(speakerKey);
+        const world = new THREE.Vector3();
+        if (bounds?.center?.isVector3) {
+            world.copy(bounds.center);
+        } else {
+            model.getWorldPosition(world);
+        }
+        // Always project from the current active viewport camera.
+        const screen = three.worldToScreen(world);
+        let x = canvasRect.left + screen.x;
+        let y = canvasRect.top + screen.y;
+        if (speakerRect) {
+            const centerX = (speakerRect.left + speakerRect.right) / 2;
+            const centerY = (speakerRect.top + speakerRect.bottom) / 2;
+            if (!Number.isFinite(x)) x = centerX;
+            if (!Number.isFinite(y)) y = centerY;
+        }
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return { x, y };
+    }
+
+    applyTriangleTail(el, bubbleLeft, bubbleTop, bubbleWidth, bubbleHeight, anchorX, anchorY, canvasRect = null, opts = {}) {
         if (!el) return;
         const tail = el.querySelector('.speech-tail');
         const tailBorder = el.querySelector('.speech-tail-border');
         if (!tail || !tailBorder) return;
 
-        const minX = canvasRect ? (canvasRect.left + 4) : Number.NEGATIVE_INFINITY;
-        const maxX = canvasRect ? (canvasRect.right - 4) : Number.POSITIVE_INFINITY;
-        const minY = canvasRect ? (canvasRect.top + 4) : Number.NEGATIVE_INFINITY;
-        const maxY = canvasRect ? (canvasRect.bottom - 4) : Number.POSITIVE_INFINITY;
+        const clampX = opts?.clampX !== false;
+        const clampY = opts?.clampY !== false;
+        const minX = (canvasRect && clampX) ? (canvasRect.left + 4) : Number.NEGATIVE_INFINITY;
+        const maxX = (canvasRect && clampX) ? (canvasRect.right - 4) : Number.POSITIVE_INFINITY;
+        const minY = (canvasRect && clampY) ? (canvasRect.top + 4) : Number.NEGATIVE_INFINITY;
+        const maxY = (canvasRect && clampY) ? (canvasRect.bottom - 4) : Number.POSITIVE_INFINITY;
         const tipX = Math.max(minX, Math.min(maxX, anchorX));
         const tipY = Math.max(minY, Math.min(maxY, anchorY));
 
@@ -483,7 +626,9 @@ export class SpeechBubbleLayout {
         const hardLeftBound = 6;
         const hardRightBound = Math.max(hardLeftBound + 24, window.innerWidth - 6);
         const hardTopBound = 6;
-        const hardBottomBound = Math.max(hardTopBound + 24, (choiceTop != null ? (choiceTop - 8) : (window.innerHeight - 8)) + 24);
+        const hardBottomBound = this.panel?.editorEnabled
+            ? Math.max(hardTopBound + 24, window.innerHeight - 6)
+            : Math.max(hardTopBound + 24, (choiceTop != null ? (choiceTop - 8) : (window.innerHeight - 8)) + 24);
         const narrationRect = this.panel.narrationEl.getBoundingClientRect();
         const maxWidth = Math.min(this.maxWidth, rightBound - leftBound);
         const placed = [];
@@ -566,7 +711,7 @@ export class SpeechBubbleLayout {
             const activeIndex = this.panel.three?.speakerAnim?.index ?? -1;
             const isActiveLine = activeIndex === idx;
             const isSpeaking = Boolean(speakerModel?.userData?.speaking) && isActiveLine;
-            const hopDelta = speakerModel && Number.isFinite(speakerModel.userData?.baseY)
+            const hopDelta = speakerModel && Number.isFinite(speakerModel.userData?.baseY) && !this.panel?.editorEnabled
                 ? speakerModel.position.y - speakerModel.userData.baseY
                 : 0;
             const speakerRect = this.getSpeakerRect(speakerKey, canvasRect, -hopDelta);
@@ -584,16 +729,23 @@ export class SpeechBubbleLayout {
             if (speakerRect) {
                 const targetAnchorX = (speakerRect.left + speakerRect.right) / 2;
                 const targetAnchorY = speakerRect.top;
-                if (!item.anchorNorm) {
+                if (this.panel?.editorEnabled) {
+                    item.anchorNorm = null;
+                    anchorXLive = targetAnchorX;
+                    anchorYLive = targetAnchorY;
+                } else if (!item.anchorNorm) {
                     item.anchorNorm = {
                         x: (targetAnchorX - canvasRect.left) / canvasRect.width,
                         y: (targetAnchorY - canvasRect.top) / canvasRect.height,
                     };
+                    anchorXLive = targetAnchorX;
+                    anchorYLive = targetAnchorY;
+                } else {
+                    anchorXLive = targetAnchorX;
+                    anchorYLive = targetAnchorY;
                 }
-                anchorXLive = targetAnchorX;
-                anchorYLive = targetAnchorY;
             }
-            if (item.anchorNorm) {
+            if (!this.panel?.editorEnabled && item.anchorNorm) {
                 anchorX = canvasRect.left + item.anchorNorm.x * canvasRect.width;
                 anchorY = canvasRect.top + item.anchorNorm.y * canvasRect.height;
             }
@@ -607,7 +759,11 @@ export class SpeechBubbleLayout {
             }
             item.lastAnchorX = anchorXLive ?? anchorX;
             item.lastAnchorY = anchorYLive ?? anchorY;
-            const speakerCircle = speakerOffscreen ? null : this.getSpeakerCircle(item, speakerRect, canvasRect);
+            const speakerCircle = speakerOffscreen
+                ? null
+                : (this.panel?.editorEnabled
+                    ? this.getImmediateSpeakerCircle(speakerRect)
+                    : this.getSpeakerCircle(item, speakerRect, canvasRect));
             const speakerMidY = speakerCircle
                 ? speakerCircle.cy
                 : (speakerRect ? (speakerRect.top + speakerRect.bottom) / 2 : anchorY);
@@ -721,6 +877,140 @@ export class SpeechBubbleLayout {
             b.y = Math.max(hardTopBound, Math.min(hardBottomBound - b.h, b.y));
         };
         const verticalDeadzone = 1.25;
+
+        // In visual editor mode, keep bubbles anchored over speaker heads with a
+        // simple deterministic layout (no free-form physics wandering).
+        if (this.panel?.editorEnabled) {
+            const editorStacks = new Map();
+            for (const b of bubbles) {
+                const stackKey = b.speakerKey || `__bubble_${b.idx}`;
+                if (!editorStacks.has(stackKey)) editorStacks.set(stackKey, []);
+                editorStacks.get(stackKey).push(b);
+            }
+            for (const arr of editorStacks.values()) {
+                arr.sort((a, b) => (a.lineOrder || 0) - (b.lineOrder || 0));
+                let total = 0;
+                const offsetByIdx = new Map();
+                for (let i = 0; i < arr.length; i++) {
+                    const h = arr[i]?.rect?.height || arr[i]?.h || 0;
+                    offsetByIdx.set(arr[i].idx, total);
+                    total += h;
+                    if (i < arr.length - 1) total += 8;
+                }
+                arr.__totalHeight = total;
+                arr.__offsetByIdx = offsetByIdx;
+            }
+            const minModelGap = Math.max(12, this.tailPad);
+            for (const b of bubbles) {
+                const { item, el, rect, speakerRect, speakerCircle, speakerKey } = b;
+                // In editor mode, always read a fresh live anchor from the current model transform.
+                const liveRect = this.getSpeakerRect(speakerKey, canvasRect, 0) || speakerRect;
+                const liveCircle = this.getImmediateSpeakerCircle(liveRect) || speakerCircle;
+                const liveModelAnchor = this.getLiveModelScreenAnchor(speakerKey, canvasRect, liveRect);
+                const modelAnchorX = liveModelAnchor?.x ?? null;
+                const modelAnchorY = liveModelAnchor?.y ?? null;
+                const rectAnchorX = liveRect ? ((liveRect.left + liveRect.right) / 2) : null;
+                const rectTopY = liveRect ? liveRect.top : null;
+                const rectCenterY = liveRect ? ((liveRect.top + liveRect.bottom) / 2) : null;
+                // Bubble body in editor should follow model transform directly.
+                let liveAnchorX = Number.isFinite(modelAnchorX)
+                    ? modelAnchorX
+                    : (Number.isFinite(rectAnchorX) ? rectAnchorX : (b.anchorXLive ?? b.anchorX));
+                let liveTopY = liveRect ? liveRect.top : (b.anchorYLive ?? b.anchorY);
+                if (!Number.isFinite(liveTopY)) {
+                    liveTopY = Number.isFinite(rectTopY)
+                        ? rectTopY
+                        : (Number.isFinite(modelAnchorY) ? modelAnchorY : (b.anchorYLive ?? b.anchorY));
+                }
+                // Tail tip follows projected model center each frame (transform live), falling back to rect center.
+                let liveCenterY = Number.isFinite(modelAnchorY)
+                    ? modelAnchorY
+                    : (Number.isFinite(rectCenterY) ? rectCenterY : (b.anchorYLive ?? b.anchorY));
+                if (!Number.isFinite(liveAnchorX) || !Number.isFinite(liveTopY) || !Number.isFinite(liveCenterY)) {
+                    liveAnchorX = Number.isFinite(item.lastAnchorX) ? item.lastAnchorX : b.anchorX;
+                    liveTopY = Number.isFinite(item.lastAnchorY) ? item.lastAnchorY : b.anchorY;
+                    liveCenterY = Number.isFinite(item.lastAnchorY) ? item.lastAnchorY : b.anchorY;
+                }
+                const anchorX = Number.isFinite(liveAnchorX)
+                    ? liveAnchorX
+                    : (Number.isFinite(item.lastAnchorX) ? item.lastAnchorX : b.anchorX);
+                const anchorTopY = Number.isFinite(liveTopY)
+                    ? liveTopY
+                    : (Number.isFinite(item.lastAnchorY) ? item.lastAnchorY : b.anchorY);
+                const anchorCenterY = Number.isFinite(liveCenterY)
+                    ? liveCenterY
+                    : anchorTopY;
+                const speakerRadius = this.getSpeakerRadius(liveRect, 10);
+                const bodyCenterX = Number.isFinite(modelAnchorX) ? modelAnchorX : anchorX;
+                const bodyCenterY = Number.isFinite(modelAnchorY) ? modelAnchorY : anchorCenterY;
+                const stackKey = speakerKey || `__bubble_${b.idx}`;
+                const stackArr = editorStacks.get(stackKey) || [];
+                const totalStackHeight = Number.isFinite(stackArr.__totalHeight) ? stackArr.__totalHeight : rect.height;
+                const offsetForThis = stackArr.__offsetByIdx?.get?.(b.idx) ?? 0;
+                // Editor-only bubble spawn:
+                // Keep a minimum gap from the speaker circle and stack lines vertically:
+                // first line is highest, subsequent lines render downward.
+                const baseBottomY = bodyCenterY - speakerRadius - minModelGap;
+                const targetLeft = bodyCenterX - rect.width / 2;
+                const stackTop = baseBottomY - totalStackHeight;
+                const targetTop = stackTop + offsetForThis;
+
+                // In editor, keep placement deterministic on selection changes.
+                item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, targetLeft));
+                item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height, targetTop));
+                item.lastAnchorX = anchorX;
+                item.lastAnchorY = anchorCenterY;
+
+                item.lift = 0;
+                item.visualBelow = false;
+                item.isBelow = false;
+                el.style.left = `${item.x}px`;
+                el.style.top = `${item.y}px`;
+                const editorBaseZ = Number.isFinite(this.panel?.speechLayerBaseZ) ? this.panel.speechLayerBaseZ : 300;
+                const bubbleCenterX = item.x + rect.width * 0.5;
+                const bubbleCenterY = item.y + rect.height * 0.5;
+                const dist = Math.hypot(bubbleCenterX - bodyCenterX, bubbleCenterY - bodyCenterY);
+                const distScore = Math.max(0, 2200 - Math.round(dist * 3));
+                el.style.zIndex = `${editorBaseZ + distScore + (120 - Math.min(120, b.lineOrder || 0))}`;
+
+                const localWidth = el.offsetWidth || rect.width;
+                const localHeight = el.offsetHeight || rect.height;
+                const bubbleRectNow = {
+                    left: item.x,
+                    top: item.y,
+                    right: item.x + localWidth,
+                    bottom: item.y + localHeight,
+                };
+                const circleCenterX = Number.isFinite(modelAnchorX) ? modelAnchorX : anchorX;
+                const circleCenterY = Number.isFinite(modelAnchorY) ? modelAnchorY : anchorCenterY;
+                const circleRadius = Number.isFinite(liveCircle?.r)
+                    ? liveCircle.r
+                    : this.getSpeakerRadius(liveRect, 10);
+                this.updateDebugTarget(item, circleCenterX, circleCenterY, circleRadius);
+                // Tail tip anchors to the closest point on a radius-circle around the projected model center.
+                const tip = this.getClosestTipOnCircle(circleCenterX, circleCenterY, circleRadius, bubbleRectNow);
+                const viewportRect = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
+                this.applyTriangleTail(
+                    el,
+                    item.x,
+                    item.y,
+                    localWidth,
+                    localHeight,
+                    tip.x,
+                    tip.y,
+                    viewportRect,
+                    // Keep vertical viewport bounds for editor tails.
+                    { clampX: false, clampY: true }
+                );
+                const segBase = this.getTailBaseCenterWorld(bubbleRectNow, tip.x, tip.y);
+                tailSegments.push({
+                    from: { x: segBase.x, y: segBase.y },
+                    to: { x: tip.x, y: tip.y },
+                    speakerKey,
+                });
+            }
+            return;
+        }
 
         if (recomputeLayout && bubbles.length) {
             const iterations = 56;
@@ -901,7 +1191,7 @@ export class SpeechBubbleLayout {
             if (Math.abs(item.y - targetTop) < 0.2) item.y = targetTop;
 
             item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
-            item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+            item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height, item.y));
 
             const currentRect = { left: item.x, top: item.y, right: item.x + rect.width, bottom: item.y + rect.height };
             if (b.lineOrder > 0 && b.speakerKey) {
@@ -925,7 +1215,7 @@ export class SpeechBubbleLayout {
                     item.y = item.y + dyNarr * 0.22;
                 }
                 item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
-                item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+                item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height, item.y));
                 currentRect.left = item.x;
                 currentRect.right = item.x + rect.width;
                 currentRect.top = item.y;
@@ -941,7 +1231,7 @@ export class SpeechBubbleLayout {
                 const dirX = (currentRect.left + currentRect.right) * 0.5 < (prev.left + prev.right) * 0.5 ? -1 : 1;
                 item.x += dirX * (ox + 1.6);
                 item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
-                item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+                item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height, item.y));
                 currentRect.left = item.x;
                 currentRect.right = item.x + rect.width;
                 currentRect.top = item.y;
@@ -953,7 +1243,7 @@ export class SpeechBubbleLayout {
                         item.y += dirY * (oy + 1.6);
                     }
                     item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
-                    item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+                    item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height, item.y));
                     currentRect.left = item.x;
                     currentRect.right = item.x + rect.width;
                     currentRect.top = item.y;
@@ -979,7 +1269,7 @@ export class SpeechBubbleLayout {
                         }
                     }
                     item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
-                    item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+                    item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height, item.y));
                     currentRect.left = item.x;
                     currentRect.right = item.x + rect.width;
                     currentRect.top = item.y;
@@ -990,8 +1280,14 @@ export class SpeechBubbleLayout {
             el.style.left = `${item.x}px`;
             el.style.top = `${item.y}px`;
             const panelSpeechBase = Number.isFinite(this.panel?.speechLayerBaseZ) ? this.panel.speechLayerBaseZ : 300;
-            const yOrder = Math.max(-999, Math.min(999, Math.round(item.y - canvasRect.top)));
-            const z = panelSpeechBase + (visualBelowNow ? (1000 - yOrder) : (2000 + yOrder));
+            const bubbleCenterX = item.x + rect.width * 0.5;
+            const bubbleCenterY = item.y + rect.height * 0.5;
+            const liveModelAnchor = this.getLiveModelScreenAnchor(speakerKey, canvasRect, speakerRect);
+            const liveAnchorX = Number.isFinite(liveModelAnchor?.x) ? liveModelAnchor.x : (b.anchorXLive ?? b.anchorX);
+            const liveAnchorY = Number.isFinite(liveModelAnchor?.y) ? liveModelAnchor.y : (b.anchorYLive ?? b.anchorY);
+            const dist = Math.hypot(bubbleCenterX - liveAnchorX, bubbleCenterY - liveAnchorY);
+            const distScore = Math.max(0, 2200 - Math.round(dist * 3));
+            const z = panelSpeechBase + distScore + (120 - Math.min(120, b.lineOrder || 0));
             el.style.zIndex = `${z}`;
             el.dataset.isBelow = '';
             el.style.outline = '';
@@ -1005,16 +1301,32 @@ export class SpeechBubbleLayout {
                 right: item.x + localWidth,
                 bottom: item.y + localHeight,
             };
+            const liveSpeakerRadius = Number.isFinite(speakerCircle?.r)
+                ? speakerCircle.r
+                : this.getSpeakerRadius(speakerRect, 10);
+            const liveSpeakerCircle = {
+                cx: liveAnchorX,
+                cy: liveAnchorY,
+                r: liveSpeakerRadius,
+            };
+            const closestTip = this.getClosestTipOnCircle(
+                liveSpeakerCircle.cx,
+                liveSpeakerCircle.cy,
+                liveSpeakerCircle.r,
+                bubbleRectNow
+            );
             const tip = this.getTailTipWithAvoidance(
-                b.anchorXLive ?? b.anchorX,
-                b.anchorYLive ?? b.anchorY,
-                speakerRect,
-                speakerCircle,
+                closestTip.x,
+                closestTip.y,
+                null,
+                liveSpeakerCircle,
                 bubbleRectNow,
-                { left: leftBound, top: topBound, right: rightBound, bottom: bottomBound },
+                // Clamp tails to viewport bounds in both axes.
+                { left: hardLeftBound, top: hardTopBound, right: hardRightBound, bottom: hardBottomBound },
                 tailSegments,
                 speakerKey
             );
+            this.updateDebugTarget(item, liveSpeakerCircle.cx, liveSpeakerCircle.cy, liveSpeakerCircle.r);
             this.applyTriangleTail(
                 el,
                 item.x,
@@ -1023,7 +1335,8 @@ export class SpeechBubbleLayout {
                 localHeight,
                 tip.x,
                 tip.y,
-                canvasRect
+                canvasRect,
+                { clampY: true }
             );
             const segBase = this.getTailBaseCenterWorld(bubbleRectNow, tip.x, tip.y);
             tailSegments.push({

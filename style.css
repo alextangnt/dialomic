@@ -304,15 +304,43 @@ iframe {
     font-family: inherit;
 }
 
-#storyToggleBtn {
+#defaultStorySelect {
     background: #3567a8;
+    border: 2px solid #214b82;
     border-color: #214b82;
     color: #eef5ff;
     box-shadow: 0 2px 0 #214b82;
-    border-radius: 999px;
+    border-radius: 8px;
     padding: 6px 14px;
     min-width: 164px;
     text-align: center;
+    outline: none;
+    appearance: none;
+    -webkit-appearance: none;
+    font-family: inherit;
+    font-size: 12px;
+}
+
+#defaultStorySelect:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 #214b82;
+}
+
+#defaultStorySelect:active {
+    transform: translateY(0);
+    box-shadow: 0 2px 0 #214b82;
+}
+
+#defaultStorySelect:focus,
+#defaultStorySelect:focus-visible {
+    outline: none;
+    border-color: #214b82;
+    box-shadow: 0 2px 0 #214b82;
+}
+
+#defaultStorySelect option {
+    color: #1a2430;
+    background: #fff;
 }
 
 #editorLink {
