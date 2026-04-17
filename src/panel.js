@@ -414,18 +414,18 @@ export class ThreeScene {
         const target = this.editorOrbitControls?.target?.clone() || this.cameraBaseLookTarget.clone();
         return {
             position: [
-                Number(this.camera.position.x.toFixed(4)),
-                Number(this.camera.position.y.toFixed(4)),
-                Number(this.camera.position.z.toFixed(4)),
+                Number(this.camera.position.x),
+                Number(this.camera.position.y),
+                Number(this.camera.position.z),
             ],
             target: [
-                Number(target.x.toFixed(4)),
-                Number(target.y.toFixed(4)),
-                Number(target.z.toFixed(4)),
+                Number(target.x),
+                Number(target.y),
+                Number(target.z),
             ],
-            fov: Number(this.camera.fov.toFixed(4)),
-            near: Number(this.camera.near.toFixed(5)),
-            far: Number(this.camera.far.toFixed(3)),
+            fov: Number(this.camera.fov),
+            near: Number(this.camera.near),
+            far: Number(this.camera.far),
         };
     }
 
@@ -508,8 +508,8 @@ export class ThreeScene {
         this.editorOrbitControls.zoomSpeed = 0.6;
         this.editorOrbitControls.panSpeed = 0.55;
         this.editorOrbitControls.screenSpacePanning = true;
-        this.editorOrbitControls.minDistance = 0.25;
-        this.editorOrbitControls.maxDistance = 60;
+        this.editorOrbitControls.minDistance = 0;
+        this.editorOrbitControls.maxDistance = Infinity;
         this.editorOrbitControls.maxPolarAngle = Math.PI * 0.98;
         // Start from the current camera view (matches what user is seeing),
         // rather than forcing a distant default look target.
@@ -586,13 +586,6 @@ export class ThreeScene {
             }
         }
         if (!has) return;
-        const size = new THREE.Vector3();
-        const center = new THREE.Vector3();
-        box.getSize(size);
-        box.getCenter(center);
-        const radius = Math.max(0.5, size.length() * 0.35);
-        this.editorOrbitControls.minDistance = Math.max(0.2, radius * 0.2);
-        this.editorOrbitControls.maxDistance = Math.max(8, radius * 12);
         // Do not retarget camera automatically in editor bounds sync.
         // Retargeting makes initial framing diverge from viewer framing.
     }
@@ -2019,13 +2012,23 @@ export class Panel {
             el.style.width = 'auto';
             el.style.fontSize = `${speechType.fontSize}px`;
             el.style.lineHeight = `${speechType.lineHeight}px`;
-            el.innerHTML = stripLeadingHtmlWhitespace(entry.html || '');
+            const body = document.createElement('div');
+            body.className = 'speech-body';
+            const measure = document.createElement('div');
+            measure.className = 'speech-content-measure';
+            measure.innerHTML = stripLeadingHtmlWhitespace(entry.html || '');
+            const content = document.createElement('div');
+            content.className = 'speech-content';
+            content.innerHTML = stripLeadingHtmlWhitespace(entry.html || '');
             const tailBorder = document.createElement('span');
             tailBorder.className = 'speech-tail-border';
             const tail = document.createElement('span');
             tail.className = 'speech-tail';
+            body.appendChild(measure);
             el.appendChild(tailBorder);
+            el.appendChild(body);
             el.appendChild(tail);
+            el.appendChild(content);
             document.body.appendChild(el);
             this.speechEls.push(el);
             el.style.zIndex = `${this.speechLayerBaseZ}`;

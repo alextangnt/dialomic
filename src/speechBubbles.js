@@ -105,18 +105,8 @@ export class SpeechBubbleLayout {
             const tail = item.el.querySelector('.speech-tail');
             const tailBorder = item.el.querySelector('.speech-tail-border');
             item.frozenTailStyle = {
-                tailLeft: tail?.style.left || '',
-                tailTop: tail?.style.top || '',
-                tailBorderTop: tailBorder?.style.top || '',
-                tailBorderLeft: tailBorder?.style.left || '',
-                tailBorderTopWidth: tailBorder?.style.borderTopWidth || '',
-                tailBorderBottomWidth: tailBorder?.style.borderBottomWidth || '',
-                tailBorderTopRule: tailBorder?.style.borderTop || '',
-                tailBorderBottomRule: tailBorder?.style.borderBottom || '',
-                tailTopWidth: tail?.style.borderTopWidth || '',
-                tailBottomWidth: tail?.style.borderBottomWidth || '',
-                tailTopRule: tail?.style.borderTop || '',
-                tailBottomRule: tail?.style.borderBottom || '',
+                tailCssText: tail?.style?.cssText || '',
+                tailBorderCssText: tailBorder?.style?.cssText || '',
             };
         }
     }
@@ -209,6 +199,182 @@ export class SpeechBubbleLayout {
         };
     }
 
+    applyTriangleTail(el, bubbleLeft, bubbleTop, bubbleWidth, bubbleHeight, anchorX, anchorY, canvasRect = null) {
+        if (!el) return;
+        const tail = el.querySelector('.speech-tail');
+        const tailBorder = el.querySelector('.speech-tail-border');
+        if (!tail || !tailBorder) return;
+
+        const minX = canvasRect ? (canvasRect.left + 4) : Number.NEGATIVE_INFINITY;
+        const maxX = canvasRect ? (canvasRect.right - 4) : Number.POSITIVE_INFINITY;
+        const minY = canvasRect ? (canvasRect.top + 4) : Number.NEGATIVE_INFINITY;
+        const maxY = canvasRect ? (canvasRect.bottom - 4) : Number.POSITIVE_INFINITY;
+        const tipX = Math.max(minX, Math.min(maxX, anchorX));
+        const tipY = Math.max(minY, Math.min(maxY, anchorY));
+
+        const bubbleRect = {
+            left: bubbleLeft,
+            top: bubbleTop,
+            right: bubbleLeft + bubbleWidth,
+            bottom: bubbleTop + bubbleHeight,
+        };
+        const baseWorld = this.getTailBaseCenterWorld(bubbleRect, tipX, tipY);
+        let vx = tipX - baseWorld.x;
+        let vy = tipY - baseWorld.y;
+        let len = Math.hypot(vx, vy);
+        if (!Number.isFinite(len) || len < 0.001) {
+            vx = 0;
+            vy = 1;
+            len = 1;
+        }
+        const ux = vx / len;
+        const uy = vy / len;
+        const px = -uy;
+        const py = ux;
+        const baseHalf = Math.max(8, Math.min(16, Math.min(bubbleWidth, bubbleHeight) * 0.14));
+        const stroke = 1.5;
+
+        const toLocal = (x, y) => ({ x: x - bubbleLeft, y: y - bubbleTop });
+        const baseCenter = toLocal(baseWorld.x, baseWorld.y);
+        const tip = toLocal(tipX, tipY);
+        const p1 = { x: baseCenter.x + px * baseHalf, y: baseCenter.y + py * baseHalf };
+        const p2 = { x: baseCenter.x - px * baseHalf, y: baseCenter.y - py * baseHalf };
+        const p1b = { x: baseCenter.x + px * (baseHalf + stroke), y: baseCenter.y + py * (baseHalf + stroke) };
+        const p2b = { x: baseCenter.x - px * (baseHalf + stroke), y: baseCenter.y - py * (baseHalf + stroke) };
+        const tipb = { x: tip.x + ux * stroke, y: tip.y + uy * stroke };
+
+        const applyPoly = (node, a, b, c, color) => {
+            const minPx = Math.min(a.x, b.x, c.x);
+            const maxPx = Math.max(a.x, b.x, c.x);
+            const minPy = Math.min(a.y, b.y, c.y);
+            const maxPy = Math.max(a.y, b.y, c.y);
+            const w = Math.max(1, maxPx - minPx);
+            const h = Math.max(1, maxPy - minPy);
+            const ax = ((a.x - minPx) / w) * 100;
+            const ay = ((a.y - minPy) / h) * 100;
+            const bx = ((b.x - minPx) / w) * 100;
+            const by = ((b.y - minPy) / h) * 100;
+            const cxp = ((c.x - minPx) / w) * 100;
+            const cyp = ((c.y - minPy) / h) * 100;
+            node.style.left = `${minPx}px`;
+            node.style.top = `${minPy}px`;
+            node.style.width = `${w}px`;
+            node.style.height = `${h}px`;
+            node.style.clipPath = `polygon(${ax}% ${ay}%, ${bx}% ${by}%, ${cxp}% ${cyp}%)`;
+            node.style.background = color;
+            node.style.border = '0';
+            node.style.borderTop = '0';
+            node.style.borderBottom = '0';
+            node.style.borderLeft = '0';
+            node.style.borderRight = '0';
+            node.style.borderRadius = '0';
+            node.style.transform = 'none';
+        };
+
+        // Layer order inside bubble:
+        // 1 underlay tail (black), 2 rounded bubble body, 3 overlay tail (white), 4 text.
+        tailBorder.style.zIndex = '1';
+        tail.style.zIndex = '3';
+        applyPoly(tailBorder, p1b, p2b, tipb, '#000');
+        applyPoly(tail, p1, p2, tip, '#fff');
+    }
+
+    getTailBaseCenterWorld(bubbleRect, tipX, tipY) {
+        const width = Math.max(1, bubbleRect.right - bubbleRect.left);
+        const height = Math.max(1, bubbleRect.bottom - bubbleRect.top);
+        const cx = bubbleRect.left + width * 0.5;
+        const cy = bubbleRect.top + height * 0.5;
+        const minEdgeDist = Math.min(width * 0.5, height * 0.5);
+        let x = cx;
+        let y = cy;
+        if (width >= height) {
+            const minX = bubbleRect.left + minEdgeDist;
+            const maxX = bubbleRect.right - minEdgeDist;
+            x = Math.max(minX, Math.min(maxX, tipX));
+        } else {
+            const minY = bubbleRect.top + minEdgeDist;
+            const maxY = bubbleRect.bottom - minEdgeDist;
+            y = Math.max(minY, Math.min(maxY, tipY));
+        }
+        return { x, y };
+    }
+
+    segmentsIntersect(a, b, c, d) {
+        const eps = 1e-6;
+        const orient = (p, q, r) => (q.x - p.x) * (r.y - p.y) - (q.y - p.y) * (r.x - p.x);
+        const onSeg = (p, q, r) =>
+            q.x + eps >= Math.min(p.x, r.x) &&
+            q.x - eps <= Math.max(p.x, r.x) &&
+            q.y + eps >= Math.min(p.y, r.y) &&
+            q.y - eps <= Math.max(p.y, r.y);
+        const o1 = orient(a, b, c);
+        const o2 = orient(a, b, d);
+        const o3 = orient(c, d, a);
+        const o4 = orient(c, d, b);
+        if (((o1 > eps && o2 < -eps) || (o1 < -eps && o2 > eps)) &&
+            ((o3 > eps && o4 < -eps) || (o3 < -eps && o4 > eps))) return true;
+        if (Math.abs(o1) <= eps && onSeg(a, c, b)) return true;
+        if (Math.abs(o2) <= eps && onSeg(a, d, b)) return true;
+        if (Math.abs(o3) <= eps && onSeg(c, a, d)) return true;
+        if (Math.abs(o4) <= eps && onSeg(c, b, d)) return true;
+        return false;
+    }
+
+    getTailTipWithAvoidance(anchorX, anchorY, speakerRect, speakerCircle, bubbleRect, boundsRect, usedTailSegments, speakerKey = '') {
+        const defaultTip = { x: anchorX, y: anchorY };
+        if (boundsRect) {
+            defaultTip.x = Math.max(boundsRect.left, Math.min(boundsRect.right, defaultTip.x));
+            defaultTip.y = Math.max(boundsRect.top, Math.min(boundsRect.bottom, defaultTip.y));
+        }
+
+        const candidates = [defaultTip];
+        if (speakerCircle) {
+            const bubbleCx = (bubbleRect.left + bubbleRect.right) / 2;
+            const bubbleCy = (bubbleRect.top + bubbleRect.bottom) / 2;
+            const baseAngle = Math.atan2(bubbleCy - speakerCircle.cy, bubbleCx - speakerCircle.cx);
+            const offsets = [0, 0.25, -0.25, 0.5, -0.5, 0.9, -0.9, 1.3, -1.3];
+            for (const off of offsets) {
+                let x = speakerCircle.cx + Math.cos(baseAngle + off) * speakerCircle.r;
+                let y = speakerCircle.cy + Math.sin(baseAngle + off) * speakerCircle.r;
+                if (boundsRect) {
+                    x = Math.max(boundsRect.left, Math.min(boundsRect.right, x));
+                    y = Math.max(boundsRect.top, Math.min(boundsRect.bottom, y));
+                }
+                candidates.push({ x, y, offCost: Math.abs(off) * 10 });
+            }
+        } else if (speakerRect) {
+            const cx = (speakerRect.left + speakerRect.right) / 2;
+            const cy = (speakerRect.top + speakerRect.bottom) / 2;
+            const r = Math.max(1, Math.min(speakerRect.right - speakerRect.left, speakerRect.bottom - speakerRect.top) / 2);
+            const bubbleCx = (bubbleRect.left + bubbleRect.right) / 2;
+            const bubbleCy = (bubbleRect.top + bubbleRect.bottom) / 2;
+            const baseAngle = Math.atan2(bubbleCy - cy, bubbleCx - cx);
+            let x = cx + Math.cos(baseAngle) * r;
+            let y = cy + Math.sin(baseAngle) * r;
+            if (boundsRect) {
+                x = Math.max(boundsRect.left, Math.min(boundsRect.right, x));
+                y = Math.max(boundsRect.top, Math.min(boundsRect.bottom, y));
+            }
+            candidates.push({ x, y, offCost: 2 });
+        }
+
+        let best = candidates[0];
+        let bestScore = Number.POSITIVE_INFINITY;
+        for (const tip of candidates) {
+            const base = this.getTailBaseCenterWorld(bubbleRect, tip.x, tip.y);
+            let score = (tip.offCost || 0) + Math.hypot(tip.x - defaultTip.x, tip.y - defaultTip.y) * 0.08;
+            for (const seg of usedTailSegments || []) {
+                if (speakerKey && seg?.speakerKey && seg.speakerKey === speakerKey) continue;
+                if (this.segmentsIntersect(base, tip, seg.from, seg.to)) score += 1500;
+            }
+            if (score < bestScore) {
+                bestScore = score;
+                best = { x: tip.x, y: tip.y, baseX: base.x, baseY: base.y };
+            }
+        }
+        return best;
+    }
+
     layout() {
         if (!this.items.length) return;
         const canvasRect = this.panel.canvas.getBoundingClientRect();
@@ -245,51 +411,10 @@ export class SpeechBubbleLayout {
                     const localHeight = el.offsetHeight || rect.height;
                     const anchorX = canvasRect.left + (item.frozenAnchorNormX * canvasRect.width);
                     const anchorY = canvasRect.top + (item.frozenAnchorNormY * canvasRect.height);
-                    const tailMargin = 18;
-                    const tailX = Math.max(tailMargin, Math.min(localWidth - tailMargin, anchorX - item.x));
-                    const isBelow = Boolean(item.frozenIsBelow);
-                    if (tail) tail.style.left = `${tailX - 8}px`;
-                    if (tailBorder) tailBorder.style.left = `${tailX - 9}px`;
-
-                    if (isBelow) {
-                        const tailLength = Math.max(14, item.y - anchorY);
-                        tailBorder.style.top = `${-(tailLength + 2)}px`;
-                        tailBorder.style.borderBottomWidth = `${tailLength + 2}px`;
-                        tailBorder.style.borderTopWidth = '0';
-                        tailBorder.style.borderTop = '0';
-                        tailBorder.style.borderBottom = `${tailLength + 2}px solid #000`;
-                        tail.style.top = `${-(tailLength - 1)}px`;
-                        tail.style.borderBottomWidth = `${tailLength}px`;
-                        tail.style.borderTopWidth = '0';
-                        tail.style.borderTop = '0';
-                        tail.style.borderBottom = `${tailLength}px solid #fff`;
-                    } else {
-                        const tailStartY = item.y + localHeight - 4;
-                        const tailLength = Math.max(14, anchorY - tailStartY);
-                        tailBorder.style.top = `${localHeight - 2}px`;
-                        tailBorder.style.borderTopWidth = `${tailLength + 2}px`;
-                        tailBorder.style.borderBottomWidth = '0';
-                        tailBorder.style.borderBottom = '0';
-                        tailBorder.style.borderTop = `${tailLength + 2}px solid #000`;
-                        tail.style.top = `${localHeight - 4}px`;
-                        tail.style.borderTopWidth = `${tailLength}px`;
-                        tail.style.borderBottomWidth = '0';
-                        tail.style.borderBottom = '0';
-                        tail.style.borderTop = `${tailLength}px solid #fff`;
-                    }
+                    this.applyTriangleTail(el, item.x, item.y, localWidth, localHeight, anchorX, anchorY, canvasRect);
                 } else if (s && tail && tailBorder) {
-                    tail.style.left = s.tailLeft;
-                    tail.style.top = s.tailTop;
-                    tail.style.borderTopWidth = s.tailTopWidth;
-                    tail.style.borderBottomWidth = s.tailBottomWidth;
-                    tail.style.borderTop = s.tailTopRule;
-                    tail.style.borderBottom = s.tailBottomRule;
-                    tailBorder.style.left = s.tailBorderLeft;
-                    tailBorder.style.top = s.tailBorderTop;
-                    tailBorder.style.borderTopWidth = s.tailBorderTopWidth;
-                    tailBorder.style.borderBottomWidth = s.tailBorderBottomWidth;
-                    tailBorder.style.borderTop = s.tailBorderTopRule;
-                    tailBorder.style.borderBottom = s.tailBorderBottomRule;
+                    tail.style.cssText = s.tailCssText || '';
+                    tailBorder.style.cssText = s.tailBorderCssText || '';
                 }
             }
             return;
@@ -314,8 +439,18 @@ export class SpeechBubbleLayout {
         // Recompute only when geometry truly changes (resize/new content), not on simple panel translation.
         // Translation is handled by shifting cached base coordinates below to avoid vertical jostle.
         const recomputeLayout = resized || this.items.some((item) => item.baseLeft == null || item.baseTop == null || item.widthDirty);
-        const leftBound = canvasRect.left + 8;
-        const rightBound = canvasRect.right - 8;
+        const speechBounds = this.panel.speechBounds || null;
+        const leftBound = Math.max(
+            0,
+            Number.isFinite(speechBounds?.left) ? (speechBounds.left + 8) : (canvasRect.left + 8)
+        );
+        const rightBound = Math.max(
+            leftBound + 24,
+            Math.min(
+                window.innerWidth,
+                Number.isFinite(speechBounds?.right) ? (speechBounds.right - 8) : (canvasRect.right - 8)
+            )
+        );
         const topBound = canvasRect.top + 8;
         const linkList = document.getElementById('link-list');
         const linkRect = linkList ? linkList.getBoundingClientRect() : null;
@@ -324,6 +459,7 @@ export class SpeechBubbleLayout {
         const narrationRect = this.panel.narrationEl.getBoundingClientRect();
         const maxWidth = Math.min(this.maxWidth, rightBound - leftBound);
         const placed = [];
+        const tailSegments = [];
         const overlapsPlaced = (rect, allowNonBlocking = false) => placed.some((r) => (allowNonBlocking ? r.block !== false : true) &&
             rect.right > r.left && rect.left < r.right &&
             rect.bottom > r.top && rect.top < r.bottom);
@@ -392,6 +528,7 @@ export class SpeechBubbleLayout {
             let anchorX;
             let anchorY;
             let anchorXLive = null;
+            let anchorYLive = null;
             if (speakerRect) {
                 const targetAnchorX = (speakerRect.left + speakerRect.right) / 2;
                 const targetAnchorY = speakerRect.top;
@@ -412,6 +549,7 @@ export class SpeechBubbleLayout {
                     item.side = targetAnchorX <= canvasCenterX ? 'left' : 'right';
                 }
                 anchorXLive = targetAnchorX;
+                anchorYLive = targetAnchorY;
             }
             if (item.anchorNorm) {
                 anchorX = canvasRect.left + item.anchorNorm.x * canvasRect.width;
@@ -423,9 +561,6 @@ export class SpeechBubbleLayout {
                     item.side = anchorX <= canvasCenterX ? 'left' : 'right';
                 }
             }
-            item.lastAnchorX = anchorX;
-            item.lastAnchorY = anchorY;
-
             if (speakerOffscreen) {
                 const centerX = speakerRect ? (speakerRect.left + speakerRect.right) / 2 : anchorX;
                 const centerY = speakerRect ? (speakerRect.top + speakerRect.bottom) / 2 : anchorY;
@@ -436,7 +571,10 @@ export class SpeechBubbleLayout {
                 anchorX = clampedX;
                 anchorY = clampedY;
                 anchorXLive = clampedX;
+                anchorYLive = clampedY;
             }
+            item.lastAnchorX = anchorXLive ?? anchorX;
+            item.lastAnchorY = anchorYLive ?? anchorY;
 
             const speakerCircle = speakerOffscreen ? null : this.getSpeakerCircle(item, speakerRect, canvasRect);
             const circleRect = speakerCircle
@@ -821,53 +959,40 @@ export class SpeechBubbleLayout {
             el.style.outline = '';
             el.style.outlineOffset = '';
 
-            const tailMargin = 18;
             const localWidth = el.offsetWidth || rect.width;
             const localHeight = el.offsetHeight || rect.height;
-            const tailX = Math.max(tailMargin, Math.min(localWidth - tailMargin, anchorX - item.x));
-            const tail = el.querySelector('.speech-tail');
-            const tailBorder = el.querySelector('.speech-tail-border');
-            const isBubbleBelow = visualBelow;
-            if (tail) tail.style.left = `${tailX - 8}px`;
-            if (tailBorder) tailBorder.style.left = `${tailX - 9}px`;
-
-            if (isBubbleBelow) {
-                const minTipY = circleRect ? circleRect.bottom + 6 : anchorY;
-                const tipY = Math.min(bottomBound - 6, Math.max(minTipY, topBound + 6));
-                const tailLength = Math.max(14, item.y - tipY);
-                if (tailBorder) {
-                    tailBorder.style.top = `${-(tailLength + 2)}px`;
-                    tailBorder.style.borderBottomWidth = `${tailLength + 2}px`;
-                    tailBorder.style.borderTopWidth = '0';
-                    tailBorder.style.borderTop = '0';
-                    tailBorder.style.borderBottom = `${tailLength + 2}px solid #000`;
-                }
-                if (tail) {
-                    tail.style.top = `${-(tailLength-1)}px`;
-                    tail.style.borderBottomWidth = `${tailLength}px`;
-                    tail.style.borderTopWidth = '0';
-                    tail.style.borderTop = '0';
-                    tail.style.borderBottom = `${tailLength}px solid #fff`;
-                }
-            } else {
-                const tailStartY = item.y + localHeight - 4;
-                const desiredTipY = Math.min(bottomBound - 6, Math.max(topBound + 6, anchorY));
-                const tailLength = Math.max(14, desiredTipY - tailStartY);
-                if (tailBorder) {
-                    tailBorder.style.top = `${localHeight - 2}px`;
-                    tailBorder.style.borderTopWidth = `${tailLength + 2}px`;
-                    tailBorder.style.borderBottomWidth = '0';
-                    tailBorder.style.borderBottom = '0';
-                    tailBorder.style.borderTop = `${tailLength + 2}px solid #000`;
-                }
-                if (tail) {
-                    tail.style.top = `${localHeight - 4}px`;
-                    tail.style.borderTopWidth = `${tailLength}px`;
-                    tail.style.borderBottomWidth = '0';
-                    tail.style.borderBottom = '0';
-                    tail.style.borderTop = `${tailLength}px solid #fff`;
-                }
-            }
+            const bubbleRectNow = {
+                left: item.x,
+                top: item.y,
+                right: item.x + localWidth,
+                bottom: item.y + localHeight,
+            };
+            const tip = this.getTailTipWithAvoidance(
+                anchorXLive ?? anchorX,
+                anchorYLive ?? anchorY,
+                speakerRect,
+                speakerCircle,
+                bubbleRectNow,
+                { left: leftBound, top: topBound, right: rightBound, bottom: bottomBound },
+                tailSegments,
+                speakerKey
+            );
+            this.applyTriangleTail(
+                el,
+                item.x,
+                item.y,
+                localWidth,
+                localHeight,
+                tip.x,
+                tip.y,
+                canvasRect
+            );
+            const segBase = this.getTailBaseCenterWorld(bubbleRectNow, tip.x, tip.y);
+            tailSegments.push({
+                from: { x: segBase.x, y: segBase.y },
+                to: { x: tip.x, y: tip.y },
+                speakerKey,
+            });
         }
     }
 }

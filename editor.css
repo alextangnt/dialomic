@@ -312,18 +312,52 @@ body.debug-mode .debug-only {
   position: fixed;
   z-index: 3800;
   box-sizing: border-box;
-  resize: none;
   border: 2px solid #2f7f9b;
   border-radius: 8px;
-  padding: 8px 10px;
-  font: inherit;
-  line-height: 1.35;
+  padding: 6px;
+  background: #fffef7;
+  color: #1a2430;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+}
+
+.inline-text-editor-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.inline-text-editor .inline-tab {
+  padding: 3px 8px;
+  font-size: 11px;
+  border-radius: 6px;
+}
+
+.inline-text-editor .inline-tab.active {
+  background: #7ed0e7;
+  border-color: #2f7f9b;
+  color: #0f2e3c;
+}
+
+.inline-text-editor-input {
+  width: 100%;
+  min-height: 48px;
+  max-height: 55vh;
+  resize: vertical;
+  overflow: auto;
+  box-sizing: border-box;
+  border: 1px solid #9fc6d4;
+  border-radius: 6px;
+  padding: 8px 9px;
+  font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.3;
   background: #fffef7;
   color: #1a2430;
 }
 
 .panel-speech {
   position: absolute;
+  isolation: isolate;
   overflow: visible;
   overflow-wrap: break-word;
   word-break: normal;
@@ -333,8 +367,52 @@ body.debug-mode .debug-only {
   hyphenate-character: "-";
 }
 
+.panel-speech .speech-content {
+  position: absolute;
+  z-index: 4;
+  left: 12px;
+  right: 12px;
+  top: 10px;
+  bottom: 10px;
+  pointer-events: none;
+  white-space: pre-wrap;
+}
+
+.panel-speech .speech-body {
+  position: relative;
+  z-index: 2;
+}
+
+.panel-speech .speech-content-measure {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.panel-speech:hover {
+  background: transparent;
+}
+
+.panel-speech:hover .speech-body {
+  border-color: #2e73ff;
+}
+
+.panel-speech.is-selected-bubble .speech-body {
+  outline: 2px dotted #ffd400;
+  outline-offset: 2px;
+}
+
+.panel-speech.is-selected-bubble {
+  z-index: 3800 !important;
+}
+
 .panel-speech.is-inline-editing {
   z-index: 3700 !important;
+}
+
+.inline-text-editor.speech-inline-editor {
+  outline: 2px dotted #ffd400;
+  outline-offset: 2px;
+  z-index: 3850;
 }
 
 .panel-speech .speech-remove-btn {
@@ -410,7 +488,7 @@ body.debug-mode .debug-only {
   display:flex;
   flex-direction:column;
   gap:8px;
-  z-index:60;
+  z-index:1200;
   pointer-events:auto;
 }
 
@@ -431,6 +509,31 @@ body.debug-mode .debug-only {
 
 .preview-link-list .link-button:hover {
   background: rgba(255, 247, 191, 0.95);
+}
+
+.camera-tools {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 2600;
+  display: flex;
+  gap: 6px;
+}
+
+.camera-tools button {
+  font-size: 12px;
+  padding: 4px 8px;
+  --btn-shadow: #bf6f0e;
+  background: #f39a2d;
+  border-color: #bf6f0e;
+  color: #fff;
+}
+
+.camera-tools button:disabled {
+  opacity: 0.5;
+  background: #a8a8a8;
+  border-color: #7a7a7a;
+  box-shadow: 0 1px 0 #7a7a7a;
 }
 
 .visual-pane {

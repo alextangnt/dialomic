@@ -43,6 +43,9 @@ const el = {
     clearSceneBtn: document.getElementById('clearSceneBtn'),
     floatingModelButtons: document.getElementById('floatingModelButtons'),
     floatingAddSpeechBtn: document.getElementById('floatingAddSpeechBtn'),
+    cameraTools: document.getElementById('cameraTools'),
+    saveCameraBtn: document.getElementById('saveCameraBtn'),
+    revertCameraBtn: document.getElementById('revertCameraBtn'),
     floatingDeleteModelBtn: document.getElementById('floatingDeleteModelBtn'),
     floatingModeTranslateBtn: document.getElementById('floatingModeTranslateBtn'),
     floatingModeRotateBtn: document.getElementById('floatingModeRotateBtn'),
@@ -74,11 +77,15 @@ const state = {
     draggingAspect: false,
     debugMode: false,
     hasUnsavedChanges: false,
+    hasTextEdits: false,
+    hasSceneEdits: false,
     pendingSelectionKey: null,
     environmentUndo: null,
-    textDraft: { narration: '', speakers: [] },
+    textDraft: { narration: '', narrationRaw: '', hiddenTail: '', speakers: [] },
     activeInlineEditor: null,
     selectedBubbleIndex: null,
+    savedCameraByPassage: {},
+    implicitCameraByPassage: {},
 };
 const IGNORED_PASSAGES = new Set(['StoryTitle', 'StoryData']);
 
@@ -89,6 +96,81 @@ function setStatus(msg) {
 function setDirty(next) {
     state.hasUnsavedChanges = Boolean(next);
     if (el.saveSceneBtn) el.saveSceneBtn.classList.toggle('dirty', state.hasUnsavedChanges);
+}
+
+function setTextDirty(next) {
+    state.hasTextEdits = Boolean(next);
+    setDirty(state.hasTextEdits || state.hasSceneEdits);
+}
+
+function setSceneDirty(next) {
+    state.hasSceneEdits = Boolean(next);
+    setDirty(state.hasTextEdits || state.hasSceneEdits);
+}
+
+function getCurrentPassageKey() {
+    const p = state.passages[state.selected];
+    if (!p) return '';
+    return `${state.selected}:${p.name}`;
+}
+
+function refreshCameraButtons() {
+    const three = state.panel?.three;
+    const hasPanel = Boolean(three);
+    const passageKey = getCurrentPassageKey();
+    const saved = passageKey ? state.savedCameraByPassage[passageKey] : null;
+    const implicit = passageKey ? state.implicitCameraByPassage[passageKey] : null;
+    const baseline = saved || implicit || null;
+    const current = hasPanel && three.getCameraSpecSnapshot ? three.getCameraSpecSnapshot() : null;
+    const sameAsBaseline = current && baseline ? cameraSpecsEqual(current, baseline) : false;
+    if (el.saveCameraBtn) {
+        el.saveCameraBtn.disabled = !hasPanel || sameAsBaseline;
+    }
+    if (el.revertCameraBtn) {
+        el.revertCameraBtn.disabled = !hasPanel || !baseline || sameAsBaseline;
+    }
+    positionCameraTools();
+}
+
+function maybeCaptureImplicitCamera() {
+    const three = state.panel?.three;
+    if (!three?.getCameraSpecSnapshot) return;
+    const key = getCurrentPassageKey();
+    if (!key || state.implicitCameraByPassage[key]) return;
+    if (Number(three.pendingShotModels || 0) > 0) return;
+    const snapshot = three.getCameraSpecSnapshot();
+    if (!snapshot) return;
+    state.implicitCameraByPassage[key] = cloneSceneSpec(snapshot);
+}
+
+function cameraSpecsEqual(a, b, eps = 1e-6) {
+    if (!a || !b) return false;
+    const getVec = (v) => Array.isArray(v) ? v : [v?.x, v?.y, v?.z];
+    const avp = getVec(a.position);
+    const bvp = getVec(b.position);
+    const avt = getVec(a.target);
+    const bvt = getVec(b.target);
+    const close = (x, y) => Number.isFinite(Number(x)) && Number.isFinite(Number(y)) && Math.abs(Number(x) - Number(y)) <= eps;
+    return close(avp[0], bvp[0]) && close(avp[1], bvp[1]) && close(avp[2], bvp[2]) &&
+        close(avt[0], bvt[0]) && close(avt[1], bvt[1]) && close(avt[2], bvt[2]) &&
+        close(a.fov, b.fov) && close(a.near, b.near) && close(a.far, b.far);
+}
+
+function positionCameraTools() {
+    if (!el.cameraTools || !state.panelRectCache || !el.previewPane) return;
+    const paneRect = el.previewPane.getBoundingClientRect();
+    const panelRect = state.panelRectCache;
+    const narrationRect = state.panel?.narrationEl?.getBoundingClientRect?.();
+    let top = panelRect.top - paneRect.top + 10;
+    if (narrationRect && narrationRect.height > 0) {
+        top = Math.min(
+            panelRect.top - paneRect.top + panelRect.height - 34,
+            narrationRect.bottom - paneRect.top + 6
+        );
+    }
+    const right = paneRect.right - (panelRect.left + panelRect.width) + 10;
+    el.cameraTools.style.top = `${Math.max(6, top)}px`;
+    el.cameraTools.style.right = `${Math.max(6, right)}px`;
 }
 
 function initAssetDropdown() {
@@ -299,7 +381,8 @@ async function runWithUnsavedGuard(action, { onSave } = {}) {
     if (choice === 'save' && typeof onSave === 'function') {
         await Promise.resolve(onSave());
     }
-    setDirty(false);
+    setTextDirty(false);
+    setSceneDirty(false);
     await Promise.resolve(action());
 }
 
@@ -539,6 +622,293 @@ function plainTextToHtml(text) {
     return escapeHtml(String(text || '')).replace(/\n/g, '<br>');
 }
 
+function splitHiddenBody(sourceBody) {
+    const source = String(sourceBody || '').replace(/\r\n/g, '\n');
+    const idx = source.indexOf('%%%');
+    if (idx < 0) return { visible: source, hidden: '' };
+    return {
+        visible: source.slice(0, idx),
+        hidden: source.slice(idx),
+    };
+}
+
+function cloneSceneSpec(value) {
+    if (!value || typeof value !== 'object') return value;
+    if (typeof structuredClone === 'function') {
+        try {
+            return structuredClone(value);
+        } catch {
+            // fallback
+        }
+    }
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch {
+        return { ...value };
+    }
+}
+
+function composeBodyWithHidden(visibleBody, hiddenTail) {
+    const visible = String(visibleBody || '').replace(/\r\n/g, '\n').trimEnd();
+    const hidden = String(hiddenTail || '');
+    if (!hidden) return visible;
+    if (!visible) return hidden;
+    return `${visible}\n${hidden.replace(/^\n+/, '')}`;
+}
+
+function replaceFirstBlock(source, oldBlock, newBlock) {
+    const src = String(source || '');
+    const oldText = String(oldBlock || '');
+    if (!oldText) return src;
+    const idx = src.indexOf(oldText);
+    if (idx < 0) return src;
+    return `${src.slice(0, idx)}${newBlock}${src.slice(idx + oldText.length)}`;
+}
+
+function removeFirstLineMatch(source, lineText) {
+    const src = String(source || '');
+    const line = String(lineText || '').trim();
+    if (!line) return src;
+    const escaped = line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`(^|\\n)${escaped}(?=\\n|$)`);
+    const next = src.replace(re, (m, p1) => (p1 ? p1 : ''));
+    return next.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
+}
+
+function splitLinesPreserve(raw) {
+    return String(raw || '').replace(/\r\n/g, '\n').split('\n');
+}
+
+function logBodyDiff(beforeRaw, afterRaw, reason = 'update') {
+    if (!state.debugMode) return;
+    const before = String(beforeRaw || '').replace(/\r\n/g, '\n');
+    const after = String(afterRaw || '').replace(/\r\n/g, '\n');
+    if (before === after) return;
+    const a = before.split('\n');
+    const b = after.split('\n');
+    const max = Math.max(a.length, b.length);
+    const lines = [];
+    for (let i = 0; i < max; i += 1) {
+        const av = a[i] ?? '';
+        const bv = b[i] ?? '';
+        if (av === bv) continue;
+        lines.push({ line: i + 1, before: av, after: bv });
+        if (lines.length >= 30) break;
+    }
+    console.groupCollapsed(`[visual-editor diff] ${reason} (${a.length} -> ${b.length} lines)`);
+    console.table(lines);
+    console.groupEnd();
+}
+
+function extractSceneLines(raw) {
+    const lines = splitLinesPreserve(raw);
+    const out = [];
+    let inDlMacro = false;
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = String(lines[i] || '');
+        const t = line.trim();
+        if (/^%%.*%%$/.test(t)) {
+            out.push(line);
+            continue;
+        }
+        if (!inDlMacro && /<<\s*set\s+\$DL\b/i.test(t)) {
+            inDlMacro = true;
+            out.push(line);
+            if (t.includes('>>')) inDlMacro = false;
+            continue;
+        }
+        if (inDlMacro) {
+            out.push(line);
+            if (t.includes('>>')) inDlMacro = false;
+        }
+    }
+    return out.join('\n');
+}
+
+function extractChoiceLines(raw) {
+    return splitLinesPreserve(raw).filter((line) => {
+        const src = String(line || '');
+        const t = src.trim();
+        return /\[\[[^\]]+\]\]/.test(src) || /<<(?:link|button)\b/i.test(t);
+    }).join('\n');
+}
+
+function getSceneLineIndices(raw) {
+    const lines = splitLinesPreserve(raw);
+    const idxs = [];
+    let inDlMacro = false;
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = String(lines[i] || '');
+        const t = line.trim();
+        if (/^%%.*%%$/.test(t)) {
+            idxs.push(i);
+            continue;
+        }
+        if (!inDlMacro && /<<\s*set\s+\$DL\b/i.test(t)) {
+            inDlMacro = true;
+            idxs.push(i);
+            if (t.includes('>>')) inDlMacro = false;
+            continue;
+        }
+        if (inDlMacro) {
+            idxs.push(i);
+            if (t.includes('>>')) inDlMacro = false;
+        }
+    }
+    return idxs;
+}
+
+function getChoiceLineIndices(raw) {
+    const lines = splitLinesPreserve(raw);
+    const idxs = [];
+    for (let i = 0; i < lines.length; i += 1) {
+        const src = String(lines[i] || '');
+        const t = src.trim();
+        if (/\[\[[^\]]+\]\]/.test(src) || /<<(?:link|button)\b/i.test(t)) idxs.push(i);
+    }
+    return idxs;
+}
+
+function getTextLineIndices(raw) {
+    const lines = splitLinesPreserve(raw);
+    const sceneSet = new Set(getSceneLineIndices(raw));
+    const choiceSet = new Set(getChoiceLineIndices(raw));
+    const idxs = [];
+    for (let i = 0; i < lines.length; i += 1) {
+        if (sceneSet.has(i) || choiceSet.has(i)) continue;
+        idxs.push(i);
+    }
+    return idxs;
+}
+
+function extractTextLines(raw) {
+    const lines = splitLinesPreserve(raw);
+    const idxs = getTextLineIndices(raw);
+    return idxs.map((i) => lines[i]).join('\n');
+}
+
+function mergeLinesAtIndices(baseRaw, indices, editedRaw, insertAt = 'bottom', preserveEmpty = false) {
+    const base = splitLinesPreserve(baseRaw);
+    const edited = preserveEmpty
+        ? splitLinesPreserve(editedRaw)
+        : splitLinesPreserve(editedRaw).filter((ln) => String(ln).trim().length > 0);
+    if (!indices.length) {
+        if (!edited.length) return base.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+        if (insertAt === 'top') return [...edited, ...base].join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+        return [...base, ...edited].join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+    }
+    const out = [...base];
+    const replaceCount = Math.min(indices.length, edited.length);
+    for (let i = 0; i < replaceCount; i += 1) {
+        out[indices[i]] = edited[i];
+    }
+    for (let i = replaceCount; i < indices.length; i += 1) {
+        out[indices[i]] = '';
+    }
+    if (edited.length > indices.length) {
+        const extra = edited.slice(indices.length);
+        const insertAfter = indices[indices.length - 1];
+        out.splice(insertAfter + 1, 0, ...extra);
+    }
+    if (preserveEmpty) return out.join('\n').replace(/\r\n/g, '\n');
+    return out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').trimEnd();
+}
+
+function parseSpeakerRawBlock(raw, fallbackSpeaker = '') {
+    const src = String(raw || '').replace(/\r\n/g, '\n');
+    const lines = src.split('\n');
+    for (const line of lines) {
+        const stripped = stripHtml(line).trim();
+        const match = stripped.match(/^([^:]+)::\s*(.*)$/);
+        if (!match) continue;
+        const speaker = String(match[1] || '').trim() || String(fallbackSpeaker || '').trim();
+        const idx = line.indexOf('::');
+        const text = idx >= 0 ? line.slice(idx + 2).trim() : String(match[2] || '').trim();
+        return { speaker, text };
+    }
+    return {
+        speaker: String(fallbackSpeaker || '').trim(),
+        text: stripHtml(src).trim(),
+    };
+}
+
+function getSpeakerPayloadFromRaw(raw, fallbackSpeaker = '') {
+    const src = String(raw || '').replace(/\r\n/g, '\n');
+    const lines = src.split('\n');
+    for (let i = 0; i < lines.length; i += 1) {
+        const stripped = stripHtml(lines[i]).trim();
+        const match = stripped.match(/^([^:]+)::\s*(.*)$/);
+        if (!match) continue;
+        const textAfter = lines[i].slice(lines[i].indexOf('::') + 2).replace(/^\s*/, '');
+        const out = [textAfter, ...lines.slice(i + 1)];
+        return out.join('\n').replace(/^\n+/, '');
+    }
+    return parseSpeakerRawBlock(src, fallbackSpeaker).text || '';
+}
+
+function withSpeakerTag(rawValue, speaker, previousRaw = '') {
+    const payload = String(rawValue || '').replace(/\r\n/g, '\n');
+    const prev = String(previousRaw || '').replace(/\r\n/g, '\n');
+    const prevLines = prev.split('\n');
+    const tagged = `${String(speaker || '').trim()}:: ${payload.split('\n')[0] || ''}`.trimEnd();
+    const trailing = payload.split('\n').slice(1);
+    for (let i = 0; i < prevLines.length; i += 1) {
+        const stripped = stripHtml(prevLines[i]).trim();
+        if (/^[^:]+::\s*/.test(stripped)) {
+            const prefix = prevLines.slice(0, i);
+            const suffix = prevLines.slice(i + 1);
+            return [...prefix, tagged, ...trailing, ...suffix].join('\n');
+        }
+    }
+    return [tagged, ...trailing].join('\n');
+}
+
+function parseNarrationRawBlock(raw) {
+    const src = String(raw || '').replace(/\r\n/g, '\n');
+    const out = [];
+    for (const line of src.split('\n')) {
+        const t = String(line || '').trim();
+        if (!t) continue;
+        if (/^%%.*%%$/.test(t)) continue;
+        if (/\[\[[^\]]+\]\]/.test(line)) continue;
+        if (line.includes('<<') || line.includes('>>')) continue;
+        if (/^[^:]+::\s*/.test(stripHtml(line).trim())) continue;
+        out.push(stripHtml(line));
+    }
+    return out.join('\n').trim();
+}
+
+function draftNarrationHtmlForPanel() {
+    const raw = String(state.textDraft.narration || '');
+    if (raw.trim().length === 0) {
+        // Keep a one-line click target in visual editor even when narration is empty.
+        return '&#8203;';
+    }
+    return plainTextToHtml(raw);
+}
+
+function suppressPreviewSpeakerAnimation() {
+    const three = state.panel?.three;
+    if (!three || !three.speakerAnim) return;
+    const anim = three.speakerAnim;
+    anim.queue = [];
+    anim.index = 0;
+    anim.startTime = 0;
+    anim.duration = 0;
+    anim.active = false;
+    anim.paused = false;
+    anim.currentKey = null;
+    anim.startDelayUntil = 0;
+    anim.cyclePauseUntil = 0;
+    for (const model of three.models || []) {
+        if (!model?.userData) continue;
+        model.userData.speaking = false;
+        if (Number.isFinite(model.userData.baseY)) {
+            model.position.y = model.userData.baseY;
+        }
+    }
+}
+
 function draftToPanelSpeakers() {
     return (state.textDraft.speakers || []).map((s) => ({
         speaker: s.speaker,
@@ -548,11 +918,21 @@ function draftToPanelSpeakers() {
 
 function buildDraftTextBlock() {
     const lines = [];
-    const narration = String(state.textDraft.narration || '').trim();
-    if (narration) {
-        lines.push(...narration.split(/\n+/).map((l) => l.trim()).filter(Boolean));
+    const narrationRaw = String(state.textDraft.narrationRaw || '').trim();
+    if (narrationRaw) {
+        lines.push(...narrationRaw.split('\n'));
+    } else {
+        const narration = String(state.textDraft.narration || '').trim();
+        if (narration) {
+            lines.push(...narration.split(/\n+/).map((l) => l.trim()).filter(Boolean));
+        }
     }
     for (const s of state.textDraft.speakers || []) {
+        const raw = String(s.raw || '').trim();
+        if (raw) {
+            lines.push(...raw.split('\n'));
+            continue;
+        }
         const speaker = String(s.speaker || '').trim();
         const text = String(s.text || '').trim();
         if (!speaker || !text) continue;
@@ -567,52 +947,43 @@ function applyDraftToPassageBody(sourceBody) {
     const visibleSource = hiddenIndex >= 0 ? source.slice(0, hiddenIndex) : source;
     const hiddenTail = hiddenIndex >= 0 ? source.slice(hiddenIndex) : '';
     const lines = visibleSource.split('\n');
-    const macroAndCommand = [];
-    const links = [];
-    const seenMeta = new Set();
-    const seenLinks = new Set();
-    let multilineMacro = null;
-    const pushMeta = (raw) => {
-        const token = String(raw || '').trim();
-        if (!token || seenMeta.has(token)) return;
-        seenMeta.add(token);
-        macroAndCommand.push(raw);
-    };
-    for (const line of lines) {
-        const t = line.trim();
-        if (multilineMacro) {
-            multilineMacro.push(line);
-            if (t.includes('>>')) {
-                pushMeta(multilineMacro.join('\n'));
-                multilineMacro = null;
-            }
-            continue;
-        }
-        if (!t) continue;
-        if (t.startsWith('<<') && !t.includes('>>')) {
-            multilineMacro = [line];
-            continue;
-        }
-        if (/^<<.*>>$/.test(t) || /^%%.*%%$/.test(t)) {
-            pushMeta(line);
-            continue;
-        }
-        if (/\[\[[^\]]+\]\]/.test(t)) {
-            if (!seenLinks.has(t)) {
-                seenLinks.add(t);
-                links.push(line);
-            }
-        }
-    }
-    if (multilineMacro?.length) {
-        pushMeta(multilineMacro.join('\n'));
-    }
     const bodyLines = buildDraftTextBlock().filter((line) => !/\[\[[^\]]+\]\]/.test(String(line)));
-    const out = [];
-    if (macroAndCommand.length) out.push(...macroAndCommand);
-    if (bodyLines.length) out.push(...bodyLines);
-    if (links.length) out.push(...links);
-    const visibleOut = out.join('\n').trimEnd();
+    const editableIdx = [];
+    let firstLinkIdx = -1;
+
+    const isEditableLine = (line) => {
+        const t = String(line || '').trim();
+        if (!t) return false;
+        if (/^%%.*%%$/.test(t)) return false;
+        if (/\[\[[^\]]+\]\]/.test(line)) return false;
+        if (t.includes('<<') || t.includes('>>')) return false;
+        return true;
+    };
+
+    for (let i = 0; i < lines.length; i += 1) {
+        const line = String(lines[i] || '');
+        if (firstLinkIdx < 0 && /\[\[[^\]]+\]\]/.test(line)) firstLinkIdx = i;
+        if (isEditableLine(line)) editableIdx.push(i);
+    }
+
+    const out = [...lines];
+    const replaceCount = Math.min(editableIdx.length, bodyLines.length);
+    for (let i = 0; i < replaceCount; i += 1) {
+        out[editableIdx[i]] = bodyLines[i];
+    }
+    for (let i = replaceCount; i < editableIdx.length; i += 1) {
+        out[editableIdx[i]] = '';
+    }
+    if (bodyLines.length > editableIdx.length) {
+        const extra = bodyLines.slice(editableIdx.length);
+        const insertAt = firstLinkIdx >= 0 ? firstLinkIdx : out.length;
+        out.splice(insertAt, 0, ...extra);
+    }
+
+    let visibleOut = out.join('\n')
+        .replace(/\n{3,}/g, '\n\n')
+        .replace(/^\n+/, '')
+        .trimEnd();
     if (!hiddenTail) return visibleOut;
     if (!visibleOut) return hiddenTail;
     return `${visibleOut}\n${hiddenTail.replace(/^\n+/, '')}`;
@@ -621,20 +992,40 @@ function applyDraftToPassageBody(sourceBody) {
 function syncDraftIntoPassageBody() {
     const p = state.passages[state.selected];
     if (!p) return;
-    const next = applyDraftToPassageBody(p.body);
+    const next = composeBodyWithHidden(state.textDraft.narrationRaw || '', state.textDraft.hiddenTail || '');
+    logBodyDiff(p.body, next, `sync:${p.name || state.selected}`);
     p.body = next;
     if (el.passageBody) el.passageBody.value = next;
 }
 
+function refreshDraftFromPassageBody() {
+    const p = state.passages[state.selected];
+    if (!p) return;
+    const split = splitHiddenBody(p.body);
+    const visibleBody = split.visible;
+    const scene = buildSceneFromPassage(p.body, state.vars) || {};
+    const sceneObjects = buildSceneObjectMap(scene?.objects);
+    const parsed = parseSpeakerBlocks(visibleBody, sceneObjects, state.format);
+    state.textDraft.narrationRaw = visibleBody;
+    state.textDraft.narration = parseNarrationRawBlock(visibleBody);
+    state.textDraft.hiddenTail = split.hidden;
+    state.textDraft.speakers = (parsed.speakers || []).map((s) => ({
+        speaker: String(s.speaker || ''),
+        text: htmlToPlainText(s.html || ''),
+        raw: String(s.raw || ''),
+    }));
+}
+
 function updatePanelFromTextDraft() {
     if (!state.panel) return;
-    state.panel.setTxt?.(plainTextToHtml(state.textDraft.narration || ''));
+    state.panel.setTxt?.(draftNarrationHtmlForPanel());
     state.panel.setSpeakers?.(draftToPanelSpeakers());
+    suppressPreviewSpeakerAnimation();
     wireInlineTextEditors();
     refreshSpeechBubbleDeleteButtons();
 }
 
-function openInlineTextEditor(hostEl, getValue, onCommit) {
+function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     if (!hostEl || !el.previewPane) return;
     if (state.activeInlineEditor) {
         state.activeInlineEditor.commit();
@@ -645,20 +1036,125 @@ function openInlineTextEditor(hostEl, getValue, onCommit) {
     }
     const rect = hostEl.getBoundingClientRect();
     hostEl.classList.add('is-inline-editing');
+    const wrapper = document.createElement('div');
+    wrapper.className = 'inline-text-editor';
+    if (hostEl.classList?.contains('panel-speech')) {
+        wrapper.classList.add('speech-inline-editor');
+    }
+    wrapper.style.left = `${rect.left}px`;
+    wrapper.style.top = `${rect.top}px`;
+    wrapper.style.width = `${Math.max(220, rect.width)}px`;
     const ta = document.createElement('textarea');
-    ta.className = 'inline-text-editor';
+    ta.className = 'inline-text-editor-input';
     ta.value = getValue();
-    ta.style.left = `${rect.left}px`;
-    ta.style.top = `${rect.top}px`;
-    ta.style.width = `${Math.max(80, rect.width)}px`;
-    ta.style.height = `${Math.max(28, rect.height)}px`;
+    let activeTab = 'text';
+    const sceneMacro = typeof options.sceneMacro === 'string' ? options.sceneMacro : '';
+    const choicesRaw = typeof options.choicesRaw === 'string' ? options.choicesRaw : '';
+    const hasSceneTab = typeof options.onSceneChange === 'function' || Boolean(sceneMacro.trim());
+    const hasChoicesTab = typeof options.onChoicesChange === 'function' || Boolean(choicesRaw.trim());
+    let sceneTa = null;
+    let choicesTa = null;
+    if (hasSceneTab) {
+        const tabs = document.createElement('div');
+        tabs.className = 'inline-text-editor-tabs';
+        const textTab = document.createElement('button');
+        textTab.type = 'button';
+        textTab.className = 'inline-tab active';
+        textTab.textContent = 'Text';
+        const sceneTab = document.createElement('button');
+        sceneTab.type = 'button';
+        sceneTab.className = 'inline-tab';
+        sceneTab.textContent = 'Scene';
+        tabs.appendChild(textTab);
+        tabs.appendChild(sceneTab);
+        let choicesTab = null;
+        if (hasChoicesTab) {
+            choicesTab = document.createElement('button');
+            choicesTab.type = 'button';
+            choicesTab.className = 'inline-tab';
+            choicesTab.textContent = 'Choices';
+            tabs.appendChild(choicesTab);
+        }
+        wrapper.appendChild(tabs);
+        sceneTa = document.createElement('textarea');
+        sceneTa.className = 'inline-text-editor-input';
+        sceneTa.value = sceneMacro;
+        sceneTa.style.display = 'none';
+        sceneTa.readOnly = false;
+        if (hasChoicesTab) {
+            choicesTa = document.createElement('textarea');
+            choicesTa.className = 'inline-text-editor-input';
+            choicesTa.value = choicesRaw;
+            choicesTa.style.display = 'none';
+            choicesTa.readOnly = false;
+        }
+        const switchTab = (tab) => {
+            activeTab = tab;
+            const textActive = tab === 'text';
+            const sceneActive = tab === 'scene';
+            const choicesActive = tab === 'choices';
+            textTab.classList.toggle('active', textActive);
+            sceneTab.classList.toggle('active', sceneActive);
+            if (choicesTab) choicesTab.classList.toggle('active', choicesActive);
+            ta.style.display = textActive ? 'block' : 'none';
+            if (sceneTa) sceneTa.style.display = sceneActive ? 'block' : 'none';
+            if (choicesTa) choicesTa.style.display = choicesActive ? 'block' : 'none';
+            autoSize();
+            if (textActive) ta.focus();
+            if (sceneActive && sceneTa) sceneTa.focus();
+            if (choicesActive && choicesTa) choicesTa.focus();
+        };
+        textTab.addEventListener('click', () => switchTab('text'));
+        sceneTab.addEventListener('click', () => switchTab('scene'));
+        if (choicesTab) choicesTab.addEventListener('click', () => switchTab('choices'));
+    }
+    wrapper.appendChild(ta);
+    if (sceneTa) wrapper.appendChild(sceneTa);
+    if (choicesTa) wrapper.appendChild(choicesTa);
     const autoSize = () => {
-        ta.style.height = 'auto';
-        ta.style.height = `${Math.max(28, ta.scrollHeight)}px`;
+        const active = activeTab === 'text' ? ta : (activeTab === 'scene' ? (sceneTa || ta) : (choicesTa || ta));
+        active.style.height = 'auto';
+        const desired = Math.max(48, active.scrollHeight);
+        active.style.height = `${Math.min(desired, Math.floor(window.innerHeight * 0.55))}px`;
+    };
+    const applyLiveComposite = () => {
+        if (!options.onLiveText) return;
+        let textVal;
+        if (typeof options.composeValue === 'function') {
+            textVal = options.composeValue({
+                textValue: ta.value,
+                sceneValue: sceneTa ? sceneTa.value : '',
+                choicesValue: choicesTa ? choicesTa.value : '',
+            });
+        } else {
+            textVal = ta.value;
+            if (sceneTa && typeof options.onSceneChange === 'function') {
+                textVal = options.onSceneChange(sceneTa.value, textVal);
+            }
+            if (choicesTa && typeof options.onChoicesChange === 'function') {
+                textVal = options.onChoicesChange(choicesTa.value, textVal);
+            }
+        }
+        options.onLiveText(textVal);
     };
     const commit = () => {
-        const val = ta.value;
-        ta.remove();
+        let val;
+        if (typeof options.composeValue === 'function') {
+            val = options.composeValue({
+                textValue: ta.value,
+                sceneValue: sceneTa ? sceneTa.value : '',
+                choicesValue: choicesTa ? choicesTa.value : '',
+            });
+        } else {
+            val = ta.value;
+            if (sceneTa && typeof options.onSceneChange === 'function') {
+                val = options.onSceneChange(sceneTa.value, val);
+            }
+            if (choicesTa && typeof options.onChoicesChange === 'function') {
+                val = options.onChoicesChange(choicesTa.value, val);
+            }
+        }
+        wrapper.remove();
         hostEl.classList.remove('is-inline-editing');
         state.activeInlineEditor = null;
         if (state.panel?.three) {
@@ -666,29 +1162,135 @@ function openInlineTextEditor(hostEl, getValue, onCommit) {
             state.panel.three.renderer?.setAnimationLoop?.(state.panel.three.animate);
         }
         onCommit(val);
+        refreshSpeechBubbleDeleteButtons();
     };
     const cancel = () => {
-        ta.remove();
+        wrapper.remove();
         hostEl.classList.remove('is-inline-editing');
         state.activeInlineEditor = null;
         if (state.panel?.three) {
             state.panel.three.setSpeakerAnimationPaused?.(false);
             state.panel.three.renderer?.setAnimationLoop?.(state.panel.three.animate);
         }
+        refreshSpeechBubbleDeleteButtons();
     };
-    ta.addEventListener('blur', commit);
+    ta.addEventListener('blur', () => {
+        // Don't auto-commit when moving between tabs/inputs inside wrapper.
+        requestAnimationFrame(() => {
+            if (!wrapper.contains(document.activeElement)) {
+                commit();
+            }
+        });
+    });
     ta.addEventListener('input', autoSize);
+    ta.addEventListener('input', applyLiveComposite);
+    if (sceneTa) sceneTa.addEventListener('blur', () => {
+        requestAnimationFrame(() => {
+            if (!wrapper.contains(document.activeElement)) {
+                commit();
+            }
+        });
+    });
+    if (sceneTa) sceneTa.addEventListener('input', () => {
+        autoSize();
+        applyLiveComposite();
+    });
+    if (choicesTa) choicesTa.addEventListener('blur', () => {
+        requestAnimationFrame(() => {
+            if (!wrapper.contains(document.activeElement)) {
+                commit();
+            }
+        });
+    });
+    if (choicesTa) choicesTa.addEventListener('input', () => {
+        autoSize();
+        applyLiveComposite();
+    });
     ta.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             e.preventDefault();
             cancel();
         }
     });
-    document.body.appendChild(ta);
+    document.body.appendChild(wrapper);
     autoSize();
     ta.focus();
     ta.select();
-    state.activeInlineEditor = { el: ta, commit, cancel, host: hostEl };
+    state.activeInlineEditor = { el: wrapper, commit, cancel, host: hostEl };
+    refreshSpeechBubbleDeleteButtons();
+}
+
+function openNarrationTabbedEditor(hostEl) {
+    if (!hostEl || !el.previewPane) return;
+    const p = state.passages[state.selected];
+    if (!p) return;
+    const raw = String(p.body || '');
+    const textRaw = extractTextLines(raw);
+    const sceneRaw = extractSceneLines(raw);
+    const choicesRaw = extractChoiceLines(raw);
+    openInlineTextEditor(
+        hostEl,
+        () => textRaw,
+        (val) => {
+            const nextRaw = String(val || '');
+            if (nextRaw === String(p.body || '')) return;
+            logBodyDiff(p.body, nextRaw, `narration-tabs:${p.name || state.selected}`);
+            p.body = nextRaw;
+            if (el.passageBody) el.passageBody.value = nextRaw;
+            refreshDraftFromPassageBody();
+            updatePanelFromTextDraft();
+            renderPreviewLinks(parseLinkLabels(p.body || ''));
+            setTextDirty(true);
+        },
+        {
+            sceneMacro: sceneRaw,
+            choicesRaw,
+            composeValue: ({ textValue, sceneValue, choicesValue }) => {
+                let nextRaw = String(raw || '');
+                nextRaw = mergeLinesAtIndices(
+                    nextRaw,
+                    getTextLineIndices(nextRaw),
+                    String(textValue || ''),
+                    'top',
+                    true
+                );
+                nextRaw = mergeLinesAtIndices(
+                    nextRaw,
+                    getSceneLineIndices(nextRaw),
+                    String(sceneValue || ''),
+                    'top'
+                );
+                nextRaw = mergeLinesAtIndices(
+                    nextRaw,
+                    getChoiceLineIndices(nextRaw),
+                    String(choicesValue || ''),
+                    'bottom'
+                );
+                return nextRaw;
+            },
+            onSceneChange: (sceneVal, baseTextVal) => {
+                const textRaw = String(baseTextVal || state.textDraft.narrationRaw || '');
+                const sceneIdx = getSceneLineIndices(textRaw);
+                return mergeLinesAtIndices(textRaw, sceneIdx, String(sceneVal || ''), 'top');
+            },
+            onChoicesChange: (choicesVal, baseTextVal) => {
+                const textRaw = String(baseTextVal || state.textDraft.narrationRaw || '');
+                const choiceIdx = getChoiceLineIndices(textRaw);
+                return mergeLinesAtIndices(textRaw, choiceIdx, String(choicesVal || ''), 'bottom');
+            },
+            onLiveText: (nextRaw) => {
+                const value = String(nextRaw || '');
+                if (value === String(p.body || '')) return;
+                logBodyDiff(p.body, value, `narration-live:${p.name || state.selected}`);
+                p.body = value;
+                if (el.passageBody) el.passageBody.value = value;
+                refreshDraftFromPassageBody();
+                updatePanelFromTextDraft();
+                renderPreviewLinks(parseLinkLabels(p.body || ''));
+                setTextDirty(true);
+            },
+        }
+    );
 }
 
 function wireInlineTextEditors() {
@@ -700,16 +1302,7 @@ function wireInlineTextEditors() {
             event.stopPropagation();
             state.selectedBubbleIndex = null;
             refreshSpeechBubbleDeleteButtons();
-            openInlineTextEditor(
-                narration,
-                () => String(state.textDraft.narration || ''),
-                (val) => {
-                    state.textDraft.narration = String(val || '');
-                    updatePanelFromTextDraft();
-                    syncDraftIntoPassageBody();
-                    setDirty(true);
-                }
-            );
+            openNarrationTabbedEditor(narration);
         });
     }
     for (let i = 0; i < (state.panel.speechEls || []).length; i += 1) {
@@ -719,24 +1312,39 @@ function wireInlineTextEditors() {
         bubble.dataset.inlineEditBound = '1';
         bubble.addEventListener('click', (event) => {
             event.stopPropagation();
+            if (state.activeInlineEditor) return;
+            state.selectedBubbleIndex = i;
+            refreshSpeechBubbleDeleteButtons();
+        });
+        bubble.addEventListener('dblclick', (event) => {
+            event.stopPropagation();
+            if (state.activeInlineEditor) return;
             state.selectedBubbleIndex = i;
             refreshSpeechBubbleDeleteButtons();
             openInlineTextEditor(
                 bubble,
-                () => String(draftSpeaker?.text || ''),
+                () => String(getSpeakerPayloadFromRaw(draftSpeaker?.raw || '', draftSpeaker?.speaker || '')),
                 (val) => {
                     if (!draftSpeaker) return;
                     const idx = state.textDraft.speakers.indexOf(draftSpeaker);
                     if (idx < 0) return;
-                    const nextText = String(val || '').trim();
-                    if (!nextText) {
-                        state.textDraft.speakers.splice(idx, 1);
+                    const oldRaw = String(state.textDraft.speakers[idx].raw || '');
+                    const raw = withSpeakerTag(String(val || ''), state.textDraft.speakers[idx].speaker || '', oldRaw).trim();
+                    if (raw === oldRaw.trim()) return;
+                    let visible = String(state.textDraft.narrationRaw || '');
+                    if (!raw) {
+                        const oldLine = oldRaw.split('\n').find((ln) => String(ln || '').trim()) || '';
+                        visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
+                    } else if (oldRaw && visible.includes(oldRaw)) {
+                        visible = replaceFirstBlock(visible, oldRaw, raw);
                     } else {
-                        state.textDraft.speakers[idx].text = nextText;
+                        visible = `${visible.replace(/\s*$/, '')}\n${raw}`.replace(/^\n+/, '');
                     }
-                    updatePanelFromTextDraft();
+                    state.textDraft.narrationRaw = visible;
                     syncDraftIntoPassageBody();
-                    setDirty(true);
+                    refreshDraftFromPassageBody();
+                    updatePanelFromTextDraft();
+                    setTextDirty(true);
                 }
             );
         });
@@ -747,11 +1355,16 @@ function removeSpeechBubbleAt(index) {
     const i = Number(index);
     if (!Number.isFinite(i) || i < 0) return;
     if (!state.textDraft?.speakers?.[i]) return;
-    state.textDraft.speakers.splice(i, 1);
+    const oldRaw = String(state.textDraft.speakers[i].raw || '');
+    const oldLine = oldRaw.split('\n').find((ln) => String(ln || '').trim()) || '';
+    let visible = String(state.textDraft.narrationRaw || '');
+    visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
+    state.textDraft.narrationRaw = visible;
     state.selectedBubbleIndex = null;
-    updatePanelFromTextDraft();
     syncDraftIntoPassageBody();
-    setDirty(true);
+    refreshDraftFromPassageBody();
+    updatePanelFromTextDraft();
+    setTextDirty(true);
 }
 
 function refreshSpeechBubbleDeleteButtons() {
@@ -783,7 +1396,10 @@ function refreshSpeechBubbleDeleteButtons() {
             speakerKey &&
             selectedModel === speakerKey
         );
-        btn.style.display = (selectedByBubble || selectedByModel) ? 'grid' : 'none';
+        const editingThisBubble = state.activeInlineEditor?.host === bubble;
+        const bubbleSelected = selectedByBubble || selectedByModel;
+        bubble.classList.toggle('is-selected-bubble', bubbleSelected && !editingThisBubble);
+        btn.style.display = (!editingThisBubble && bubbleSelected) ? 'grid' : 'none';
     }
 }
 
@@ -826,27 +1442,55 @@ function parseSpeakerBlocks(text, sceneObjects, format) {
             const after = originalPara.slice(splitIdx + 2);
             updatedPara = after.replace(/^\s+/, '').replace(/^(?:<br\s*\/?>\s*)+/gi, '');
         }
-        speakers.push({ speaker, html: updatedPara.trim() });
+        speakers.push({ speaker, html: updatedPara.trim(), raw: originalPara });
     }
 
     return {
         speakers,
         narrationText: narrationParas.join(format === 'twee' ? '\n' : '\n\n'),
+        narrationRaw: narrationParas.join('\n'),
     };
 }
 
 function parseLinkLabels(text) {
-    const visible = cleanText(text);
+    const source = String(text || '');
     const labels = [];
-    const re = /\[\[([^\]]+)\]\]/g;
+    const seen = new Set();
+    const pushLabel = (label) => {
+        const trimmed = String(label || '').trim();
+        if (!trimmed || seen.has(trimmed)) return;
+        seen.add(trimmed);
+        labels.push(trimmed);
+    };
+    const re = /\[\[([\s\S]*?)\]\]/g;
     let m;
-    while ((m = re.exec(String(visible || ''))) !== null) {
-        const raw = m[1] || '';
+    while ((m = re.exec(source)) !== null) {
+        const rawAll = String(m[1] || '');
+        const raw = rawAll.split('][')[0].trim();
         const pipe = raw.indexOf('|');
-        if (pipe >= 0) labels.push(raw.slice(0, pipe).trim());
-        else labels.push(raw.trim());
+        if (pipe >= 0) pushLabel(raw.slice(0, pipe).trim());
+        else {
+            const arrowIdx = raw.indexOf('->');
+            const revArrowIdx = raw.indexOf('<-');
+            if (arrowIdx >= 0) pushLabel(raw.slice(0, arrowIdx).trim());
+            else if (revArrowIdx >= 0) pushLabel(raw.slice(revArrowIdx + 2).trim());
+            else pushLabel(raw.trim());
+        }
     }
-    return labels.filter(Boolean);
+    // Support SugarCube link/button macros in editor preview.
+    const macroRe = /<<(?:link|button)\s+([^>]+)>>/gi;
+    while ((m = macroRe.exec(source)) !== null) {
+        const arg = String(m[1] || '').trim();
+        if (!arg) continue;
+        const quoted = arg.match(/^["']([^"']+)["']/);
+        if (quoted) {
+            pushLabel(quoted[1]);
+            continue;
+        }
+        const bare = arg.match(/^([^\s>]+)/);
+        if (bare) pushLabel(bare[1]);
+    }
+    return labels;
 }
 
 function saveCurrentPassageBody() {
@@ -895,7 +1539,7 @@ function updateCurrentPassageEnvironment({ backgroundName, skyColor }) {
     p.body = nextBody;
     el.passageBody.value = nextBody;
     persistVisualEditorState();
-    setDirty(true);
+    setSceneDirty(true);
     state.pendingSelectionKey = BACKGROUND_KEY;
     renderPreview();
 }
@@ -1163,6 +1807,7 @@ function destroyPanel() {
     if (el.selectedEnvironmentControls) el.selectedEnvironmentControls.style.display = 'none';
     if (el.floatingModelButtons) el.floatingModelButtons.style.display = 'none';
     if (el.floatingAddSpeechBtn) el.floatingAddSpeechBtn.style.display = 'none';
+    refreshCameraButtons();
 }
 
 function refreshModelSelect() {
@@ -1215,7 +1860,7 @@ function setupSceneEditor() {
     if (!state.panel?.three) return;
     state.panel.three.enableEditorTools?.({
         onChange: () => {
-            setDirty(true);
+            setSceneDirty(true);
         },
         onSelect: (key) => {
             const normalized = String(key || '');
@@ -1249,43 +1894,59 @@ function getSceneSnapshotForSave() {
 function saveSceneTransformsToPassage() {
     const p = state.passages[state.selected];
     if (!p || !state.panel?.three) return;
-    state.textDraft.speakers = (state.textDraft.speakers || []).filter((s) => String(s.text || '').trim().length > 0);
-    updatePanelFromTextDraft();
-    syncDraftIntoPassageBody();
-    const snapshot = getSceneSnapshotForSave();
-    if (!snapshot) {
-        setStatus('No editable scene to save.');
-        return;
+    const prevBody = String(p.body || '');
+    let nextBody = prevBody;
+    if (state.hasTextEdits) {
+        syncDraftIntoPassageBody();
+        nextBody = String(p.body || '');
     }
 
-    const scene = buildSceneFromPassage(p.body, state.vars) || {};
-    const selectedBackgroundName = String(el.selectedBackgroundSelect?.value || '').trim();
-    const selectedSkyColor = String(el.selectedSkyColorInput?.value || '').trim();
-    scene.objects = snapshot.objects || [];
-    scene.camera = snapshot.camera || null;
-    if (/^#[0-9a-f]{6}$/i.test(selectedSkyColor)) {
-        scene.skyColor = selectedSkyColor;
+    let savedSceneCount = null;
+    if (state.hasSceneEdits) {
+        const snapshot = getSceneSnapshotForSave();
+        if (!snapshot) {
+            setStatus('No editable scene to save.');
+            return;
+        }
+        const scene = buildSceneFromPassage(nextBody, state.vars) || {};
+        const selectedBackgroundName = String(el.selectedBackgroundSelect?.value || '').trim();
+        const selectedSkyColor = String(el.selectedSkyColorInput?.value || '').trim();
+        scene.objects = snapshot.objects || [];
+        scene.camera = snapshot.camera || null;
+        if (/^#[0-9a-f]{6}$/i.test(selectedSkyColor)) {
+            scene.skyColor = selectedSkyColor;
+        }
+        if (snapshot.background && (snapshot.background.name || snapshot.background.model || selectedBackgroundName)) {
+            scene.background = {
+                ...snapshot.background,
+                name: snapshot.background.name || selectedBackgroundName || snapshot.background.model || '',
+            };
+        } else if (selectedBackgroundName) {
+            scene.background = { name: selectedBackgroundName };
+        } else {
+            delete scene.background;
+        }
+        nextBody = writeDlExprToPassage(nextBody, toPrettyDlExpression(scene));
+        if (Number.isFinite(state.panelAspectOverride) && state.panelAspectOverride > 0) {
+            nextBody = upsertPanelAspectCommand(nextBody, state.panelAspectOverride);
+        }
+        savedSceneCount = scene.objects.length;
     }
-    if (snapshot.background && (snapshot.background.name || snapshot.background.model || selectedBackgroundName)) {
-        scene.background = {
-            ...snapshot.background,
-            name: snapshot.background.name || selectedBackgroundName || snapshot.background.model || '',
-        };
-    } else if (selectedBackgroundName) {
-        scene.background = { name: selectedBackgroundName };
+
+    if (nextBody !== prevBody) {
+        p.body = nextBody;
+        el.passageBody.value = nextBody;
+        persistVisualEditorState();
+        if (savedSceneCount == null) {
+            setStatus(`Saved text updates in "${p.name}".`);
+        } else {
+            setStatus(`Saved ${savedSceneCount} model transforms + camera + environment to "$DL" in "${p.name}".`);
+        }
     } else {
-        delete scene.background;
+        setStatus('No changes to save.');
     }
-
-    let nextBody = writeDlExprToPassage(p.body, toPrettyDlExpression(scene));
-    if (Number.isFinite(state.panelAspectOverride) && state.panelAspectOverride > 0) {
-        nextBody = upsertPanelAspectCommand(nextBody, state.panelAspectOverride);
-    }
-    p.body = nextBody;
-    el.passageBody.value = nextBody;
-    persistVisualEditorState();
-    setDirty(false);
-    setStatus(`Saved ${scene.objects.length} model transforms + camera + environment to "$DL" in "${p.name}".`);
+    setTextDirty(false);
+    setSceneDirty(false);
 }
 
 function startPreviewLoop() {
@@ -1310,6 +1971,8 @@ function startPreviewLoop() {
         state.panel.update?.();
         refreshModelSelect();
         refreshFloatingDeleteButton();
+        maybeCaptureImplicitCamera();
+        refreshCameraButtons();
         state.previewRaf = requestAnimationFrame(tick);
     };
     state.previewRaf = requestAnimationFrame(tick);
@@ -1375,22 +2038,27 @@ function renderPreview() {
         .replace(/<<[\s\S]*?>>/g, '')
         .replace(/\[\[[\s\S]*?\]\]/g, '');
     const parsed = parseSpeakerBlocks(cleanedText, sceneObjects, state.format);
-    state.textDraft = {
-        narration: htmlToPlainText(parsed.narrationText || ''),
-        speakers: (parsed.speakers || []).map((s) => ({
-            speaker: String(s.speaker || ''),
-            text: htmlToPlainText(s.html || ''),
-        })),
-    };
+    const split = splitHiddenBody(p.body || '');
+    state.textDraft.hiddenTail = split.hidden;
+    refreshDraftFromPassageBody();
     refreshEnvironmentControlsFromPassage();
     const links = parseLinkLabels(p.body);
     renderPreviewLinks(links);
     destroyPanel();
-    state.panel = new Panel(curr, target, `visual_${Date.now()}`, parsed.narrationText || '', -1, scene, 'narration', topInset);
+    const narrationForPanel = (state.textDraft.narrationRaw || '').trim().length
+        ? plainTextToHtml(state.textDraft.narrationRaw || '')
+        : '&#8203;';
+    state.panel = new Panel(curr, target, `visual_${Date.now()}`, narrationForPanel, -1, scene, 'narration', topInset);
     if (state.panel?.three?.scene) {
         state.panel.three.scene.background = new THREE.Color(env.skyColor);
     }
+    const passageKey = getCurrentPassageKey();
+    if (passageKey && !state.savedCameraByPassage[passageKey] && scene?.camera && typeof scene.camera === 'object') {
+        state.savedCameraByPassage[passageKey] = cloneSceneSpec(scene.camera);
+    }
+    maybeCaptureImplicitCamera();
     state.panel.setSpeakers?.(draftToPanelSpeakers());
+    suppressPreviewSpeakerAnimation();
     // Match viewer behavior: apply panel aspect mode and settle panel/canvas sizing
     // immediately so model slotting uses the same effective viewport.
     state.panel.setAspectMode?.(aspectMode);
@@ -1410,6 +2078,7 @@ function renderPreview() {
     startPreviewLoop();
     refreshPanelAspectHandle();
     refreshFloatingDeleteButton();
+    refreshCameraButtons();
     wireInlineTextEditors();
     refreshSpeechBubbleDeleteButtons();
     if (!String(el.status?.textContent || '').includes('editor tools unavailable')) {
@@ -1463,7 +2132,8 @@ async function loadFile(file) {
     state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
     state.vars = parseStoryInitGlobals(state.storyInitBody);
     state.selected = 0;
-    setDirty(false);
+    setTextDirty(false);
+    setSceneDirty(false);
     el.formatText.textContent = `Type: ${state.format}`;
     updatePreviewStoryButton();
     renderPassageList();
@@ -1542,7 +2212,8 @@ el.applyBtn?.addEventListener('click', () => {
     state.storyInitBody = state.passages.find((x) => x.name === 'StoryInit')?.body || '';
     state.vars = parseStoryInitGlobals(state.storyInitBody);
     persistVisualEditorState();
-    setDirty(false);
+    setTextDirty(false);
+    setSceneDirty(false);
     renderPreview();
 });
 
@@ -1576,6 +2247,7 @@ window.addEventListener('pointerdown', (event) => {
             target.closest('#selectedModelBadge') ||
             target.closest('#floatingModelButtons') ||
             target.closest('#floatingAddSpeechBtn') ||
+            target.closest('#cameraTools') ||
             target.closest('#floatingSaveTools')
         ) {
             return;
@@ -1621,6 +2293,41 @@ el.floatingModeScaleBtn?.addEventListener('click', () => {
     setFloatingModeActive(mode);
 });
 
+el.saveCameraBtn?.addEventListener('click', () => {
+    const three = state.panel?.three;
+    if (!three?.getCameraSpecSnapshot) return;
+    const key = getCurrentPassageKey();
+    if (!key) return;
+    const spec = three.getCameraSpecSnapshot();
+    state.savedCameraByPassage[key] = cloneSceneSpec(spec);
+    setSceneDirty(true);
+    setStatus('Saved camera position for this passage. Press Save Scene to persist.');
+});
+
+el.revertCameraBtn?.addEventListener('click', () => {
+    const three = state.panel?.three;
+    if (!three) return;
+    const key = getCurrentPassageKey();
+    let spec = key ? state.savedCameraByPassage[key] : null;
+    if (!spec && key) {
+        spec = state.implicitCameraByPassage[key] || null;
+    }
+    if (!spec) {
+        const p = state.passages[state.selected];
+        const scene = buildSceneFromPassage(p?.body || '', state.vars) || {};
+        if (scene?.camera && typeof scene.camera === 'object') {
+            spec = scene.camera;
+        }
+    }
+    if (!spec) {
+        setStatus('No saved camera found for this passage.');
+        return;
+    }
+    three.setCameraSpec?.(cloneSceneSpec(spec));
+    setSceneDirty(true);
+    setStatus('Reverted camera. Press Save Scene to persist.');
+});
+
 el.addModelBtn?.addEventListener('click', () => {
     if (!state.panel?.three) return;
     const asset = String(el.addModelAssetSelect?.value || '').trim();
@@ -1634,36 +2341,47 @@ el.addModelBtn?.addEventListener('click', () => {
         key = `${asset}${i}`;
     }
     state.panel.three.addModel(`${key}=${asset} MID CENTER LOOKFRONT`);
-    setDirty(true);
+    setSceneDirty(true);
 });
 
 el.floatingAddSpeechBtn?.addEventListener('click', () => {
     const speaker = String(state.selectedModelKey || '').trim();
     if (!speaker || speaker === BACKGROUND_KEY) return;
-    const draftSpeaker = { speaker, text: '' };
-    state.textDraft.speakers.push(draftSpeaker);
-    updatePanelFromTextDraft();
+    const rawLine = `${speaker}:: `;
+    state.textDraft.narrationRaw = `${String(state.textDraft.narrationRaw || '').replace(/\s*$/, '')}\n${rawLine}`.replace(/^\n+/, '');
     syncDraftIntoPassageBody();
-    setDirty(true);
+    refreshDraftFromPassageBody();
+    updatePanelFromTextDraft();
+    setTextDirty(true);
     wireInlineTextEditors();
+    const draftSpeaker = state.textDraft.speakers[state.textDraft.speakers.length - 1];
+    if (!draftSpeaker) return;
     const idx = state.textDraft.speakers.indexOf(draftSpeaker);
     const bubble = idx >= 0 ? state.panel?.speechEls?.[idx] : null;
     if (bubble) {
         openInlineTextEditor(
             bubble,
-            () => '',
+            () => String(getSpeakerPayloadFromRaw(draftSpeaker.raw || '', draftSpeaker.speaker || speaker)),
             (val) => {
                 const i = state.textDraft.speakers.indexOf(draftSpeaker);
                 if (i < 0) return;
-                const nextText = String(val || '').trim();
-                if (!nextText) {
-                    state.textDraft.speakers.splice(i, 1);
+                const oldRaw = String(state.textDraft.speakers[i].raw || '');
+                const raw = withSpeakerTag(String(val || ''), state.textDraft.speakers[i].speaker || speaker, oldRaw).trim();
+                if (raw === oldRaw.trim()) return;
+                let visible = String(state.textDraft.narrationRaw || '');
+                if (!raw) {
+                    const oldLine = oldRaw.split('\n').find((ln) => String(ln || '').trim()) || '';
+                    visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
+                } else if (oldRaw && visible.includes(oldRaw)) {
+                    visible = replaceFirstBlock(visible, oldRaw, raw);
                 } else {
-                    state.textDraft.speakers[i].text = nextText;
+                    visible = `${visible.replace(/\s*$/, '')}\n${raw}`.replace(/^\n+/, '');
                 }
-                updatePanelFromTextDraft();
+                state.textDraft.narrationRaw = visible;
                 syncDraftIntoPassageBody();
-                setDirty(true);
+                refreshDraftFromPassageBody();
+                updatePanelFromTextDraft();
+                setTextDirty(true);
             }
         );
     }
@@ -1694,7 +2412,7 @@ el.floatingDeleteModelBtn?.addEventListener('click', () => {
     if (!state.panel?.three || !state.selectedModelKey) return;
     if (state.selectedModelKey === BACKGROUND_KEY) {
         if (undoEnvironmentChanges()) {
-            setDirty(true);
+            setSceneDirty(true);
             refreshFloatingDeleteButton();
             refreshSelectedModelBadge();
         }
@@ -1702,7 +2420,7 @@ el.floatingDeleteModelBtn?.addEventListener('click', () => {
     }
     const reverted = state.panel.three.revertEditableModelTransformByKey?.(state.selectedModelKey);
     if (reverted) {
-        setDirty(true);
+        setSceneDirty(true);
         refreshModelSelect();
         refreshFloatingDeleteButton();
     }
@@ -1726,7 +2444,8 @@ el.selectedDeleteModelBtn?.addEventListener('click', () => {
             (s) => String(s.speaker || '').trim().toLowerCase() !== deletedKey.toLowerCase()
         );
         syncDraftIntoPassageBody();
-        setDirty(true);
+        setTextDirty(true);
+        setSceneDirty(true);
         refreshModelSelect();
         refreshFloatingDeleteButton();
         refreshCurrentPanelTextAndBubbles();
@@ -1742,7 +2461,7 @@ el.clearSceneBtn?.addEventListener('click', () => {
     for (const key of keys) {
         state.panel.three.removeEditableModelByKey?.(key);
     }
-    setDirty(true);
+    setSceneDirty(true);
     refreshModelSelect();
     refreshSelectedModelBadge();
     refreshFloatingDeleteButton();
@@ -1777,7 +2496,7 @@ el.panelAspectHandle?.addEventListener('pointermove', (event) => {
         height: fitted.height,
     }, false);
     refreshPanelAspectHandle();
-    setDirty(true);
+    setSceneDirty(true);
 });
 
 el.panelAspectHandle?.addEventListener('pointerup', (event) => {
@@ -1793,7 +2512,7 @@ el.panelAspectHandle?.addEventListener('pointercancel', (event) => {
 el.passageBody?.addEventListener('input', () => {
     saveCurrentPassageBody();
     persistVisualEditorState();
-    setDirty(true);
+    setTextDirty(true);
 });
 
 el.exportBtn?.addEventListener('click', async () => {
@@ -1812,7 +2531,8 @@ el.exportBtn?.addEventListener('click', async () => {
             setStatus('Exported TWEE');
         }
         persistVisualEditorState();
-        setDirty(false);
+        setTextDirty(false);
+        setSceneDirty(false);
     }, {
         onSave: () => saveSceneTransformsToPassage(),
     });
@@ -1854,6 +2574,7 @@ if (el.modelSelect && !el.modelSelect.options.length) {
 }
 if (el.gizmoMode) el.gizmoMode.disabled = true;
 if (el.saveSceneBtn) el.saveSceneBtn.disabled = true;
+refreshCameraButtons();
 initAssetDropdown();
 initBackgroundDropdown();
 updatePreviewStoryButton();
