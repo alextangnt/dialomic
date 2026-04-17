@@ -1469,6 +1469,8 @@ export class Panel {
         this.canvas.style.display = 'block';
         this.canvas.style.zIndex = '20';
         this.canvas.style.pointerEvents = 'auto';
+        this.canvas.style.transformOrigin = 'center center';
+        this.canvas.style.transition = 'transform 120ms ease';
         this.canvas.dataset.panelId = String(this.id);
         document.body.appendChild(this.canvas);
 
@@ -1481,6 +1483,8 @@ export class Panel {
         this.textEl.style.fontSize = '16.8px';
         this.textEl.style.lineHeight = '20.16px';
         this.textEl.innerHTML = this.text || '';
+        this.textEl.style.transformOrigin = 'center center';
+        this.textEl.style.transition = 'transform 120ms ease';
         this.textEl.dataset.panelId = String(this.id);
         document.body.appendChild(this.textEl);
 
@@ -1492,6 +1496,8 @@ export class Panel {
         this.narrationEl.style.fontSize = '16.8px';
         this.narrationEl.style.lineHeight = '20.16px';
         this.narrationEl.innerHTML = this.text || '';
+        this.narrationEl.style.transformOrigin = 'center center';
+        this.narrationEl.style.transition = 'transform 120ms ease';
         this.narrationEl.dataset.panelId = String(this.id);
         this.narrationBgEl = document.createElement('div');
         this.narrationBgEl.className = 'panel-narration-bg';
@@ -1502,6 +1508,8 @@ export class Panel {
         this.narrationBgEl.style.height = '0px';
         this.narrationBgEl.style.background = '#000';
         this.narrationBgEl.style.pointerEvents = 'none';
+        this.narrationBgEl.style.transformOrigin = 'center center';
+        this.narrationBgEl.style.transition = 'transform 120ms ease';
         this.narrationBgEl.dataset.panelId = String(this.id);
         document.body.appendChild(this.narrationBgEl);
         document.body.appendChild(this.narrationEl);
@@ -1521,6 +1529,7 @@ export class Panel {
         this.fixedNarrationReserve = 0;
         this.layerBaseZ = 100;
         this.speechLayerBaseZ = 300;
+        this.speechBounds = null;
         this.isHovered = false;
         this.hoverScale = 1;
         this.setLayerPriority(0, false);
@@ -1927,6 +1936,22 @@ export class Panel {
         this.updateNarrationTarget();
     }
 
+    setSpeechBounds(bounds){
+        if (!bounds || typeof bounds !== 'object') {
+            this.speechBounds = null;
+            return;
+        }
+        const left = Number(bounds.left);
+        const top = Number(bounds.top);
+        const right = Number(bounds.right);
+        const bottom = Number(bounds.bottom);
+        if (![left, top, right, bottom].every((n) => Number.isFinite(n))) {
+            this.speechBounds = null;
+            return;
+        }
+        this.speechBounds = { left, top, right, bottom };
+    }
+
     setNarrationMinTop(minTop){
         this.narrationMinTop = Number.isFinite(minTop) ? minTop : null;
         this.updateNarrationTarget();
@@ -1960,25 +1985,12 @@ export class Panel {
         const next = Boolean(isHovered);
         if (this.isHovered === next) return;
         this.isHovered = next;
-        this.hoverScale = this.isHovered ? 1.03 : 1;
-        const transform = `scale(${this.hoverScale})`;
-        const panelRect = this.canvas.getBoundingClientRect();
-        const pivotX = panelRect.left + panelRect.width / 2;
-        const pivotY = panelRect.top + panelRect.height / 2;
-        const apply = (el) => {
-            if (!el) return;
-            const rect = el.getBoundingClientRect();
-            const originX = pivotX - rect.left;
-            const originY = pivotY - rect.top;
-            el.style.transformOrigin = `${originX}px ${originY}px`;
-            el.style.transition = 'transform 140ms ease';
-            el.style.transform = transform;
-        };
-        apply(this.canvas);
-        apply(this.textEl);
-        apply(this.narrationBgEl);
-        apply(this.narrationEl);
-        for (const el of this.speechEls) apply(el);
+        this.hoverScale = next ? 1.015 : 1;
+        const t = `scale(${this.hoverScale})`;
+        this.canvas.style.transform = t;
+        this.textEl.style.transform = t;
+        this.narrationBgEl.style.transform = t;
+        this.narrationEl.style.transform = t;
     }
 
     syncNarrationPosition(){
@@ -2033,8 +2045,8 @@ export class Panel {
             this.speechEls.push(el);
             el.style.zIndex = `${this.speechLayerBaseZ}`;
             el.style.transformOrigin = 'center center';
-            el.style.transition = 'transform 140ms ease';
-            el.style.transform = `scale(${this.hoverScale})`;
+            el.style.transition = 'width 160ms ease, max-width 160ms ease';
+            el.style.transform = 'none';
         }
         this.speechLayout.sync(this.speechEls, this.speakers);
     }

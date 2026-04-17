@@ -45,6 +45,7 @@ export class SpeechBubbleLayout {
         this.minTopSeparation = 8;
         this.tailPad = 18;
         this.lastCanvasSize = { width: 0, height: 0, left: 0, top: 0 };
+        this.lastBoundsSig = '';
     }
 
     sync(elements, speakers) {
@@ -82,6 +83,7 @@ export class SpeechBubbleLayout {
                 frozenTailStyle: canReuse ? (existing?.frozenTailStyle ?? null) : null,
                 lastAnchorX: canReuse ? (existing?.lastAnchorX ?? null) : null,
                 lastAnchorY: canReuse ? (existing?.lastAnchorY ?? null) : null,
+                narrationSide: canReuse ? (existing?.narrationSide ?? null) : null,
             };
         });
     }
@@ -436,10 +438,23 @@ export class SpeechBubbleLayout {
         this.lastCanvasSize.height = canvasRect.height;
         this.lastCanvasSize.left = canvasRect.left;
         this.lastCanvasSize.top = canvasRect.top;
-        // Recompute only when geometry truly changes (resize/new content), not on simple panel translation.
-        // Translation is handled by shifting cached base coordinates below to avoid vertical jostle.
-        const recomputeLayout = resized || this.items.some((item) => item.baseLeft == null || item.baseTop == null || item.widthDirty);
         const speechBounds = this.panel.speechBounds || null;
+        const boundsSig = speechBounds
+            ? [
+                Math.round(Number(speechBounds.left) || 0),
+                Math.round(Number(speechBounds.top) || 0),
+                Math.round(Number(speechBounds.right) || 0),
+                Math.round(Number(speechBounds.bottom) || 0),
+            ].join('|')
+            : 'none';
+        const boundsChanged = boundsSig !== this.lastBoundsSig;
+        this.lastBoundsSig = boundsSig;
+        // Keep a stable base layout; recompute only on meaningful geometry changes.
+        // Pure per-frame translation while panel animates is handled by shifting cached coordinates above.
+        const recomputeLayout =
+            resized ||
+            boundsChanged ||
+            this.items.some((item) => item.baseLeft == null || item.baseTop == null || item.widthDirty);
         const leftBound = Math.max(
             0,
             Number.isFinite(speechBounds?.left) ? (speechBounds.left + 8) : (canvasRect.left + 8)
@@ -451,22 +466,48 @@ export class SpeechBubbleLayout {
                 Number.isFinite(speechBounds?.right) ? (speechBounds.right - 8) : (canvasRect.right - 8)
             )
         );
-        const topBound = canvasRect.top + 8;
+        const topBound = Math.max(
+            0,
+            Number.isFinite(speechBounds?.top) ? (speechBounds.top + 8) : (canvasRect.top + 8)
+        );
         const linkList = document.getElementById('link-list');
         const linkRect = linkList ? linkList.getBoundingClientRect() : null;
         const choiceTop = linkRect ? (linkRect.top - 8) : null;
-        const bottomBound = canvasRect.bottom - 8;
+        let bottomBound = Math.min(
+            window.innerHeight,
+            Number.isFinite(speechBounds?.bottom) ? (speechBounds.bottom - 8) : (canvasRect.bottom - 8)
+        );
+        if (choiceTop != null) bottomBound = Math.min(bottomBound, choiceTop - 8);
+        bottomBound = Math.max(topBound + 24, bottomBound);
+        const softBottomBound = bottomBound + 24;
+        const hardLeftBound = 6;
+        const hardRightBound = Math.max(hardLeftBound + 24, window.innerWidth - 6);
+        const hardTopBound = 6;
+        const hardBottomBound = Math.max(hardTopBound + 24, (choiceTop != null ? (choiceTop - 8) : (window.innerHeight - 8)) + 24);
         const narrationRect = this.panel.narrationEl.getBoundingClientRect();
         const maxWidth = Math.min(this.maxWidth, rightBound - leftBound);
         const placed = [];
+        const committedRects = [];
         const tailSegments = [];
+        const rectsOverlap = (a, b) =>
+            a.right > b.left && a.left < b.right &&
+            a.bottom > b.top && a.top < b.bottom;
         const overlapsPlaced = (rect, allowNonBlocking = false) => placed.some((r) => (allowNonBlocking ? r.block !== false : true) &&
             rect.right > r.left && rect.left < r.right &&
             rect.bottom > r.top && rect.top < r.bottom);
         const speakerCircles = [];
         const seenSpeakers = new Set();
+        const speakerKeys = new Set();
+        if (this.panel?.three?.modelByKey && typeof this.panel.three.modelByKey.keys === 'function') {
+            for (const k of this.panel.three.modelByKey.keys()) {
+                if (k) speakerKeys.add(String(k));
+            }
+        }
         for (const item of this.items) {
-            const key = String(item.speaker || '').trim();
+            const k = String(item.speaker || '').trim();
+            if (k) speakerKeys.add(k);
+        }
+        for (const key of speakerKeys) {
             if (!key || seenSpeakers.has(key)) continue;
             const model = this.panel.three?.getModelByKey(key);
             const hopDelta = model && Number.isFinite(model.userData?.baseY)
@@ -481,35 +522,46 @@ export class SpeechBubbleLayout {
             seenSpeakers.add(key);
         }
         const overlapsAnySpeaker = (rect) => speakerCircles.some((circle) => this.rectIntersectsCircle(rect, circle));
+        const ownId = String(this.panel.id);
+        const blockedRects = [];
+        // Narration is the only global blocker. Bubble bodies may exceed their own panel
+        // within slot bounds, as long as they avoid narration regions.
+        document.querySelectorAll('.panel-narration-bg[data-panel-id]').forEach((el) => {
+            if (el.style?.display === 'none') return;
+            const pid = String(el.dataset.panelId || '');
+            if (!pid || pid === ownId) return;
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) return;
+            blockedRects.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom });
+        });
 
-        let prevTop = topBound - this.minTopSeparation;
+        const bubbles = [];
+        const speakerLineOrder = new Map();
         for (let idx = 0; idx < this.items.length; idx++) {
             const item = this.items[idx];
             const el = item.el;
             if (!el) continue;
             const allowWidthChange = resized || item.widthDirty || item.width == null;
+            el.style.maxWidth = `${maxWidth}px`;
             if (allowWidthChange) {
-                el.style.maxWidth = `${maxWidth}px`;
                 el.style.width = 'fit-content';
-            } else {
-                el.style.maxWidth = `${item.width}px`;
-                el.style.width = `${item.width}px`;
-            }
-            let rect = el.getBoundingClientRect();
-            if (allowWidthChange) {
-                if (item.expandOnly && item.width != null) {
-                    item.width = Math.min(maxWidth, Math.max(item.width, rect.width));
-                } else {
-                    item.width = Math.min(maxWidth, rect.width);
-                }
-                el.style.maxWidth = `${item.width}px`;
-                el.style.width = `${item.width}px`;
-                rect = el.getBoundingClientRect();
+                const natural = el.getBoundingClientRect().width;
+                item.width = Math.max(this.minWidth, Math.min(maxWidth, natural));
                 item.widthDirty = false;
                 item.expandOnly = false;
+            } else if (!Number.isFinite(item.width)) {
+                const natural = el.getBoundingClientRect().width;
+                item.width = Math.max(this.minWidth, Math.min(maxWidth, natural));
             }
+            el.style.width = `${item.width}px`;
+            el.style.maxWidth = `${item.width}px`;
+            let rect = el.getBoundingClientRect();
 
             const speakerKey = String(item.speaker || '').trim();
+            const lineOrder = speakerKey
+                ? (speakerLineOrder.get(speakerKey) || 0)
+                : 0;
+            if (speakerKey) speakerLineOrder.set(speakerKey, lineOrder + 1);
             const speakerModel = speakerKey ? this.panel.three?.getModelByKey(speakerKey) : null;
             const activeIndex = this.panel.three?.speakerAnim?.index ?? -1;
             const isActiveLine = activeIndex === idx;
@@ -525,28 +577,18 @@ export class SpeechBubbleLayout {
                     speakerRect.top > bottomBound)
                 : false;
             const canvasCenterX = (canvasRect.left + canvasRect.right) / 2;
-            let anchorX;
-            let anchorY;
+            let anchorX = canvasCenterX;
+            let anchorY = canvasRect.top + canvasRect.height * 0.2;
             let anchorXLive = null;
             let anchorYLive = null;
             if (speakerRect) {
                 const targetAnchorX = (speakerRect.left + speakerRect.right) / 2;
                 const targetAnchorY = speakerRect.top;
-                const targetNorm = {
-                    x: (targetAnchorX - canvasRect.left) / canvasRect.width,
-                    y: (targetAnchorY - canvasRect.top) / canvasRect.height,
-                };
                 if (!item.anchorNorm) {
-                    item.anchorNorm = targetNorm;
-                } else {
-                    const follow = 0.15;
                     item.anchorNorm = {
-                        x: item.anchorNorm.x + (targetNorm.x - item.anchorNorm.x) * follow,
-                        y: item.anchorNorm.y + (targetNorm.y - item.anchorNorm.y) * follow,
+                        x: (targetAnchorX - canvasRect.left) / canvasRect.width,
+                        y: (targetAnchorY - canvasRect.top) / canvasRect.height,
                     };
-                }
-                if (!item.side) {
-                    item.side = targetAnchorX <= canvasCenterX ? 'left' : 'right';
                 }
                 anchorXLive = targetAnchorX;
                 anchorYLive = targetAnchorY;
@@ -554,407 +596,403 @@ export class SpeechBubbleLayout {
             if (item.anchorNorm) {
                 anchorX = canvasRect.left + item.anchorNorm.x * canvasRect.width;
                 anchorY = canvasRect.top + item.anchorNorm.y * canvasRect.height;
-            } else {
-                anchorX = canvasCenterX;
-                anchorY = canvasRect.top + canvasRect.height * 0.2;
-                if (!item.side) {
-                    item.side = anchorX <= canvasCenterX ? 'left' : 'right';
-                }
             }
-            if (speakerOffscreen) {
-                const centerX = speakerRect ? (speakerRect.left + speakerRect.right) / 2 : anchorX;
-                const centerY = speakerRect ? (speakerRect.top + speakerRect.bottom) / 2 : anchorY;
-                const clampedX = Math.max(leftBound, Math.min(rightBound, centerX));
-                let clampedY = Math.max(topBound, Math.min(bottomBound, centerY));
-                if (speakerRect && speakerRect.bottom < topBound) clampedY = topBound;
-                if (speakerRect && speakerRect.top > bottomBound) clampedY = bottomBound;
-                anchorX = clampedX;
-                anchorY = clampedY;
-                anchorXLive = clampedX;
-                anchorYLive = clampedY;
+            if (speakerOffscreen && speakerRect) {
+                const centerX = (speakerRect.left + speakerRect.right) / 2;
+                const centerY = (speakerRect.top + speakerRect.bottom) / 2;
+                anchorXLive = Math.max(leftBound, Math.min(rightBound, centerX));
+                anchorYLive = Math.max(topBound, Math.min(bottomBound, centerY));
+                anchorX = anchorXLive;
+                anchorY = anchorYLive;
             }
             item.lastAnchorX = anchorXLive ?? anchorX;
             item.lastAnchorY = anchorYLive ?? anchorY;
-
             const speakerCircle = speakerOffscreen ? null : this.getSpeakerCircle(item, speakerRect, canvasRect);
-            const circleRect = speakerCircle
-                ? {
-                    left: speakerCircle.cx - speakerCircle.r,
-                    right: speakerCircle.cx + speakerCircle.r,
-                    top: speakerCircle.cy - speakerCircle.r,
-                    bottom: speakerCircle.cy + speakerCircle.r,
-                }
-                : speakerRect;
-
-            const liftTarget = isSpeaking
-                ? Math.min(10, canvasRect.height * 0.08)
-                : 0;
-            const liftFollow = 0.32;
-            item.lift = item.lift + (liftTarget - item.lift) * liftFollow;
-            const topLimit = topBound;
-            let left = Math.max(leftBound, Math.min(rightBound - rect.width, anchorX - rect.width / 2));
-            let top;
-            let placementMode = 'above';
-            let forcedBottom = false;
-            let testRect;
+            const speakerMidY = speakerCircle
+                ? speakerCircle.cy
+                : (speakerRect ? (speakerRect.top + speakerRect.bottom) / 2 : anchorY);
+            const prefX = Math.max(leftBound, Math.min(rightBound - rect.width, anchorX - rect.width / 2));
+            const prefAbove = anchorY - rect.height - this.tailPad;
+            const prefBelow = anchorY + this.tailPad;
+            const sameSpeakerOffset = lineOrder * Math.max(10, rect.height * 0.42);
+            const prefY = Math.max(topBound, Math.min(softBottomBound - rect.height, prefAbove + sameSpeakerOffset));
+            const startY = speakerCircle
+                ? (this.rectIntersectsCircle({ left: prefX, top: prefY, right: prefX + rect.width, bottom: prefY + rect.height }, speakerCircle)
+                    ? Math.max(topBound, Math.min(softBottomBound - rect.height, prefBelow))
+                    : prefY)
+                : prefY;
             const useBaseLayout = !recomputeLayout && (
                 (item.baseNormX != null && item.baseNormY != null) ||
                 (item.baseLeft != null && item.baseTop != null)
             );
-            if (useBaseLayout) {
-                left = item.baseNormX != null
-                    ? (canvasRect.left + item.baseNormX * canvasRect.width)
-                    : item.baseLeft;
-                top = item.baseNormY != null
-                    ? (canvasRect.top + item.baseNormY * canvasRect.height)
-                    : item.baseTop;
-                testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-            } else {
-                if (circleRect) {
-                    const candidateAbove = circleRect.top - rect.height - this.tailPad;
-                    const candidateBelow = circleRect.bottom + this.tailPad;
-                    const aboveRect = {
-                        left,
-                        top: candidateAbove,
-                        right: left + rect.width,
-                        bottom: candidateAbove + rect.height,
-                    };
-                    const belowRect = {
-                        left,
-                        top: candidateBelow,
-                        right: left + rect.width,
-                        bottom: candidateBelow + rect.height,
-                    };
-                    const overlapsAbove = this.rectIntersectsCircle(aboveRect, speakerCircle);
-                    const overlapsBelow = this.rectIntersectsCircle(belowRect, speakerCircle);
-                    if (overlapsAbove && !overlapsBelow) {
-                        top = candidateBelow;
-                        placementMode = 'below';
-                    } else if (overlapsAbove && overlapsBelow) {
-                        top = candidateBelow;
-                        placementMode = 'below';
-                    } else {
-                        top = candidateAbove;
-                        placementMode = 'above';
-                    }
-                } else {
-                    top = anchorY - rect.height - this.tailPad;
-                }
-                top = Math.max(topLimit, top);
-                top = Math.max(top, prevTop + this.minTopSeparation);
-                testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
+            const baseX = useBaseLayout
+                ? (item.baseNormX != null ? (canvasRect.left + item.baseNormX * canvasRect.width) : item.baseLeft)
+                : prefX;
+            const baseY = useBaseLayout
+                ? (item.baseNormY != null ? (canvasRect.top + item.baseNormY * canvasRect.height) : item.baseTop)
+                : startY;
+            bubbles.push({
+                idx,
+                item,
+                el,
+                rect,
+                w: rect.width,
+                h: rect.height,
+                x: baseX,
+                y: baseY,
+                prefX,
+                prefY: startY,
+                speakerCircle,
+                speakerRect,
+                speakerMidY,
+                speakerKey,
+                lineOrder,
+                isSpeaking,
+                anchorX,
+                anchorY,
+                anchorXLive,
+                anchorYLive,
+                useBaseLayout,
+            });
+        }
 
-                // Avoid any speaker overlap, prioritizing upward movement.
-                if (overlapsAnySpeaker(testRect)) {
-                    let moved = false;
-                    let candidate = top;
-                    for (let i = 0; i < 16; i++) {
-                        candidate -= 6;
-                        if (candidate < topBound) break;
-                        const tryRect = {
-                            left,
-                            top: candidate,
-                            right: left + rect.width,
-                            bottom: candidate + rect.height,
-                        };
-                        const overlapsNarration =
-                            tryRect.right > narrationRect.left &&
-                            tryRect.left < narrationRect.right &&
-                            tryRect.bottom > narrationRect.top &&
-                            tryRect.top < narrationRect.bottom;
-                        if (overlapsNarration || overlapsPlaced(tryRect, !recomputeLayout)) break;
-                        if (!overlapsAnySpeaker(tryRect)) {
-                            top = candidate;
-                            testRect = tryRect;
-                            moved = true;
-                            break;
+        const narrationVisible = this.panel.narrationEl?.style?.display !== 'none' && narrationRect.height > 0;
+        const collidesNarration = (b) => {
+            if (!narrationVisible) return false;
+            const r = { left: b.x, top: b.y, right: b.x + b.w, bottom: b.y + b.h };
+            const eps = 1; // avoid sub-pixel "touching" jitter against narration
+            return (
+                r.right > narrationRect.left + eps &&
+                r.left < narrationRect.right - eps &&
+                r.bottom > narrationRect.top + eps &&
+                r.top < narrationRect.bottom - eps
+            );
+        };
+        const resolveNarrationOverlap = (item, x, y, w, h) => {
+            if (!narrationVisible) return { x, y, side: item?.narrationSide || null };
+            const rect = { left: x, top: y, right: x + w, bottom: y + h };
+            if (!rectsOverlap(rect, narrationRect)) return { x, y, side: item?.narrationSide || null };
+            const pad = 8;
+            const candidates = [];
+            const addCandidate = (side, nx, ny) => {
+                const cx = Math.max(hardLeftBound, Math.min(hardRightBound - w, nx));
+                const cy = Math.max(hardTopBound, Math.min(hardBottomBound - h, ny));
+                const r = { left: cx, top: cy, right: cx + w, bottom: cy + h };
+                if (rectsOverlap(r, narrationRect)) return;
+                const score = Math.hypot(cx - x, cy - y);
+                candidates.push({ side, x: cx, y: cy, score });
+            };
+            // Side placement first to reduce vertical jitter.
+            addCandidate('left', narrationRect.left - w - pad, y);
+            addCandidate('right', narrationRect.right + pad, y);
+            addCandidate('top', x, narrationRect.top - h - pad);
+            addCandidate('bottom', x, narrationRect.bottom + pad);
+            if (!candidates.length) return { x, y, side: item?.narrationSide || null };
+            candidates.sort((a, b) => a.score - b.score);
+            if (item) item.narrationSide = candidates[0].side;
+            return { x: candidates[0].x, y: candidates[0].y, side: candidates[0].side };
+        };
+        const collidesBlocked = (b) => {
+            const r = { left: b.x, top: b.y, right: b.x + b.w, bottom: b.y + b.h };
+            return blockedRects.find((blk) => rectsOverlap(r, blk)) || null;
+        };
+        const enforceSpeakerOrder = (list) => {
+            const bySpeaker = new Map();
+            for (const b of list) {
+                const key = String(b.speakerKey || '').trim();
+                if (!key) continue;
+                if (!bySpeaker.has(key)) bySpeaker.set(key, []);
+                bySpeaker.get(key).push(b);
+            }
+            for (const arr of bySpeaker.values()) {
+                arr.sort((a, b) => (a.lineOrder || 0) - (b.lineOrder || 0));
+                for (let i = 1; i < arr.length; i++) {
+                    const prev = arr[i - 1];
+                    const cur = arr[i];
+                    const minTop = prev.y + Math.max(6, prev.h * 0.16);
+                    if (cur.y < minTop) {
+                        cur.y = minTop;
+                    }
+                }
+            }
+        };
+        const clampBubble = (b) => {
+            b.x = Math.max(hardLeftBound, Math.min(hardRightBound - b.w, b.x));
+            b.y = Math.max(hardTopBound, Math.min(hardBottomBound - b.h, b.y));
+        };
+        const verticalDeadzone = 1.25;
+
+        if (recomputeLayout && bubbles.length) {
+            const iterations = 56;
+            for (let iter = 0; iter < iterations; iter++) {
+                for (const b of bubbles) {
+                    b.x += (b.prefX - b.x) * 0.12;
+                    b.y += (b.prefY - b.y) * 0.12;
+                }
+
+                for (let i = 0; i < bubbles.length; i++) {
+                    for (let j = i + 1; j < bubbles.length; j++) {
+                        const a = bubbles[i];
+                        const b = bubbles[j];
+                        const ax2 = a.x + a.w;
+                        const ay2 = a.y + a.h;
+                        const bx2 = b.x + b.w;
+                        const by2 = b.y + b.h;
+                        const ox = Math.min(ax2, bx2) - Math.max(a.x, b.x);
+                        const oy = Math.min(ay2, by2) - Math.max(a.y, b.y);
+                        if (ox <= 0 || oy <= 0) continue;
+                        // Prefer lateral separation when possible; fallback to vertical only if needed.
+                        const dirX = (a.x + a.w * 0.5) < (b.x + b.w * 0.5) ? -1 : 1;
+                        const pushX = (ox * 0.5) + 1.5;
+                        const ax0 = a.x;
+                        const bx0 = b.x;
+                        a.x += dirX * pushX;
+                        b.x -= dirX * pushX;
+                        clampBubble(a);
+                        clampBubble(b);
+                        const stillOverlapX =
+                            Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0 &&
+                            Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0;
+                        if (stillOverlapX) {
+                            a.x = ax0;
+                            b.x = bx0;
+                            const dirY = (a.y + a.h * 0.5) < (b.y + b.h * 0.5) ? -1 : 1;
+                            const pushY = (oy * 0.5) + 1.5;
+                            a.y += dirY * pushY;
+                            b.y -= dirY * pushY;
                         }
                     }
+                }
 
-                    if (!moved && circleRect) {
-                        const shiftLeft = Math.max(leftBound, Math.min(rightBound - rect.width, circleRect.left - 8 - rect.width));
-                        const shiftRight = Math.max(leftBound, Math.min(rightBound - rect.width, circleRect.right + 8));
-                        const leftRect = { left: shiftLeft, top, right: shiftLeft + rect.width, bottom: top + rect.height };
-                        const rightRect = { left: shiftRight, top, right: shiftRight + rect.width, bottom: top + rect.height };
-                        if (!overlapsAnySpeaker(leftRect) && !overlapsPlaced(leftRect, !recomputeLayout)) {
-                            left = shiftLeft;
-                            testRect = leftRect;
-                        } else if (!overlapsAnySpeaker(rightRect) && !overlapsPlaced(rightRect, !recomputeLayout)) {
-                            left = shiftRight;
-                            testRect = rightRect;
+                for (const b of bubbles) {
+                    for (const c of speakerCircles) {
+                        const cx = c.cx;
+                        const cy = c.cy;
+                        const closestX = Math.max(b.x, Math.min(cx, b.x + b.w));
+                        const closestY = Math.max(b.y, Math.min(cy, b.y + b.h));
+                        const dx = closestX - cx;
+                        const dy = closestY - cy;
+                        const d = Math.hypot(dx, dy);
+                        if (d < c.r + 2) {
+                            const ux = d > 0.001 ? (dx / d) : 0;
+                            const uy = d > 0.001 ? (dy / d) : -1;
+                            const push = (c.r + 2 - d);
+                            b.x += ux * push;
+                            b.y += uy * push;
                         }
                     }
-                }
-
-                // If still overlapping speaker or other bubbles, push downward until clear.
-                let downTries = 0;
-                while (downTries < 20) {
-                    const overlapsSpeaker = overlapsAnySpeaker(testRect);
-                    const overlapsBubble = overlapsPlaced(testRect, !recomputeLayout);
-                    if (!overlapsSpeaker && !overlapsBubble) break;
-                    top = Math.max(topLimit, testRect.bottom + 8);
-                    testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-                    downTries += 1;
-                }
-            }
-
-            if (choiceTop != null && testRect.bottom > choiceTop) {
-                top = Math.max(topLimit, choiceTop - rect.height);
-                testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-                placementMode = 'above';
-                forcedBottom = false;
-            }
-
-            if (!useBaseLayout && overlapsAnySpeaker(testRect)) {
-                if (item.side === 'left') {
-                    const targetRight = Math.min(rightBound, circleRect.left - 8);
-                    left = Math.max(leftBound, targetRight - rect.width);
-                } else {
-                    const targetLeft = Math.max(leftBound, circleRect.right + 8);
-                    left = Math.min(rightBound - rect.width, targetLeft);
-                }
-                testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-            }
-
-            if (!useBaseLayout && allowWidthChange && !item.expandOnly && overlapsAnySpeaker(testRect)) {
-                const widths = [Math.max(this.minWidth, rect.width - 60), this.minWidth];
-                for (const width of widths) {
-                    el.style.maxWidth = `${width}px`;
-                    el.style.width = 'fit-content';
-                    rect = el.getBoundingClientRect();
-                    left = Math.max(leftBound, Math.min(rightBound - rect.width, anchorX - rect.width / 2));
-                    testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-                    if (!overlapsAnySpeaker(testRect)) {
-                        item.width = Math.min(maxWidth, rect.width);
-                        el.style.maxWidth = `${item.width}px`;
-                        el.style.width = `${item.width}px`;
-                        rect = el.getBoundingClientRect();
-                        break;
+                    if (collidesNarration(b)) {
+                        const shifted = resolveNarrationOverlap(b.item, b.x, b.y, b.w, b.h);
+                        b.x = b.x + (shifted.x - b.x) * 0.7;
+                        b.y = b.y + (shifted.y - b.y) * 0.25;
                     }
-                }
-            }
-
-            if (!useBaseLayout && testRect.right > narrationRect.left &&
-                testRect.left < narrationRect.right &&
-                testRect.bottom > narrationRect.top &&
-                testRect.top < narrationRect.bottom) {
-                top = narrationRect.bottom + 8;
-                testRect.top = top;
-                testRect.bottom = top + rect.height;
-            }
-
-            if (!useBaseLayout && this.items.length > 1) {
-                let tries = 0;
-                let shrinkTried = false;
-                while (tries < 12) {
-                    const overlapsBubble = overlapsPlaced(testRect);
-                    if (!overlapsBubble) break;
-
-                    if (!shrinkTried && allowWidthChange && !item.expandOnly) {
-                        shrinkTried = true;
-                        const widths = [Math.max(this.minWidth, rect.width - 80), this.minWidth];
-                        for (const width of widths) {
-                            el.style.maxWidth = `${width}px`;
-                            el.style.width = 'fit-content';
-                            rect = el.getBoundingClientRect();
-                            left = Math.max(leftBound, Math.min(rightBound - rect.width, anchorX - rect.width / 2));
-                            testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-                            const stillOverlaps = overlapsPlaced(testRect, !recomputeLayout);
-                            if (!stillOverlaps) {
-                                item.width = Math.min(maxWidth, rect.width);
-                                el.style.maxWidth = `${item.width}px`;
-                                el.style.width = `${item.width}px`;
-                                rect = el.getBoundingClientRect();
-                                break;
+                    const blk = collidesBlocked(b);
+                    if (blk) {
+                        const bcx = b.x + b.w * 0.5;
+                        const bcy = b.y + b.h * 0.5;
+                        const rcx = (blk.left + blk.right) * 0.5;
+                        const rcy = (blk.top + blk.bottom) * 0.5;
+                        const ox = Math.min(b.x + b.w, blk.right) - Math.max(b.x, blk.left);
+                        const oy = Math.min(b.y + b.h, blk.bottom) - Math.max(b.y, blk.top);
+                        if (ox > 0 && oy > 0) {
+                            if (ox <= oy) {
+                                const dir = bcx < rcx ? -1 : 1;
+                                b.x += dir * (ox + 4);
+                            } else {
+                                const dir = bcy < rcy ? -1 : 1;
+                                b.y += dir * (oy + 4);
                             }
                         }
-                        const afterShrinkOverlap = overlapsPlaced(testRect, !recomputeLayout);
-                        if (!afterShrinkOverlap) break;
                     }
-
-                    top = testRect.bottom + 8;
-                    testRect.top = top;
-                    testRect.bottom = top + rect.height;
-                    tries += 1;
+                    clampBubble(b);
                 }
+                enforceSpeakerOrder(bubbles);
+                for (const b of bubbles) clampBubble(b);
             }
-
-            if (!useBaseLayout && this.items.length > 1) {
-                let candidate = top;
-                let best = top;
-                for (let i = 0; i < 60; i++) {
-                    candidate -= 6;
-                    if (candidate < topBound) break;
-                    const tryRect = {
-                        left,
-                        top: candidate,
-                        right: left + rect.width,
-                        bottom: candidate + rect.height,
-                    };
-                    const overlapsBubble = overlapsPlaced(tryRect, !recomputeLayout);
-                    const overlapsNarration =
-                        tryRect.right > narrationRect.left &&
-                        tryRect.left < narrationRect.right &&
-                        tryRect.bottom > narrationRect.top &&
-                        tryRect.top < narrationRect.bottom;
-                    if (overlapsBubble || overlapsNarration) break;
-                    if (placementMode === 'above' && overlapsAnySpeaker(tryRect)) {
-                        break;
+            // Final strict no-overlap collider pass.
+            for (let pass = 0; pass < 20; pass++) {
+                let changed = false;
+                for (let i = 0; i < bubbles.length; i++) {
+                    for (let j = i + 1; j < bubbles.length; j++) {
+                        const a = bubbles[i];
+                        const b = bubbles[j];
+                        const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+                        const oy = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+                        if (ox <= 0 || oy <= 0) continue;
+                        changed = true;
+                        // Prefer horizontal spread (use full slot width) before vertical stacking.
+                        const ax0 = a.x;
+                        const bx0 = b.x;
+                        const dirX = (a.x + a.w * 0.5) < (b.x + b.w * 0.5) ? -1 : 1;
+                        const pushX = (ox * 0.5) + 1.5;
+                        a.x += dirX * pushX;
+                        b.x -= dirX * pushX;
+                        clampBubble(a);
+                        clampBubble(b);
+                        const stillOverlapX =
+                            Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0 &&
+                            Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 0;
+                        if (stillOverlapX) {
+                            a.x = ax0;
+                            b.x = bx0;
+                            const dirY = (a.y + a.h * 0.5) < (b.y + b.h * 0.5) ? -1 : 1;
+                            const pushY = (oy * 0.5) + 1.5;
+                            a.y += dirY * pushY;
+                            b.y -= dirY * pushY;
+                        }
+                        clampBubble(a);
+                        clampBubble(b);
                     }
-                    best = candidate;
                 }
-                if (best !== top) {
-                    top = best;
-                    testRect.top = top;
-                    testRect.bottom = top + rect.height;
-                }
+                if (!changed) break;
             }
-
-            if (!useBaseLayout && this.items.length > 1) {
-                const topHalfLimit = topBound + (canvasRect.height * 0.5);
-                let guard = 0;
-                while (testRect.top > topHalfLimit && guard < 20) {
-                    const candidate = testRect.top - 12;
-                    const tryRect = {
-                        left,
-                        top: candidate,
-                        right: left + rect.width,
-                        bottom: candidate + rect.height,
-                    };
-                    const overlapsBubble = overlapsPlaced(tryRect, !recomputeLayout);
-                    const overlapsNarration =
-                        tryRect.right > narrationRect.left &&
-                        tryRect.left < narrationRect.right &&
-                        tryRect.bottom > narrationRect.top &&
-                        tryRect.top < narrationRect.bottom;
-                    if (overlapsBubble || overlapsNarration) break;
-                    if (placementMode === 'above' && overlapsAnySpeaker(tryRect)) break;
-                    top = candidate;
-                    testRect = tryRect;
-                    guard += 1;
-                }
+            enforceSpeakerOrder(bubbles);
+            for (const b of bubbles) clampBubble(b);
+            for (const b of bubbles) {
+                b.item.baseLeft = b.x;
+                b.item.baseTop = b.y;
+                b.item.baseWidth = b.w;
+                b.item.baseHeight = b.h;
+                b.item.baseNormX = canvasRect.width > 0 ? ((b.x - canvasRect.left) / canvasRect.width) : null;
+                b.item.baseNormY = canvasRect.height > 0 ? ((b.y - canvasRect.top) / canvasRect.height) : null;
+                b.item.baseAnchorX = b.anchorX;
+                b.item.baseAnchorNormX = canvasRect.width > 0 ? ((b.anchorX - canvasRect.left) / canvasRect.width) : null;
+                const baseCenterY = b.y + b.h / 2;
+                b.item.visualBelow = baseCenterY >= b.speakerMidY;
+                b.item.isBelow = b.item.visualBelow;
             }
+        }
 
-            if (!useBaseLayout && circleRect &&
-                overlapsAnySpeaker(testRect) &&
-                testRect.bottom > circleRect.top &&
-                testRect.top < circleRect.bottom) {
-                const candidateBelow = circleRect.bottom + this.tailPad;
-                top = Math.max(topLimit, candidateBelow);
-                testRect = { left, top, right: left + rect.width, bottom: top + rect.height };
-                placementMode = 'below';
-                forcedBottom = true;
-            }
-
-            if (!useBaseLayout && this.items.length > 1 && idx === 0) {
-                const pinRect = {
-                    left,
-                    top: topBound,
-                    right: left + rect.width,
-                    bottom: topBound + rect.height,
-                };
-                const overlapsBubble = overlapsPlaced(pinRect, !recomputeLayout);
-                const overlapsNarration =
-                    pinRect.right > narrationRect.left &&
-                    pinRect.left < narrationRect.right &&
-                    pinRect.bottom > narrationRect.top &&
-                    pinRect.top < narrationRect.bottom;
-                const overlapsSpeaker = overlapsAnySpeaker(pinRect);
-                if (!overlapsBubble && !overlapsNarration && !overlapsSpeaker) {
-                    top = topBound;
-                    testRect = pinRect;
-                    placementMode = 'above';
-                    forcedBottom = false;
-                }
-            }
-
-            if (!useBaseLayout) {
-                const belowByPosition = circleRect
-                    ? top >= ((circleRect.top + circleRect.bottom) / 2)
-                    : top >= anchorY;
-                item.isBelow = forcedBottom || placementMode === 'below' || belowByPosition;
-                if (item.lastIsBelow === null) {
-                    item.lastIsBelow = item.isBelow;
-                } else if (!item.lastIsBelow && item.isBelow) {
-                    item.lastIsBelow = true;
-                } else if (item.lastIsBelow && !item.isBelow) {
-                    item.lastIsBelow = false;
-                }
-            }
-
-            if (!useBaseLayout) {
-                item.baseLeft = left;
-                item.baseTop = top;
-                item.baseWidth = rect.width;
-                item.baseHeight = rect.height;
-                item.baseNormX = canvasRect.width > 0 ? ((left - canvasRect.left) / canvasRect.width) : null;
-                item.baseNormY = canvasRect.height > 0 ? ((top - canvasRect.top) / canvasRect.height) : null;
-                item.baseAnchorX = anchorX;
-                item.baseAnchorNormX = canvasRect.width > 0 ? ((anchorX - canvasRect.left) / canvasRect.width) : null;
-            } else {
-                left = item.baseNormX != null
-                    ? (canvasRect.left + item.baseNormX * canvasRect.width)
-                    : item.baseLeft;
-                top = item.baseNormY != null
-                    ? (canvasRect.top + item.baseNormY * canvasRect.height)
-                    : item.baseTop;
-            }
-
+        for (const b of bubbles) {
+            const { item, el, rect, speakerCircle, speakerRect, speakerKey, isSpeaking } = b;
+            const correctionLerp = 0.45;
+            const correctionMax = 12;
+            let left = item.baseNormX != null
+                ? (canvasRect.left + item.baseNormX * canvasRect.width)
+                : item.baseLeft;
+            let top = item.baseNormY != null
+                ? (canvasRect.top + item.baseNormY * canvasRect.height)
+                : item.baseTop;
+            if (!Number.isFinite(left)) left = b.prefX;
+            if (!Number.isFinite(top)) top = b.prefY;
             if (item.baseAnchorX == null && item.baseAnchorNormX != null) {
                 item.baseAnchorX = canvasRect.left + item.baseAnchorNormX * canvasRect.width;
             }
-            if (item.baseAnchorX == null) {
-                item.baseAnchorX = anchorXLive ?? anchorX;
-            }
+            if (item.baseAnchorX == null) item.baseAnchorX = b.anchorX;
 
-            const speakerMidY = circleRect
-                ? (circleRect.top + circleRect.bottom) / 2
-                : anchorY;
-            // Keep base layout classification independent from speaking lift/drop.
-            if (!useBaseLayout || item.visualBelow === undefined) {
-                const baseCenterY = top + rect.height / 2;
-                item.visualBelow = baseCenterY >= speakerMidY;
-            }
-            const visualBelowNow = item.visualBelow;
+            const liftTarget = isSpeaking ? Math.min(10, canvasRect.height * 0.08) : 0;
+            item.lift = item.lift + (liftTarget - item.lift) * 0.32;
+            const visualBelowNow = Boolean(item.visualBelow);
             const liftOffset = item.lift > 0 ? (visualBelowNow ? item.lift : -item.lift) : 0;
             const targetTop = top + liftOffset;
+            const targetLeft = left;
 
-            const driftXSource = anchorXLive ?? anchorX;
-            const driftX = item.baseAnchorX != null ? (driftXSource - item.baseAnchorX) : 0;
-            const driftedLeft = Math.max(leftBound, Math.min(rightBound - rect.width, left + driftX));
-
-            if (!useBaseLayout) {
-                prevTop = Math.max(prevTop, top);
-                placed.push({ left, top, right: left + rect.width, bottom: top + rect.height, block: true });
-            }
-
-            if (item.x == null) item.x = driftedLeft;
+            if (item.x == null) item.x = targetLeft;
             if (item.y == null) item.y = targetTop;
-            item.x = driftedLeft;
+            item.x = item.x + (targetLeft - item.x) * this.smooth;
             if (visualBelowNow && isSpeaking) {
                 const downOnlyTarget = Math.max(item.y, targetTop);
                 item.y = item.y + (downOnlyTarget - item.y) * this.smooth;
             } else {
                 item.y = item.y + (targetTop - item.y) * this.smooth;
             }
-            if (choiceTop != null) {
-                const baseMaxY = choiceTop - rect.height;
-                const allowedMaxY = baseMaxY + Math.max(0, item.lift || 0);
-                if (Number.isFinite(allowedMaxY)) {
-                    item.y = Math.min(item.y, allowedMaxY);
+            const narrationYLocked = false;
+            if (Math.abs(item.x - targetLeft) < 0.2) item.x = targetLeft;
+            if (Math.abs(item.y - targetTop) < 0.2) item.y = targetTop;
+
+            item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
+            item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+
+            const currentRect = { left: item.x, top: item.y, right: item.x + rect.width, bottom: item.y + rect.height };
+            if (b.lineOrder > 0 && b.speakerKey) {
+                const prevSame = bubbles.find((x) => x.speakerKey === b.speakerKey && x.lineOrder === b.lineOrder - 1);
+                if (prevSame && Number.isFinite(prevSame.item?.y)) {
+                    const minTop = prevSame.item.y + Math.max(6, (prevSame.h || rect.height) * 0.16);
+                    if (item.y < minTop) {
+                        item.y = minTop;
+                        currentRect.top = item.y;
+                        currentRect.bottom = item.y + rect.height;
+                    }
                 }
             }
-
-            const visualBelow = item.visualBelow;
+            if ((item.lift || 0) <= 0.5 && narrationVisible && rectsOverlap(currentRect, narrationRect)) {
+                const shifted = resolveNarrationOverlap(item, item.x, item.y, rect.width, rect.height);
+                // Keep narration avoidance soft so bubbles are not hard-locked away.
+                item.x = item.x + (shifted.x - item.x) * 0.45;
+                const dyNarr = shifted.y - item.y;
+                const hasSideMove = Math.abs(shifted.x - item.x) > 0.5;
+                if (!hasSideMove && Math.abs(dyNarr) > verticalDeadzone) {
+                    item.y = item.y + dyNarr * 0.22;
+                }
+                item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
+                item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+                currentRect.left = item.x;
+                currentRect.right = item.x + rect.width;
+                currentRect.top = item.y;
+                currentRect.bottom = item.y + rect.height;
+            }
+            for (const prev of committedRects) {
+                if ((item.lift || 0) > 0.5 || (prev.lift || 0) > 0.5) continue;
+                if (!rectsOverlap(currentRect, prev)) continue;
+                const ox = Math.min(currentRect.right, prev.right) - Math.max(currentRect.left, prev.left);
+                const oy = Math.min(currentRect.bottom, prev.bottom) - Math.max(currentRect.top, prev.top);
+                if (ox <= 1.2 || oy <= 1.2) continue;
+                const x0 = item.x;
+                const dirX = (currentRect.left + currentRect.right) * 0.5 < (prev.left + prev.right) * 0.5 ? -1 : 1;
+                item.x += dirX * (ox + 1.6);
+                item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
+                item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+                currentRect.left = item.x;
+                currentRect.right = item.x + rect.width;
+                currentRect.top = item.y;
+                currentRect.bottom = item.y + rect.height;
+                if (rectsOverlap(currentRect, prev) && !narrationYLocked) {
+                    item.x = x0;
+                    const dirY = (currentRect.top + currentRect.bottom) * 0.5 < (prev.top + prev.bottom) * 0.5 ? -1 : 1;
+                    if ((oy + 1.6) > verticalDeadzone) {
+                        item.y += dirY * (oy + 1.6);
+                    }
+                    item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
+                    item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+                    currentRect.left = item.x;
+                    currentRect.right = item.x + rect.width;
+                    currentRect.top = item.y;
+                    currentRect.bottom = item.y + rect.height;
+                }
+            }
+            const blocked = (item.lift || 0) > 0.5 ? null : blockedRects.find((blk) => rectsOverlap(currentRect, blk));
+            if (blocked) {
+                const bcx = (currentRect.left + currentRect.right) * 0.5;
+                const bcy = (currentRect.top + currentRect.bottom) * 0.5;
+                const rcx = (blocked.left + blocked.right) * 0.5;
+                const rcy = (blocked.top + blocked.bottom) * 0.5;
+                const ox = Math.min(currentRect.right, blocked.right) - Math.max(currentRect.left, blocked.left);
+                const oy = Math.min(currentRect.bottom, blocked.bottom) - Math.max(currentRect.top, blocked.top);
+                if (ox > 0 && oy > 0) {
+                    if (ox <= oy) {
+                        const dx = (bcx < rcx ? -1 : 1) * Math.min(correctionMax, ox + 2);
+                        item.x += dx * correctionLerp;
+                    } else if (!narrationYLocked) {
+                        const dy = (bcy < rcy ? -1 : 1) * Math.min(correctionMax, oy + 2);
+                        if (Math.abs(dy * correctionLerp) > verticalDeadzone) {
+                            item.y += dy * correctionLerp;
+                        }
+                    }
+                    item.x = Math.max(hardLeftBound, Math.min(hardRightBound - rect.width, item.x));
+                    item.y = Math.max(hardTopBound, Math.min(hardBottomBound - rect.height + Math.max(0, item.lift || 0), item.y));
+                    currentRect.left = item.x;
+                    currentRect.right = item.x + rect.width;
+                    currentRect.top = item.y;
+                    currentRect.bottom = item.y + rect.height;
+                }
+            }
 
             el.style.left = `${item.x}px`;
             el.style.top = `${item.y}px`;
             const panelSpeechBase = Number.isFinite(this.panel?.speechLayerBaseZ) ? this.panel.speechLayerBaseZ : 300;
             const yOrder = Math.max(-999, Math.min(999, Math.round(item.y - canvasRect.top)));
-            const z = panelSpeechBase + (visualBelow ? (1000 - yOrder) : (2000 + yOrder));
+            const z = panelSpeechBase + (visualBelowNow ? (1000 - yOrder) : (2000 + yOrder));
             el.style.zIndex = `${z}`;
-            item.visualBelow = visualBelow;
-
             el.dataset.isBelow = '';
             el.style.outline = '';
             el.style.outlineOffset = '';
@@ -968,8 +1006,8 @@ export class SpeechBubbleLayout {
                 bottom: item.y + localHeight,
             };
             const tip = this.getTailTipWithAvoidance(
-                anchorXLive ?? anchorX,
-                anchorYLive ?? anchorY,
+                b.anchorXLive ?? b.anchorX,
+                b.anchorYLive ?? b.anchorY,
                 speakerRect,
                 speakerCircle,
                 bubbleRectNow,
@@ -992,6 +1030,13 @@ export class SpeechBubbleLayout {
                 from: { x: segBase.x, y: segBase.y },
                 to: { x: tip.x, y: tip.y },
                 speakerKey,
+            });
+            committedRects.push({
+                left: item.x,
+                top: item.y,
+                right: item.x + localWidth,
+                bottom: item.y + localHeight,
+                lift: item.lift || 0,
             });
         }
     }

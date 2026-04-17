@@ -107,8 +107,8 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
 	<tw-storydata name="Test" startnode="1" creator="Twine" creator-version="2.10.0" format="SugarCube" format-version="2.37.3" ifid="9D23C23A-F8C8-4F2F-8342-1D0484180864" options="" tags="" zoom="1" hidden><style role="stylesheet" id="twine-user-stylesheet" type="text/twine-css"></style><script role="script" id="twine-user-script" type="text/twine-javascript">
 </script><tw-passagedata pid="1" name="start" tags="" position="700,300" size="100,100">&lt;&lt;set $DL = {
   objects: [
-    "rat1=cow NEAR FARLEFT lookleft",
-    "rat2=cow MID FARRIGHT LOOKLEFT",
+    "rat1=rat NEAR FARLEFT lookleft",
+    "rat2=rat MID FARRIGHT LOOKLEFT",
 	  "RAT VERYFAR FARLEFT LOOKLEFT",
     "RAT VERYFAR LEFT LOOKLEFT",
     "RAT VERYFAR CENTER LOOKLEFT",
@@ -136,24 +136,25 @@ var LZString=function(){var r=String.fromCharCode,o="ABCDEFGHIJKLMNOPQRSTUVWXYZa
   config: {
     panels: "stack",
     rows: 3,
-    cols: 1
+    cols: 1,
+    aspect: "fill"
   }
 }&gt;&gt;
 %%solo%%
+%%aspect=16:9%%
 rat1:: My name is "rat1"
-rat1:: I'm defined with the string
-rat2::"rat1 = RAT NEAR FARLEFT LOOKFRONT."
+rat1:: I'm defined with the string "rat1 = RAT NEAR FARLEFT LOOKFRONT."
 rat1:: Each rat is defined with a string value that includes the specified model, depth in scene, placement in scene, and looking direction.
 rat2:: I'm "rat2", and I'm defined with the string "rat2 = RAT MID FARRIGHT LOOKLEFT" in the list DL.objects.
-rat3:: I'm rat3.
-rat4:: I'm rat4.
+rat3:: I'm "rat3."
+rat4:: I'm "rat4."
 
 This text is Twine narration or dialogue text of your choice combined with custom and Twine code.
 %%%
 [[Show a scene with two rats and a cow.|Add another rat.]]
 [[Show a scene with a deer.|Now add a deer.]]
 </tw-passagedata><tw-passagedata pid="2" name="Add another rat." tags="" position="400,350" size="100,100">&lt;&lt;set $DL.objects = [$rat1,$rat2,$cow]&gt;&gt;&lt;&lt;set $DL.background = "tennis court"&gt;&gt;
-Here's that. The scene is defined by the variable $$DL with the field $$DL.objects, an array.
+  Here's that. The scene is defined by the variable $$DL with the field $$DL.objects, an array.
 cow:: I'm a cow.
 This array contains 3 strings. "RAT NEAR LEFT LOOKLEFT", "RAT VERYNEAR FARLEFT LOOKRIGHT", and "COW VERYNEAR RIGHT LOOKBACK". These strings could also be stored in variables such as $$rat1, $$rat2, and $$cow, then placed in the array.
 %%%
@@ -180,7 +181,7 @@ Wonderful. You have $&lt;&lt;print $test&gt;&gt;.
 &lt;&lt;set $deer = &quot;DEER VERYFAR FARRIGHT LOOKFRONT&quot;&gt;&gt;</tw-passagedata><tw-passagedata pid="8" name="Now add a cat." tags="" position="400,575" size="100,100">&lt;&lt;set $DL.objects = [$cat]&gt;&gt;\
 Cat has been added.
 %%%
-[[Go back to the start.|start]]</tw-passagedata><tw-passagedata pid="9" name="Now add a deer." tags="" position="625,675" size="100,100">&lt;&lt;set $DL.objects = [$deer]&gt;&gt;\
+[[Go back to the start.|start]]</tw-passagedata><tw-passagedata pid="9" name="Now add a deer." tags="" position="625,675" size="100,100">&lt;&lt;set $DL.objects = [$deer]&gt;&gt;&lt;&lt;set $DL.background = "beach"&gt;&gt;
 Deer has been added. THE END! Press r to restart, or press the button in the corner.</tw-passagedata></tw-storydata>
 	<script id="script-sugarcube" type="text/javascript">
 	/*! SugarCube JS */

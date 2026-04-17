@@ -728,6 +728,12 @@ class LayoutUI {
                 top: slotTop + (slotHeight - cellHeight) * 0.5,
                 width: cellWidth,
                 height: cellHeight,
+                speechBounds: {
+                    left: slotLeft,
+                    top: slotTop,
+                    right: slotLeft + slotWidth,
+                    bottom: slotTop + slotHeight,
+                },
             };
         }
         return targets;
@@ -748,6 +754,12 @@ class LayoutUI {
             const target = targets[name];
             if (!target) continue;
             panel.setAspectMode?.(this.panelConfig.aspect);
+            panel.setSpeechBounds?.(target.speechBounds || {
+                left: target.left,
+                top: target.top,
+                right: target.left + target.width,
+                bottom: target.top + target.height,
+            });
             const row = Math.floor(i / usedCols);
             let narrationMinTop = null;
             let narrationFixedTop = this.topInset;
@@ -1351,6 +1363,12 @@ class LayoutUI {
             p.setLink(-1);
             if (!isAlreadyOnscreenLarge) {
                 p.setCurr(data);
+                p.setSpeechBounds?.({
+                    left: target.left,
+                    top: target.top,
+                    right: target.left + target.width,
+                    bottom: target.top + target.height,
+                });
                 p.setTarget(target);
             }
             p.setTxt(this.txt);
@@ -1372,6 +1390,12 @@ class LayoutUI {
         } else {
             this.panelsOnscreen[name]?.setNarrationMinTop?.(null);
             this.panelsOnscreen[name]?.setNarrationFixedTop?.(null);
+            this.panelsOnscreen[name]?.setSpeechBounds?.({
+                left: target.left,
+                top: target.top,
+                right: target.left + target.width,
+                bottom: target.top + target.height,
+            });
             let offscreen = {left: 0, top: this.topInset - 400, width: 360, height: 150};
             for (let i in this.panelsOnscreen){
                 let ps = this.panelsOnscreen[i];
@@ -1406,6 +1430,12 @@ class LayoutUI {
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, choice, i,scene, 'narration', this.topInset);
             p.panelSize = 'small';
+            p.setSpeechBounds?.({
+                left: target.left,
+                top: target.top,
+                right: target.left + target.width,
+                bottom: target.top + target.height,
+            });
             this.panels[name] = p;
             this.currPanel = p;
             this.panelsOnscreen[name] = p;
@@ -1415,6 +1445,12 @@ class LayoutUI {
             p.setLink(i);
             this.currPanel = p;
             p.setCurr(data);
+            p.setSpeechBounds?.({
+                left: target.left,
+                top: target.top,
+                right: target.left + target.width,
+                bottom: target.top + target.height,
+            });
             p.setTarget(target);
             p.setTopInset(this.topInset);
             p.panelSize = 'small';
@@ -1477,6 +1513,12 @@ class LayoutUI {
                 const height = p.data.height;
                 const top = Math.max(this.topInset, p.data.top);
                 const target = {left, top, width, height};
+                p.setSpeechBounds?.({
+                    left,
+                    top,
+                    right: left + width,
+                    bottom: top + height,
+                });
                 const shouldScale = p.isUpdating;
                 p.setCurr(target, shouldScale);
                 p.target = target;
@@ -1492,6 +1534,12 @@ class LayoutUI {
             const left = this.w - width;
             const top = Math.max(this.topInset, p.data.top);
             const target = {left, top, width, height};
+            p.setSpeechBounds?.({
+                left,
+                top,
+                right: left + width,
+                bottom: top + height,
+            });
             const shouldScale = p.isUpdating;
             p.setCurr(target, shouldScale);
             p.target = target;

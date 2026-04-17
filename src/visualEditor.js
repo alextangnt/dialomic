@@ -4,16 +4,10 @@ import { Panel } from './panel.js';
 const VISUAL_EDITOR_STATE_KEY = 'DL_VISUAL_EDITOR_STATE_V1';
 const VIEWER_IMPORTED_STORY_KEY = 'DL_IMPORTED_STORY_HTML';
 const BACKGROUND_KEY = '__background__';
-const ANIMAL_ASSET_MODULES = import.meta.glob('/public/assets/animals/*.glb');
-const ANIMAL_ASSET_NAMES = Object.keys(ANIMAL_ASSET_MODULES)
-    .map((path) => path.split('/').pop()?.replace(/\.glb$/i, '') || '')
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-const BACKGROUND_ASSET_MODULES = import.meta.glob('/public/assets/backgrounds/*.glb');
-const BACKGROUND_ASSET_NAMES = Object.keys(BACKGROUND_ASSET_MODULES)
-    .map((path) => path.split('/').pop()?.replace(/\.glb$/i, '') || '')
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
+const FALLBACK_ANIMAL_ASSET_NAMES = ['cat', 'cow', 'deer', 'hare', 'rat', 'wolf'];
+const FALLBACK_BACKGROUND_ASSET_NAMES = ['ballpark', 'beach', 'bus_stop', 'tennis_court'];
+let ANIMAL_ASSET_NAMES = [...FALLBACK_ANIMAL_ASSET_NAMES];
+let BACKGROUND_ASSET_NAMES = [...FALLBACK_BACKGROUND_ASSET_NAMES];
 
 const el = {
     file: document.getElementById('editorFile'),
@@ -176,7 +170,7 @@ function positionCameraTools() {
 function initAssetDropdown() {
     if (!el.addModelAssetSelect) return;
     el.addModelAssetSelect.innerHTML = '';
-    const names = ANIMAL_ASSET_NAMES.length ? ANIMAL_ASSET_NAMES : ['cat', 'cow', 'deer', 'hare', 'rat', 'wolf'];
+    const names = ANIMAL_ASSET_NAMES.length ? ANIMAL_ASSET_NAMES : FALLBACK_ANIMAL_ASSET_NAMES;
     for (const name of names) {
         const opt = document.createElement('option');
         opt.value = name;
@@ -195,7 +189,7 @@ function initBackgroundDropdown() {
             none.textContent = includeNoneLabel;
             selectEl.appendChild(none);
         }
-        const names = BACKGROUND_ASSET_NAMES.length ? BACKGROUND_ASSET_NAMES : ['ballpark', 'beach', 'bus_stop', 'tennis_court'];
+        const names = BACKGROUND_ASSET_NAMES.length ? BACKGROUND_ASSET_NAMES : FALLBACK_BACKGROUND_ASSET_NAMES;
         for (const name of names) {
             const opt = document.createElement('option');
             opt.value = name;
@@ -204,6 +198,28 @@ function initBackgroundDropdown() {
         }
     };
     applyOptions(el.selectedBackgroundSelect, '(No background)');
+}
+
+async function loadAssetNamesFromManifest() {
+    const base = import.meta.env.BASE_URL || '/';
+    const loadList = async (path, fallback) => {
+        try {
+            const resp = await fetch(`${base}${path}`);
+            if (!resp.ok) return fallback;
+            const data = await resp.json();
+            if (!Array.isArray(data)) return fallback;
+            return data
+                .map((v) => String(v || '').trim().replace(/\.glb$/i, ''))
+                .filter(Boolean)
+                .sort((a, b) => a.localeCompare(b));
+        } catch {
+            return fallback;
+        }
+    };
+    ANIMAL_ASSET_NAMES = await loadList('assets/animals/manifest.json', FALLBACK_ANIMAL_ASSET_NAMES);
+    BACKGROUND_ASSET_NAMES = await loadList('assets/backgrounds/manifest.json', FALLBACK_BACKGROUND_ASSET_NAMES);
+    initAssetDropdown();
+    initBackgroundDropdown();
 }
 
 function refreshSelectedModelBadge() {
@@ -2544,7 +2560,7 @@ el.previewStoryBtn?.addEventListener('click', async () => {
         saveCurrentPassageBody();
         saveSceneTransformsToPassage();
         stageEditedHtmlForViewer();
-        window.location.href = '/';
+        window.location.href = import.meta.env.BASE_URL || './';
     }, {
         onSave: () => saveSceneTransformsToPassage(),
     });
@@ -2553,7 +2569,7 @@ el.previewStoryBtn?.addEventListener('click', async () => {
 el.viewerLink?.addEventListener('click', async (event) => {
     event.preventDefault();
     await runWithUnsavedGuard(() => {
-        window.location.href = '/';
+        window.location.href = import.meta.env.BASE_URL || './';
     }, {
         onSave: () => saveSceneTransformsToPassage(),
     });
@@ -2577,6 +2593,7 @@ if (el.saveSceneBtn) el.saveSceneBtn.disabled = true;
 refreshCameraButtons();
 initAssetDropdown();
 initBackgroundDropdown();
+loadAssetNamesFromManifest();
 updatePreviewStoryButton();
 
 initDebugMode();
