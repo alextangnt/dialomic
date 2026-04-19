@@ -4,17 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Dialomic Visual Editor</title>
-    <script type="module" crossorigin src="/assets/visualEditor-BkG-V2Sd.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/panel-DJ17Rfas.js">
-    <link rel="stylesheet" crossorigin href="/assets/panel-BfYZBUY8.css">
-    <link rel="stylesheet" crossorigin href="/assets/visualEditor-DAWWFuty.css">
+    <script type="module" crossorigin src="/assets/visualEditor-CaBeViCL.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/panel-Dkok7liT.js">
+    <link rel="stylesheet" crossorigin href="/assets/panel-BDFFzrFm.css">
+    <link rel="stylesheet" crossorigin href="/assets/visualEditor-BjVGTB5A.css">
   </head>
   <body>
     <header class="editor-topbar">
       <div class="topbar-row topbar-row-main">
         <div class="title">Dialomic Visual Editor</div>
         <div class="actions-right">
-          <a id="viewerLink" href="./" class="back-link">Dialomic Viewer</a>
           <button id="exportBtn" type="button" disabled>⤓ Export</button>
           <button id="previewStoryBtn" type="button" disabled>▶ Preview Story</button>
         </div>
@@ -68,7 +67,8 @@
         </div>
         <button id="floatingAddSpeechBtn" class="floating-add-speech" type="button" title="Add speech bubble" aria-label="Add speech bubble">💬</button>
         <div id="cameraTools" class="camera-tools">
-          <button id="saveCameraBtn" type="button" title="Save camera for this passage" aria-label="Save camera for this passage">Save Camera</button>
+          <button id="focusModelBtn" type="button" title="Focus selected model" aria-label="Focus selected model">Focus</button>
+          <button id="saveCameraBtn" type="button" title="Set camera for this passage" aria-label="Set camera for this passage">Set Camera</button>
           <button id="revertCameraBtn" type="button" title="Revert to saved camera" aria-label="Revert to saved camera">Revert Camera</button>
         </div>
         <div id="previewLinks" class="preview-link-list"></div>
@@ -78,7 +78,8 @@
     <div id="floatingSaveTools" class="floating-save-tools">
       <select id="addModelAssetSelect" title="Asset to add"></select>
       <button id="addModelBtn" type="button" class="add-model-btn" title="Add model" aria-label="Add model">+</button>
-      <button id="clearSceneBtn" type="button" title="Remove all models">Clear Scene</button>
+      <button id="clearSceneBtn" type="button" title="Remove all models">✕ Clear Scene</button>
+      <button id="revertSceneBtn" type="button" title="Revert to last saved scene">↶ Revert Scene</button>
       <button id="saveSceneBtn" class="floating-save" type="button" disabled>Save Scene</button>
     </div>
 

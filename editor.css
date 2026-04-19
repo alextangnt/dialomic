@@ -379,8 +379,9 @@ body.debug-mode .debug-only {
   width: 100%;
   min-height: 48px;
   max-height: 55vh;
-  resize: vertical;
+  resize: none;
   overflow: auto;
+  overscroll-behavior: none;
   box-sizing: border-box;
   border: 1px solid #9fc6d4;
   border-radius: 6px;
@@ -390,6 +391,77 @@ body.debug-mode .debug-only {
   line-height: 1.3;
   background: #fffef7;
   color: #1a2430;
+  position: relative;
+  z-index: 2;
+}
+
+.inline-code-field {
+  position: relative;
+  border-radius: 6px;
+  overflow: hidden;
+  max-height: 55vh;
+}
+
+.inline-code-field.has-tokens .inline-text-editor-input {
+  box-shadow: inset 0 0 0 1px rgba(86, 136, 255, 0.45);
+  color: transparent;
+  caret-color: #1a2430;
+  text-shadow: none;
+  background: transparent;
+}
+
+.inline-text-editor-highlight {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 8px 9px;
+  box-sizing: border-box;
+  overflow: auto;
+  overscroll-behavior: none;
+  white-space: pre-wrap;
+  word-break: normal;
+  overflow-wrap: break-word;
+  pointer-events: none;
+  font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.3;
+  color: #1a2430;
+  z-index: 1;
+}
+
+.inline-text-editor-highlight::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.inline-text-editor-highlight .sugar-token {
+  color: #0a55c8;
+  font-weight: 600;
+}
+
+.inline-text-editor-highlight .sugar-macro { color: #6a1fb3; font-weight: 700; }
+.inline-text-editor-highlight .sugar-link { color: #2b6f21; font-weight: 700; }
+.inline-text-editor-highlight .dialomic-macro { color: #915b15; font-weight: 700; }
+.inline-text-editor-highlight .speaker-prefix { color: #a63d00; font-weight: 700; }
+.inline-text-editor-highlight .sugar-var { color: #0f55b8; font-weight: 700; }
+.inline-text-editor-highlight .js-string { color: #1c7c54; }
+.inline-text-editor-highlight .js-number { color: #8c3f00; }
+.inline-text-editor-highlight .js-punct { color: #4a5568; }
+.inline-text-editor-highlight .lint-error {
+  text-decoration: underline wavy #d91f26;
+  text-underline-offset: 2px;
+}
+
+.inline-text-editor-diagnostics {
+  display: none;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #d39a3a;
+  border-radius: 6px;
+  background: #fff2d9;
+  color: #6a3f05;
+  font-size: 11px;
+  line-height: 1.3;
 }
 
 .panel-speech {

@@ -971,7 +971,11 @@ export class SpeechBubbleLayout {
                 const bubbleCenterY = item.y + rect.height * 0.5;
                 const dist = Math.hypot(bubbleCenterX - bodyCenterX, bubbleCenterY - bodyCenterY);
                 const distScore = Math.max(0, 2200 - Math.round(dist * 3));
-                el.style.zIndex = `${editorBaseZ + distScore + (120 - Math.min(120, b.lineOrder || 0))}`;
+                let z = editorBaseZ + distScore + (120 - Math.min(120, b.lineOrder || 0));
+                if (el.classList?.contains('is-selected-bubble') || el.classList?.contains('is-inline-editing')) {
+                    z += 900;
+                }
+                el.style.zIndex = `${z}`;
 
                 const localWidth = el.offsetWidth || rect.width;
                 const localHeight = el.offsetHeight || rect.height;
@@ -1287,7 +1291,10 @@ export class SpeechBubbleLayout {
             const liveAnchorY = Number.isFinite(liveModelAnchor?.y) ? liveModelAnchor.y : (b.anchorYLive ?? b.anchorY);
             const dist = Math.hypot(bubbleCenterX - liveAnchorX, bubbleCenterY - liveAnchorY);
             const distScore = Math.max(0, 2200 - Math.round(dist * 3));
-            const z = panelSpeechBase + distScore + (120 - Math.min(120, b.lineOrder || 0));
+            let z = panelSpeechBase + distScore + (120 - Math.min(120, b.lineOrder || 0));
+            if (this.panel?.editorEnabled && (el.classList?.contains('is-selected-bubble') || el.classList?.contains('is-inline-editing'))) {
+                z += 900;
+            }
             el.style.zIndex = `${z}`;
             el.dataset.isBelow = '';
             el.style.outline = '';

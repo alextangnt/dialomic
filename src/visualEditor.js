@@ -85,6 +85,9 @@ const state = {
     sceneSyncTimer: 0,
     stableBodyByPassage: {},
     aspectDirtyByPassage: {},
+    lockedModelKeys: new Set(),
+    backgroundLocked: false,
+    openedHtmlBaseline: '',
 };
 const IGNORED_PASSAGES = new Set(['StoryTitle', 'StoryData']);
 
@@ -113,6 +116,319 @@ function getCurrentPassageKey() {
     const p = state.passages[state.selected];
     if (!p) return '';
     return `${state.selected}:${p.name}`;
+}
+
+function isStoryInitPassage(passage = state.passages[state.selected]) {
+    return String(passage?.name || '').trim().toLowerCase() === 'storyinit';
+}
+
+function applyStoryInitPreviewMode(enabled) {
+    const storyInit = Boolean(enabled);
+    if (el.previewLinks) el.previewLinks.style.display = storyInit ? 'none' : '';
+    const saveTools = document.getElementById('floatingSaveTools');
+    if (saveTools) saveTools.style.display = storyInit ? 'none' : '';
+    if (el.panelAspectHandle) el.panelAspectHandle.style.display = storyInit ? 'none' : (state.panelRectCache ? 'block' : 'none');
+    if (el.floatingModelButtons) el.floatingModelButtons.style.display = storyInit ? 'none' : el.floatingModelButtons.style.display;
+    if (el.floatingAddSpeechBtn) el.floatingAddSpeechBtn.style.display = storyInit ? 'none' : el.floatingAddSpeechBtn.style.display;
+    if (el.cameraTools) el.cameraTools.style.display = storyInit ? 'none' : '';
+    if (el.selectedModelBadge) el.selectedModelBadge.style.display = storyInit ? 'none' : el.selectedModelBadge.style.display;
+    if (el.selectedEnvironmentControls) el.selectedEnvironmentControls.style.display = storyInit ? 'none' : el.selectedEnvironmentControls.style.display;
+}
+
+function splitTopLevelCsv(source) {
+    const out = [];
+    let curr = '';
+    let depth = 0;
+    let quote = null;
+    for (let i = 0; i < source.length; i += 1) {
+        const ch = source[i];
+        if (quote) {
+            curr += ch;
+            if (ch === '\\') {
+                i += 1;
+                if (i < source.length) curr += source[i];
+                continue;
+            }
+            if (ch === quote) quote = null;
+            continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+            quote = ch;
+            curr += ch;
+            continue;
+        }
+        if (ch === '{' || ch === '[' || ch === '(') depth += 1;
+        if (ch === '}' || ch === ']' || ch === ')') depth = Math.max(0, depth - 1);
+        if (ch === ',' && depth === 0) {
+            out.push(curr.trim());
+            curr = '';
+            continue;
+        }
+        curr += ch;
+    }
+    if (curr.trim()) out.push(curr.trim());
+    return out;
+}
+
+function withObjectIdTag(spec, idTag) {
+    const id = String(idTag || '').trim();
+    if (!id) return spec;
+    if (typeof spec === 'string') {
+        const trimmed = spec.trim();
+        if (!trimmed) return `${id}=`;
+        const eqIdx = trimmed.indexOf('=');
+        const rhs = eqIdx > 0 ? trimmed.slice(eqIdx + 1).trim() : trimmed;
+        return `${id}=${rhs}`;
+    }
+    if (spec && typeof spec === 'object') {
+        return { ...spec, id };
+    }
+    return spec;
+}
+
+function extractTopLevelArrayItemsFromField(sourceText, fieldName) {
+    const src = String(sourceText || '');
+    const fieldRe = new RegExp(`${fieldName}\\s*:\\s*\\[`, 'i');
+    const m = fieldRe.exec(src);
+    if (!m) return null;
+    const openIdx = m.index + m[0].length - 1; // index at '['
+    if (src[openIdx] !== '[') return null;
+    let i = openIdx + 1;
+    let depth = 1;
+    let quote = null;
+    let esc = false;
+    let start = i;
+    const out = [];
+    for (; i < src.length; i += 1) {
+        const ch = src[i];
+        if (quote) {
+            if (esc) {
+                esc = false;
+                continue;
+            }
+            if (ch === '\\') {
+                esc = true;
+                continue;
+            }
+            if (ch === quote) quote = null;
+            continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+            quote = ch;
+            continue;
+        }
+        if (ch === '[' || ch === '{' || ch === '(') {
+            depth += 1;
+            continue;
+        }
+        if (ch === ']' || ch === '}' || ch === ')') {
+            depth -= 1;
+            if (depth === 0) {
+                const tail = src.slice(start, i).trim();
+                if (tail) out.push(tail);
+                return out;
+            }
+            continue;
+        }
+        if (ch === ',' && depth === 0) {
+            out.push(src.slice(start, i).trim());
+            start = i + 1;
+        }
+    }
+    return out;
+}
+
+function applyVariableDrivenSceneBindings(passageBody, scene) {
+    const sceneText = extractSceneLines(passageBody);
+    const lockedModelKeys = new Set();
+    let backgroundLocked = false;
+    if (!scene || typeof scene !== 'object') return { lockedModelKeys, backgroundLocked };
+    const objects = scene.objects;
+    const collectResolvedKeys = () => {
+        const keys = [];
+        const objs = scene?.objects;
+        if (Array.isArray(objs)) {
+            objs.forEach((obj, i) => {
+                if (typeof obj === 'string') {
+                    const trimmed = obj.trim();
+                    const eqIdx = trimmed.indexOf('=');
+                    const key = eqIdx > 0 ? trimmed.slice(0, eqIdx).trim() : (trimmed.split(/\s+/)[0] || `obj_${i}`);
+                    if (key) keys.push(String(key).toLowerCase());
+                } else if (obj && typeof obj === 'object') {
+                    const key = obj.id || obj.name || obj.model || `obj_${i}`;
+                    if (key) keys.push(String(key).toLowerCase());
+                }
+            });
+        } else if (objs && typeof objs === 'object') {
+            Object.entries(objs).forEach(([k, obj]) => {
+                const key = (obj && typeof obj === 'object' && (obj.id || obj.name || obj.model)) || k;
+                if (key) keys.push(String(key).toLowerCase());
+            });
+        }
+        return keys;
+    };
+
+    // objects: { key: $var, ... } -> lock/tag by variable name.
+    if (objects && !Array.isArray(objects) && typeof objects === 'object') {
+        const mapMatches = [...sceneText.matchAll(/(['"]?[A-Za-z_][\w-]*['"]?)\s*:\s*\$([A-Za-z_]\w*)/g)];
+        for (const m of mapMatches) {
+            const authoredKey = String(m[1] || '').trim().replace(/^['"]|['"]$/g, '');
+            const varName = String(m[2] || '').trim();
+            if (!authoredKey || !varName) continue;
+            if (!Object.prototype.hasOwnProperty.call(objects, authoredKey)) continue;
+            const value = objects[authoredKey];
+            delete objects[authoredKey];
+            objects[varName] = withObjectIdTag(value, varName);
+            lockedModelKeys.add(varName.toLowerCase());
+        }
+    }
+
+    // objects: [ ..., $var, ... ] -> lock/tag by variable name at matching index.
+    if (Array.isArray(objects)) {
+        const items = extractTopLevelArrayItemsFromField(sceneText, 'objects') || [];
+        for (let i = 0; i < items.length && i < objects.length; i += 1) {
+            const itm = String(items[i] || '').trim();
+            const m = itm.match(/^\$([A-Za-z_]\w*)$/);
+            if (!m) continue;
+            const varName = String(m[1] || '').trim();
+            if (!varName) continue;
+            objects[i] = withObjectIdTag(objects[i], varName);
+            lockedModelKeys.add(varName.toLowerCase());
+        }
+    }
+
+    // If a global variable appears in scene text and its resolved object exists in the scene,
+    // ensure it is tagged + locked even when authored syntax is complex.
+    const referencedVarNames = new Set(
+        [...sceneText.matchAll(/\$([A-Za-z_]\w*)/g)]
+            .map((m) => String(m[1] || '').trim())
+            .filter(Boolean)
+    );
+    if (referencedVarNames.size && Array.isArray(objects)) {
+        const entries = Object.entries(state.vars || {});
+        for (const [name, value] of entries) {
+            if (!referencedVarNames.has(name)) continue;
+            for (let i = 0; i < objects.length; i += 1) {
+                const obj = objects[i];
+                if (typeof obj === 'string' && typeof value === 'string') {
+                    const sObj = obj.trim().toLowerCase();
+                    const sVal = value.trim().toLowerCase();
+                    const eqIdx = sObj.indexOf('=');
+                    const rhs = eqIdx > 0 ? sObj.slice(eqIdx + 1).trim() : sObj;
+                    if (rhs === sVal) {
+                        objects[i] = withObjectIdTag(obj, name);
+                        lockedModelKeys.add(name.toLowerCase());
+                    }
+                } else if (obj && typeof obj === 'object' && value && typeof value === 'object') {
+                    const key = String(obj.id || obj.name || obj.model || '').trim().toLowerCase();
+                    if (key === name.toLowerCase()) {
+                        objects[i] = withObjectIdTag(obj, name);
+                        lockedModelKeys.add(name.toLowerCase());
+                    }
+                }
+            }
+        }
+    }
+
+    // Broad global fallback:
+    // Any StoryInit variable declared as <<set $var = ...>> that matches an existing
+    // scene object id/key should be treated as global (locked + tagged to var name).
+    const declaredVarNames = Object.keys(state.vars || {})
+        .map((n) => String(n || '').trim())
+        .filter(Boolean);
+    if (declaredVarNames.length) {
+        if (Array.isArray(objects)) {
+            for (let i = 0; i < objects.length; i += 1) {
+                const obj = objects[i];
+                let key = '';
+                if (typeof obj === 'string') {
+                    const trimmed = obj.trim();
+                    const eqIdx = trimmed.indexOf('=');
+                    key = eqIdx > 0 ? trimmed.slice(0, eqIdx).trim() : (trimmed.split(/\s+/)[0] || '');
+                } else if (obj && typeof obj === 'object') {
+                    key = String(obj.id || obj.name || obj.model || '').trim();
+                }
+                if (!key) continue;
+                const match = declaredVarNames.find((v) => v.toLowerCase() === key.toLowerCase());
+                if (!match) continue;
+                objects[i] = withObjectIdTag(obj, match);
+                lockedModelKeys.add(match.toLowerCase());
+            }
+        } else if (objects && typeof objects === 'object') {
+            for (const [k, value] of Object.entries(objects)) {
+                const match = declaredVarNames.find((v) => v.toLowerCase() === String(k).toLowerCase());
+                if (!match) continue;
+                if (k !== match) {
+                    delete objects[k];
+                    objects[match] = withObjectIdTag(value, match);
+                } else {
+                    objects[k] = withObjectIdTag(value, match);
+                }
+                lockedModelKeys.add(match.toLowerCase());
+            }
+        }
+    }
+
+    // Heuristic fallback for array-form objects where parsing nested arrays/objects
+    // makes direct index mapping hard. If a resolved object string equals a variable
+    // value token (e.g. "$cow" -> "cow"), tag/lock it by variable name.
+    const allVarNames = [...sceneText.matchAll(/\$([A-Za-z_]\w*)/g)]
+        .map((m) => String(m[1] || '').trim())
+        .filter(Boolean);
+    if (Array.isArray(objects) && allVarNames.length) {
+        for (let i = 0; i < objects.length; i += 1) {
+            const obj = objects[i];
+            if (typeof obj !== 'string') continue;
+            const trimmed = obj.trim().toLowerCase();
+            const eqIdx = trimmed.indexOf('=');
+            const currentId = eqIdx > 0 ? trimmed.slice(0, eqIdx).trim() : '';
+            if (currentId) continue;
+            for (const vn of allVarNames) {
+                const v = vn.toLowerCase();
+                if (trimmed === v || trimmed.startsWith(`${v} `)) {
+                    objects[i] = withObjectIdTag(obj, v);
+                    lockedModelKeys.add(v);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Fallback: if a model with the variable-name key exists, lock it.
+    const allVarRefs = new Set([...sceneText.matchAll(/\$([A-Za-z_]\w*)/g)].map((m) => String(m[1] || '').trim().toLowerCase()).filter(Boolean));
+    if (allVarRefs.size) {
+        const existingKeys = new Set();
+        if (Array.isArray(objects)) {
+            for (const obj of objects) {
+                if (typeof obj === 'string') {
+                    const trimmed = obj.trim();
+                    const eqIdx = trimmed.indexOf('=');
+                    const key = eqIdx > 0 ? trimmed.slice(0, eqIdx).trim() : (trimmed.split(/\s+/)[0] || '');
+                    if (key) existingKeys.add(String(key).toLowerCase());
+                } else if (obj && typeof obj === 'object') {
+                    const key = obj.id || obj.name || obj.model || '';
+                    if (key) existingKeys.add(String(key).toLowerCase());
+                }
+            }
+        } else if (objects && typeof objects === 'object') {
+            for (const [k, obj] of Object.entries(objects)) {
+                const key = (obj && typeof obj === 'object' && (obj.id || obj.name || obj.model)) || k;
+                if (key) existingKeys.add(String(key).toLowerCase());
+            }
+        }
+        for (const v of allVarRefs) {
+            if (existingKeys.has(v)) lockedModelKeys.add(v);
+        }
+    }
+
+    // If entire $DL is referenced from one global variable, lock all resolved objects.
+    if (/<<\s*set\s+\$DL\s*=\s*\$[A-Za-z_]\w*\s*>>/i.test(sceneText)) {
+        for (const key of collectResolvedKeys()) lockedModelKeys.add(key);
+        if (scene?.background) backgroundLocked = true;
+    }
+
+    backgroundLocked = /background\s*:\s*\$[A-Za-z_]\w*/i.test(sceneText);
+    return { lockedModelKeys, backgroundLocked };
 }
 
 function refreshRevertSceneButton() {
@@ -152,6 +468,7 @@ function initializeStableBodySnapshots() {
 function refreshCameraButtons() {
     const three = state.panel?.three;
     const hasPanel = Boolean(three);
+    const storyInit = isStoryInitPassage();
     const passageKey = getCurrentPassageKey();
     const saved = passageKey ? state.savedCameraByPassage[passageKey] : null;
     const implicit = passageKey ? state.implicitCameraByPassage[passageKey] : null;
@@ -159,10 +476,10 @@ function refreshCameraButtons() {
     const current = hasPanel && three.getCameraSpecSnapshot ? three.getCameraSpecSnapshot() : null;
     const sameAsBaseline = current && baseline ? cameraSpecsEqual(current, baseline) : false;
     if (el.saveCameraBtn) {
-        el.saveCameraBtn.disabled = !hasPanel || sameAsBaseline;
+        el.saveCameraBtn.disabled = storyInit || !hasPanel || sameAsBaseline;
     }
     if (el.revertCameraBtn) {
-        el.revertCameraBtn.disabled = !hasPanel || !baseline || sameAsBaseline;
+        el.revertCameraBtn.disabled = storyInit || !hasPanel || !baseline || sameAsBaseline;
     }
     refreshFocusButton();
     positionCameraTools();
@@ -318,6 +635,12 @@ function refreshSelectedModelBadge() {
         el.selectedEnvironmentControls.style.left = left;
         el.selectedEnvironmentControls.style.top = top;
     }
+    const bgLocked = Boolean(state.panel?.three?.isEditorBackgroundLocked?.());
+    if (el.selectedBackgroundSelect) el.selectedBackgroundSelect.disabled = bgLocked;
+    if (el.selectedSkyColorInput) el.selectedSkyColorInput.disabled = bgLocked;
+    if (el.selectedEnvironmentResetBtn) {
+        el.selectedEnvironmentResetBtn.disabled = bgLocked;
+    }
     refreshFocusButton();
 }
 
@@ -414,10 +737,31 @@ function refreshFloatingDeleteButton() {
         el.floatingDeleteModelBtn.setAttribute('aria-label', el.floatingDeleteModelBtn.title);
     }
     const hasSelectedModel = Boolean(state.panel?.three?.getModelByKey?.(state.selectedModelKey));
-    const disableTransforms = !hasSelectedModel;
+    const isEnvironment = state.selectedModelKey === BACKGROUND_KEY;
+    const selectedModelObj = state.panel?.three?.getModelByKey?.(state.selectedModelKey);
+    const selectedSourceId = String(selectedModelObj?.userData?.sourceId || '').toLowerCase();
+    const locked = isEnvironment
+        ? Boolean(state.panel?.three?.isEditorBackgroundLocked?.())
+        : (Boolean(state.panel?.three?.isEditorModelLocked?.(state.selectedModelKey))
+            || Boolean(selectedModelObj?.userData?.editorLocked)
+            || Boolean(selectedSourceId && state.lockedModelKeys?.has?.(selectedSourceId)));
+    if (locked && !isEnvironment) {
+        el.floatingModelButtons.style.display = 'none';
+        if (el.floatingAddSpeechBtn) {
+            el.floatingAddSpeechBtn.style.display = hasSelectedModel ? 'inline-block' : 'none';
+            el.floatingAddSpeechBtn.style.left = `${x}px`;
+            el.floatingAddSpeechBtn.style.top = `${Math.max(0, cy - paneRect.top - (ringDistancePx + 16))}px`;
+        }
+        if (el.floatingModeTranslateBtn) el.floatingModeTranslateBtn.disabled = true;
+        if (el.floatingModeRotateBtn) el.floatingModeRotateBtn.disabled = true;
+        if (el.floatingModeScaleBtn) el.floatingModeScaleBtn.disabled = true;
+        return;
+    }
+    const disableTransforms = !hasSelectedModel || locked;
     if (el.floatingModeTranslateBtn) el.floatingModeTranslateBtn.disabled = disableTransforms;
     if (el.floatingModeRotateBtn) el.floatingModeRotateBtn.disabled = disableTransforms;
     if (el.floatingModeScaleBtn) el.floatingModeScaleBtn.disabled = disableTransforms;
+    if (el.floatingDeleteModelBtn) el.floatingDeleteModelBtn.disabled = !hasSelectedModel;
     if (el.floatingAddSpeechBtn) {
         const isEnvironment = state.selectedModelKey === BACKGROUND_KEY;
         if (isEnvironment) {
@@ -434,6 +778,7 @@ function applySceneFromBodyLive(body, { ignoreCamera = false } = {}) {
     if (!state.panel) return;
     const scene = buildSceneFromPassage(body, state.vars) || {};
     const sceneForApply = cloneSceneSpec(scene) || {};
+    const locks = applyVariableDrivenSceneBindings(body, sceneForApply);
     if (ignoreCamera && sceneForApply && typeof sceneForApply === 'object') {
         const liveCamera = state.panel?.three?.getCameraSpecSnapshot?.() || null;
         if (liveCamera) {
@@ -446,6 +791,12 @@ function applySceneFromBodyLive(body, { ignoreCamera = false } = {}) {
     const aspectMode = String(sceneForApply?.config?.aspect || 'free').toLowerCase() === 'fixed' ? 'fixed' : 'free';
     state.panel.setAspectMode?.(aspectMode);
     state.panel.setScene?.(sceneForApply);
+    state.lockedModelKeys = locks.lockedModelKeys;
+    state.backgroundLocked = locks.backgroundLocked;
+    state.panel?.three?.setEditorLockConfig?.({
+        modelKeys: Array.from(state.lockedModelKeys),
+        backgroundLocked: state.backgroundLocked,
+    });
     state.panel.setSpeakers?.(draftToPanelSpeakers());
     suppressPreviewSpeakerAnimation();
     wireInlineTextEditors();
@@ -462,16 +813,67 @@ function syncSceneToBodyNow() {
         state.sceneSyncTimer = 0;
     }
     const p = state.passages[state.selected];
-    if (!p) return;
+    if (!p) return false;
     const nextBody = composeBodyWithCurrentSceneSnapshot(p.body || '');
-    if (nextBody === String(p.body || '')) return;
+    if (nextBody === String(p.body || '')) return false;
     p.body = nextBody;
     if (el.passageBody) el.passageBody.value = nextBody;
     if (state.activeInlineEditor?.setSceneText) {
         state.activeInlineEditor.setSceneText(extractSceneLines(nextBody), { applyLive: false });
     }
     refreshDraftFromPassageBody();
-    setSceneDirty(true);
+    return true;
+}
+
+function upsertSceneCameraSpec(bodyRaw, cameraSpec) {
+    const baseBody = String(bodyRaw || '');
+    if (!cameraSpec || typeof cameraSpec !== 'object') return baseBody;
+    const sceneText = extractSceneLines(baseBody);
+    const hasVariableRefs = /(?:\bobjects\b[\s\S]*?\$[A-Za-z_]\w*)|(?:\bbackground\b\s*:\s*\$[A-Za-z_]\w*)/i.test(sceneText);
+    if (hasVariableRefs) {
+        const macroRe = /<<set\s+\$DL\s*=\s*([\s\S]*?)>>/i;
+        const m = sceneText.match(macroRe);
+        if (!m) return baseBody;
+        const expr = String(m[1] || '').trim();
+        if (!expr.startsWith('{') || !expr.endsWith('}')) return baseBody;
+        const cameraBlock = `"camera": ${JSON.stringify(cameraSpec, null, 2)}`;
+        let nextExpr = expr;
+        if (/"camera"\s*:/.test(nextExpr)) {
+            nextExpr = nextExpr.replace(/"camera"\s*:\s*(\{[\s\S]*?\}|\[[\s\S]*?\]|"[^"]*"|[^,\n}]+)\s*,?/m, `${cameraBlock},`);
+            nextExpr = nextExpr.replace(/,\s*}/g, '\n}');
+        } else {
+            nextExpr = nextExpr.replace(/\}\s*$/, (tail) => {
+                const core = nextExpr.slice(0, -tail.length).trimEnd();
+                const needsComma = !core.endsWith('{');
+                return `${needsComma ? ',' : ''}\n${cameraBlock}\n}`;
+            });
+        }
+        const nextSceneText = sceneText.replace(macroRe, `<<set $DL = ${nextExpr}>>`);
+        if (nextSceneText === sceneText) return baseBody;
+        return mergeLinesAtIndices(
+            baseBody,
+            getSceneLineIndices(baseBody),
+            nextSceneText,
+            'top'
+        );
+    }
+    const scene = buildSceneFromPassage(baseBody, state.vars) || {};
+    scene.camera = cloneSceneSpec(cameraSpec);
+    return writeDlExprToPassage(baseBody, toPrettyDlExpression(scene));
+}
+
+function insertSpeechLineInDraft(rawLine) {
+    const line = String(rawLine || '').trimEnd();
+    if (!line) return String(state.textDraft.narrationRaw || '');
+    const visible = String(state.textDraft.narrationRaw || '').replace(/\s*$/, '');
+    const choiceIdx = getChoiceLineIndices(visible);
+    if (!choiceIdx.length) {
+        return `${visible}\n${line}`.replace(/^\n+/, '');
+    }
+    const lines = splitLinesPreserve(visible);
+    const insertAt = Math.max(0, Math.min(lines.length, choiceIdx[0]));
+    lines.splice(insertAt, 0, line);
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
 }
 
 function showUnsavedDialog() {
@@ -496,7 +898,7 @@ function showUnsavedDialog() {
     });
 }
 
-async function runWithUnsavedGuard(action, { onSave } = {}) {
+async function runWithUnsavedGuard(action, { onSave, onDiscard } = {}) {
     if (!state.hasUnsavedChanges) {
         await Promise.resolve(action());
         return;
@@ -505,6 +907,9 @@ async function runWithUnsavedGuard(action, { onSave } = {}) {
     if (choice === 'cancel') return;
     if (choice === 'save' && typeof onSave === 'function') {
         await Promise.resolve(onSave());
+    }
+    if (choice === 'discard' && typeof onDiscard === 'function') {
+        await Promise.resolve(onDiscard());
     }
     setTextDirty(false);
     setSceneDirty(false);
@@ -527,6 +932,14 @@ function initDebugMode() {
     const params = new URLSearchParams(window.location.search);
     state.debugMode = params.get('debug') === '1';
     document.body.classList.toggle('debug-mode', state.debugMode);
+}
+
+function sortPassagesStoryInitFirst(passages) {
+    const list = Array.isArray(passages) ? [...passages] : [];
+    const idx = list.findIndex((p) => String(p?.name || '').trim().toLowerCase() === 'storyinit');
+    if (idx <= 0) return list;
+    const [storyInit] = list.splice(idx, 1);
+    return [storyInit, ...list];
 }
 
 function parseTwee(text) {
@@ -735,7 +1148,8 @@ function removeSpeakerParagraphsForModel(body, format, modelKey) {
         }
         kept.push(part);
     }
-    const sep = format === 'twee' ? '\n' : '\n\n';
+    // splitParagraphs() is line-based for both html and twee in the editor.
+    const sep = '\n';
     return { body: kept.join(sep), removed };
 }
 
@@ -809,6 +1223,22 @@ function removeFirstLineMatch(source, lineText) {
     const re = new RegExp(`(^|\\n)${escaped}(?=\\n|$)`);
     const next = src.replace(re, (m, p1) => (p1 ? p1 : ''));
     return next.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
+}
+
+function removeVariableReferenceFromScene(rawBody, varName) {
+    const body = String(rawBody || '');
+    const key = String(varName || '').trim();
+    if (!key) return body;
+    const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let next = body;
+    // object map: key: $var or "key": $var
+    next = next.replace(new RegExp(`\\s*['"]?[A-Za-z_][\\w-]*['"]?\\s*:\\s*\\$${esc}\\s*,?`, 'gi'), (m) => m.includes('\n') ? '\n' : '');
+    // object map: key: { ... id: "var"... } fallback by key name
+    next = next.replace(new RegExp(`\\s*['"]?${esc}['"]?\\s*:\\s*[^,}\\]]+\\s*,?`, 'gi'), (m) => m.includes('\n') ? '\n' : '');
+    // array token: $var
+    next = next.replace(new RegExp(`(^|[\\[,])\\s*\\$${esc}\\s*(?=,|\\])`, 'gi'), '$1');
+    next = next.replace(/,\s*,/g, ',').replace(/\[\s*,/g, '[').replace(/,\s*\]/g, ']');
+    return next.replace(/\n{3,}/g, '\n\n');
 }
 
 function splitLinesPreserve(raw) {
@@ -1014,8 +1444,156 @@ function parseNarrationRawBlock(raw) {
     return out.join('\n').trim();
 }
 
+function escapeHtmlForEditor(text) {
+    return String(text || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function highlightSugarcubeTokens(text) {
+    const src = String(text || '');
+    // Tokenize delimiters/operators so opening brackets highlight immediately.
+    const re = /(^|\n)\s*[^:\n<>[\]%]+::|<<|>>|\[\[|\]\]|%%|\$[A-Za-z_]\w*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|[{}\[\](),:]/gm;
+    let out = '';
+    let last = 0;
+    let m;
+    while ((m = re.exec(src)) !== null) {
+        out += escapeHtmlForEditor(src.slice(last, m.index));
+        const tok = String(m[0] || '');
+        let cls = 'sugar-token';
+        if (tok === '<<' || tok === '>>') cls = 'sugar-macro';
+        else if (tok === '[[' || tok === ']]') cls = 'sugar-link';
+        else if (tok === '%%') cls = 'dialomic-macro';
+        else if (/::\s*$/.test(tok)) cls = 'speaker-prefix';
+        else if (/^\$[A-Za-z_]\w*$/.test(tok)) cls = 'sugar-var';
+        else if (/^['"]/.test(tok)) cls = 'js-string';
+        else if (/^\d/.test(tok)) cls = 'js-number';
+        else if (/^[{}\[\](),:]$/.test(tok)) cls = 'js-punct';
+        const tokenStart = m.index;
+        const tokenEnd = tokenStart + tok.length;
+        const err = Array.isArray(highlightSugarcubeTokens.errorRanges)
+            && highlightSugarcubeTokens.errorRanges.some((r) => tokenStart < r.end && tokenEnd > r.start);
+        out += `<span class="${cls}${err ? ' lint-error' : ''}">${escapeHtmlForEditor(tok)}</span>`;
+        last = re.lastIndex;
+    }
+    out += escapeHtmlForEditor(src.slice(last));
+    return out;
+}
+
+function lintSugarcubeText(text) {
+    const source = String(text || '');
+    const issues = [];
+    const errorRanges = [];
+    const addRange = (index, len = 1) => {
+        const start = Math.max(0, Number(index) || 0);
+        const end = Math.max(start + 1, start + Math.max(1, Number(len) || 1));
+        errorRanges.push({ start, end });
+    };
+    const stack = [];
+    const macroRe = /<<\s*(\/?\s*[A-Za-z_]\w*)[^>]*>>/g;
+    let m;
+    while ((m = macroRe.exec(source)) !== null) {
+        const raw = String(m[1] || '').trim().toLowerCase();
+        const line = source.slice(0, m.index).split('\n').length;
+        if (!raw) continue;
+        if (raw === 'if' || raw === 'for' || raw === 'switch') {
+            stack.push({ type: raw, line, index: m.index });
+            continue;
+        }
+        if (raw === 'elseif' || raw === 'else') {
+            const top = stack[stack.length - 1];
+            if (!top || top.type !== 'if') {
+                issues.push(`Line ${line}: <<${raw}>> without open <<if>>`);
+                addRange(m.index, m[0]?.length || 2);
+            }
+            continue;
+        }
+        if (raw === '/if' || raw === 'endif') {
+            const top = stack.pop();
+            if (!top || top.type !== 'if') {
+                issues.push(`Line ${line}: unmatched <<${raw}>>`);
+                addRange(m.index, m[0]?.length || 2);
+            }
+            continue;
+        }
+        if (raw === '/for' || raw === 'endfor') {
+            const top = stack.pop();
+            if (!top || top.type !== 'for') {
+                issues.push(`Line ${line}: unmatched <<${raw}>>`);
+                addRange(m.index, m[0]?.length || 2);
+            }
+            continue;
+        }
+        if (raw === '/switch' || raw === 'endswitch') {
+            const top = stack.pop();
+            if (!top || top.type !== 'switch') {
+                issues.push(`Line ${line}: unmatched <<${raw}>>`);
+                addRange(m.index, m[0]?.length || 2);
+            }
+            continue;
+        }
+    }
+    while (stack.length) {
+        const open = stack.pop();
+        issues.push(`Line ${open.line}: unclosed <<${open.type}>>`);
+        addRange(open.index || 0, 2);
+    }
+
+    // Lightweight bracket/brace/paren matcher (ignores quoted strings).
+    const delim = [];
+    let quote = null;
+    for (let i = 0; i < source.length; i += 1) {
+        const ch = source[i];
+        if (quote) {
+            if (ch === '\\') {
+                i += 1;
+                continue;
+            }
+            if (ch === quote) quote = null;
+            continue;
+        }
+        if (ch === '"' || ch === "'" || ch === '`') {
+            quote = ch;
+            continue;
+        }
+        if (ch === '{' || ch === '[' || ch === '(') {
+            delim.push({ ch, line: source.slice(0, i).split('\n').length, index: i });
+            continue;
+        }
+        if (ch === '}' || ch === ']' || ch === ')') {
+            const top = delim.pop();
+            const pair = top?.ch;
+            const ok = (pair === '{' && ch === '}')
+                || (pair === '[' && ch === ']')
+                || (pair === '(' && ch === ')');
+            if (!ok) {
+                const line = source.slice(0, i).split('\n').length;
+                issues.push(`Line ${line}: unmatched "${ch}"`);
+                addRange(i, 1);
+            }
+        }
+    }
+    while (delim.length) {
+        const top = delim.pop();
+        issues.push(`Line ${top.line}: unclosed "${top.ch}"`);
+        addRange(top.index, 1);
+    }
+
+    // Very light JSON-ish comma lint inside object/array literals.
+    const missingCommaRe = /(["'\}\]0-9])\s*\n\s*(["'$\[{A-Za-z_])/g;
+    let mc;
+    while ((mc = missingCommaRe.exec(source)) !== null) {
+        const idx = mc.index + String(mc[1] || '').length;
+        const line = source.slice(0, idx).split('\n').length;
+        issues.push(`Line ${line}: possible missing comma`);
+        addRange(idx, 1);
+    }
+    return { issues, errorRanges };
+}
+
 function draftNarrationHtmlForPanel() {
-    const raw = String(state.textDraft.narration || '');
+    const raw = String(state.textDraft.narrationRaw || state.textDraft.narration || '');
     if (raw.trim().length === 0) {
         // Keep a one-line click target in visual editor even when narration is empty.
         return '&#8203;';
@@ -1164,7 +1742,8 @@ function replaceSpeakerBlockAtSourceIndex(visibleRaw, sourceIndex, nextRaw) {
     } else {
         parts[idx] = replacement;
     }
-    const sep = state.format === 'twee' ? '\n' : '\n\n';
+    // splitParagraphs() is line-based for both html and twee in the editor.
+    const sep = '\n';
     return parts.join(sep);
 }
 
@@ -1197,6 +1776,13 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     if (state.activeInlineEditor) {
         state.activeInlineEditor.commit();
     }
+    // Debug: print currently resolved global variables whenever any inline editor opens.
+    // Use console.log (not debug) so it shows in default console levels.
+    const storyInit = state.passages.find((p) => String(p?.name || '').trim().toLowerCase() === 'storyinit');
+    const globalsSnapshot = parseStoryInitGlobals(String(storyInit?.body || state.storyInitBody || ''));
+    state.vars = globalsSnapshot;
+    window.__DL_GLOBALS__ = cloneSceneSpec(globalsSnapshot);
+    console.log('[visual-editor][globals]', cloneSceneSpec(globalsSnapshot));
     if (state.panel?.three) {
         state.panel.three.setSpeakerAnimationPaused?.(true);
         state.panel.three.renderer?.setAnimationLoop?.(null);
@@ -1219,17 +1805,113 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     const cancelBtn = document.createElement('button');
     cancelBtn.type = 'button';
     cancelBtn.className = 'inline-editor-cancel';
-    cancelBtn.textContent = 'Cancel';
+    cancelBtn.textContent = String(options.cancelLabel || 'Cancel');
     const doneBtn = document.createElement('button');
     doneBtn.type = 'button';
     doneBtn.className = 'inline-editor-done';
-    doneBtn.textContent = 'Done';
+    doneBtn.textContent = String(options.doneLabel || 'Done');
     actions.appendChild(cancelBtn);
     actions.appendChild(doneBtn);
     wrapper.appendChild(actions);
     const ta = document.createElement('textarea');
     ta.className = 'inline-text-editor-input';
     ta.value = getValue();
+    const getCursorLineCol = (textarea) => {
+        const pos = Math.max(0, Number(textarea?.selectionStart) || 0);
+        const prefix = String(textarea?.value || '').slice(0, pos);
+        const lines = prefix.split('\n');
+        const line = lines.length;
+        const col = String(lines[lines.length - 1] || '').length + 1;
+        return { line, col };
+    };
+    const isInsideMacroField = (text, pos) => {
+        const src = String(text || '');
+        const before = src.slice(0, Math.max(0, pos));
+        const after = src.slice(Math.max(0, pos));
+        const opens = (before.match(/<</g) || []).length;
+        const closes = (before.match(/>>/g) || []).length;
+        if (opens <= closes) return false;
+        return after.includes('>>');
+    };
+    const replaceSelection = (textarea, nextText, caretStart, caretEnd = caretStart) => {
+        textarea.setRangeText(nextText, textarea.selectionStart, textarea.selectionEnd, 'end');
+        textarea.selectionStart = Math.max(0, caretStart);
+        textarea.selectionEnd = Math.max(0, caretEnd);
+    };
+    const handleCodeEditorKeydown = (e, textarea) => {
+        if (!textarea) return;
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const value = String(textarea.value || '');
+            const start = textarea.selectionStart;
+            const end = textarea.selectionEnd;
+            const lineStart = value.lastIndexOf('\n', Math.max(0, start - 1)) + 1;
+            const lineEndSearch = value.indexOf('\n', end);
+            const lineEnd = lineEndSearch < 0 ? value.length : lineEndSearch;
+            const block = value.slice(lineStart, lineEnd);
+            const lines = block.split('\n');
+            if (e.shiftKey) {
+                let removed = 0;
+                const nextLines = lines.map((ln) => {
+                    const m = ln.match(/^ {1,4}/);
+                    const n = m ? m[0].length : 0;
+                    removed += n;
+                    return ln.slice(n);
+                });
+                const next = nextLines.join('\n');
+                textarea.setSelectionRange(lineStart, lineEnd);
+                replaceSelection(textarea, next, Math.max(lineStart, start - 4), Math.max(lineStart, end - removed));
+                return;
+            }
+            const prefix = '    ';
+            if (start !== end || block.includes('\n')) {
+                const next = lines.map((ln) => `${prefix}${ln}`).join('\n');
+                textarea.setSelectionRange(lineStart, lineEnd);
+                replaceSelection(textarea, next, start + prefix.length, end + prefix.length * lines.length);
+                return;
+            }
+            textarea.setSelectionRange(start, end);
+            replaceSelection(textarea, prefix, start + prefix.length);
+            return;
+        }
+        if (e.key === 'Enter') {
+            const value = String(textarea.value || '');
+            const pos = textarea.selectionStart;
+            if (!isInsideMacroField(value, pos)) return;
+            e.preventDefault();
+            const lineStart = value.lastIndexOf('\n', Math.max(0, pos - 1)) + 1;
+            const line = value.slice(lineStart, pos);
+            const indent = (line.match(/^\s*/) || [''])[0];
+            const trimmed = line.trimEnd();
+            const nextIndent = /[\{\[\(]$/.test(trimmed) ? `${indent}    ` : indent;
+            textarea.setSelectionRange(pos, textarea.selectionEnd);
+            replaceSelection(textarea, `\n${nextIndent}`, pos + 1 + nextIndent.length);
+        }
+    };
+    const makeCodeField = (textarea) => {
+        const field = document.createElement('div');
+        field.className = 'inline-code-field';
+        const hl = document.createElement('pre');
+        hl.className = 'inline-text-editor-highlight';
+        hl.setAttribute('aria-hidden', 'true');
+        const sync = () => {
+            const value = String(textarea.value || '');
+            const hasTokens = /(<<[\s\S]*?>>|\[\[[\s\S]*?\]\]|%%[\s\S]*?%%|\$[A-Za-z_]\w*|(?:^|\n)\s*[^:\n<>[\]%]+::)/m.test(value);
+            field.classList.toggle('has-tokens', hasTokens);
+            highlightSugarcubeTokens.errorRanges = textarea.__lintErrorRanges || [];
+            hl.innerHTML = hasTokens ? (highlightSugarcubeTokens(value) || '&#8203;') : '';
+            hl.style.transform = 'none';
+            hl.scrollTop = textarea.scrollTop;
+            hl.scrollLeft = textarea.scrollLeft;
+        };
+        textarea.addEventListener('input', sync);
+        textarea.addEventListener('scroll', sync);
+        field.appendChild(hl);
+        field.appendChild(textarea);
+        sync();
+        return { field, sync };
+    };
+    const taField = makeCodeField(ta);
     let activeTab = 'text';
     const sceneMacro = typeof options.sceneMacro === 'string' ? options.sceneMacro : '';
     const choicesRaw = typeof options.choicesRaw === 'string' ? options.choicesRaw : '';
@@ -1262,14 +1944,18 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         sceneTa = document.createElement('textarea');
         sceneTa.className = 'inline-text-editor-input';
         sceneTa.value = sceneMacro;
-        sceneTa.style.display = 'none';
         sceneTa.readOnly = false;
+        const sceneField = makeCodeField(sceneTa);
+        sceneTa.__codeField = sceneField;
+        sceneField.field.style.display = 'none';
         if (hasChoicesTab) {
             choicesTa = document.createElement('textarea');
             choicesTa.className = 'inline-text-editor-input';
             choicesTa.value = choicesRaw;
-            choicesTa.style.display = 'none';
             choicesTa.readOnly = false;
+            const choicesField = makeCodeField(choicesTa);
+            choicesTa.__codeField = choicesField;
+            choicesField.field.style.display = 'none';
         }
         const switchTab = (tab) => {
             activeTab = tab;
@@ -1279,9 +1965,9 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
             textTab.classList.toggle('active', textActive);
             sceneTab.classList.toggle('active', sceneActive);
             if (choicesTab) choicesTab.classList.toggle('active', choicesActive);
-            ta.style.display = textActive ? 'block' : 'none';
-            if (sceneTa) sceneTa.style.display = sceneActive ? 'block' : 'none';
-            if (choicesTa) choicesTa.style.display = choicesActive ? 'block' : 'none';
+            taField.field.style.display = textActive ? 'block' : 'none';
+            if (sceneTa?.__codeField) sceneTa.__codeField.field.style.display = sceneActive ? 'block' : 'none';
+            if (choicesTa?.__codeField) choicesTa.__codeField.field.style.display = choicesActive ? 'block' : 'none';
             autoSize();
             if (textActive) ta.focus();
             if (sceneActive && sceneTa) sceneTa.focus();
@@ -1291,14 +1977,40 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         sceneTab.addEventListener('click', () => switchTab('scene'));
         if (choicesTab) choicesTab.addEventListener('click', () => switchTab('choices'));
     }
-    wrapper.appendChild(ta);
-    if (sceneTa) wrapper.appendChild(sceneTa);
-    if (choicesTa) wrapper.appendChild(choicesTa);
+    wrapper.appendChild(taField.field);
+    if (sceneTa?.__codeField) wrapper.appendChild(sceneTa.__codeField.field);
+    if (choicesTa?.__codeField) wrapper.appendChild(choicesTa.__codeField.field);
+    const diagnostics = document.createElement('div');
+    diagnostics.className = 'inline-text-editor-diagnostics';
+    wrapper.appendChild(diagnostics);
     const autoSize = () => {
         const active = activeTab === 'text' ? ta : (activeTab === 'scene' ? (sceneTa || ta) : (choicesTa || ta));
         active.style.height = 'auto';
         const desired = Math.max(48, active.scrollHeight);
         active.style.height = `${Math.min(desired, Math.floor(window.innerHeight * 0.55))}px`;
+    };
+    const updateDiagnostics = () => {
+        const active = activeTab === 'text' ? ta : (activeTab === 'scene' ? (sceneTa || ta) : (choicesTa || ta));
+        const value = String(active?.value || '');
+        const hasTokens = /(<<[\s\S]*?>>|\[\[[\s\S]*?\]\]|%%[\s\S]*?%%|\$[A-Za-z_]\w*|(?:^|\n)\s*[^:\n<>[\]%]+::)/m.test(value);
+        const lint = lintSugarcubeText(String(active?.value || ''));
+        const issues = Array.isArray(lint?.issues) ? lint.issues : [];
+        active.__lintErrorRanges = Array.isArray(lint?.errorRanges) ? lint.errorRanges : [];
+        active.__codeField?.sync?.();
+        const lc = getCursorLineCol(active);
+        if (!hasTokens && !issues.length) {
+            diagnostics.textContent = '';
+            diagnostics.style.display = 'none';
+            return;
+        }
+        const cursorInfo = `Line ${lc.line}, Col ${lc.col}`;
+        if (!issues.length) {
+            diagnostics.style.display = 'block';
+            diagnostics.textContent = `${cursorInfo} • SugarCube tokens detected. No structural lint issues.`;
+            return;
+        }
+        diagnostics.style.display = 'block';
+        diagnostics.textContent = `${cursorInfo} • ${issues.join(' | ')}`;
     };
     const applyLiveComposite = () => {
         if (!options.onLiveText) return;
@@ -1353,6 +2065,9 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         const val = getCompositeValue();
         cleanup();
         onCommit(val);
+        state.panel?.setTxt?.(draftNarrationHtmlForPanel());
+        state.panel?.updateNarrationTarget?.();
+        state.panel?.syncNarrationBackground?.();
         // Rebind handlers in case panel/bubbles were re-rendered by commit.
         wireInlineTextEditors();
         refreshSpeechBubbleDeleteButtons();
@@ -1368,14 +2083,26 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     cancelBtn.addEventListener('click', () => cancel());
     ta.addEventListener('input', autoSize);
     ta.addEventListener('input', applyLiveComposite);
+    ta.addEventListener('input', updateDiagnostics);
+    ta.addEventListener('click', updateDiagnostics);
+    ta.addEventListener('keyup', updateDiagnostics);
+    ta.addEventListener('keydown', (e) => handleCodeEditorKeydown(e, ta));
     if (sceneTa) sceneTa.addEventListener('input', () => {
         autoSize();
         applyLiveComposite();
+        updateDiagnostics();
     });
+    if (sceneTa) sceneTa.addEventListener('click', updateDiagnostics);
+    if (sceneTa) sceneTa.addEventListener('keyup', updateDiagnostics);
+    if (sceneTa) sceneTa.addEventListener('keydown', (e) => handleCodeEditorKeydown(e, sceneTa));
     if (choicesTa) choicesTa.addEventListener('input', () => {
         autoSize();
         applyLiveComposite();
+        updateDiagnostics();
     });
+    if (choicesTa) choicesTa.addEventListener('click', updateDiagnostics);
+    if (choicesTa) choicesTa.addEventListener('keyup', updateDiagnostics);
+    if (choicesTa) choicesTa.addEventListener('keydown', (e) => handleCodeEditorKeydown(e, choicesTa));
     ta.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
             e.preventDefault();
@@ -1384,6 +2111,7 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     });
     document.body.appendChild(wrapper);
     autoSize();
+    updateDiagnostics();
     ta.focus();
     ta.select();
     const setSceneText = (nextScene, { applyLive = false } = {}) => {
@@ -1392,6 +2120,7 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         if (sceneTa.value === value) return;
         sceneTa.value = value;
         autoSize();
+        updateDiagnostics();
         if (applyLive) applyLiveComposite();
     };
     state.activeInlineEditor = {
@@ -1409,6 +2138,29 @@ function openNarrationTabbedEditor(hostEl) {
     const p = state.passages[state.selected];
     if (!p) return;
     const raw = String(p.body || '');
+    if (isStoryInitPassage(p)) {
+        openInlineTextEditor(
+            hostEl,
+            () => raw,
+            (val) => {
+                const nextRaw = String(val || '');
+                const prevRaw = String(p.body || '');
+                if (nextRaw === prevRaw) return;
+                p.body = nextRaw;
+                if (el.passageBody) el.passageBody.value = nextRaw;
+                state.storyInitBody = nextRaw;
+                state.vars = parseStoryInitGlobals(state.storyInitBody);
+                refreshDraftFromPassageBody();
+                updatePanelFromTextDraft();
+                setTextDirty(true);
+                saveSceneTransformsToPassage();
+            },
+            {
+                doneLabel: 'Save',
+            }
+        );
+        return;
+    }
     const initialRaw = raw;
     const textRaw = extractTextLines(raw);
     const sceneRaw = extractSceneLines(raw);
@@ -1443,6 +2195,10 @@ function openNarrationTabbedEditor(hostEl) {
             // Always apply live scene on commit (click-off) so scene tab edits
             // propagate even if the text body was already updated by live input.
             applySceneFromBodyLive(nextRaw, { ignoreCamera: !cameraChanged });
+            refreshDraftFromPassageBody();
+            updatePanelFromTextDraft();
+            state.panel?.updateNarrationTarget?.();
+            state.panel?.syncNarrationBackground?.();
             if (sceneChanged) {
                 state.panel?.positionSpeechBubbles?.();
             }
@@ -1569,8 +2325,8 @@ function wireInlineTextEditors() {
                         visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
                     } else if (oldRaw && visible.includes(oldRaw)) {
                         visible = replaceFirstBlock(visible, oldRaw, raw);
-                    } else {
-                        visible = `${visible.replace(/\s*$/, '')}\n${raw}`.replace(/^\n+/, '');
+                    } else if (!oldRaw) {
+                        visible = insertSpeechLineInDraft(raw);
                     }
                     state.textDraft.narrationRaw = visible;
                     syncDraftIntoPassageBody();
@@ -1887,6 +2643,7 @@ function restoreVisualEditorState() {
         initializeStableBodySnapshots();
         state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
         state.vars = parseStoryInitGlobals(state.storyInitBody);
+        state.openedHtmlBaseline = state.format === 'html' ? serializeHtml() : '';
         el.formatText.textContent = `Type: ${state.format}`;
         renderPassageList();
         setStatus(`Restored Visual Editor state: ${state.filename}`);
@@ -1911,9 +2668,14 @@ function restoreBootStoryFromViewer() {
         state.sourceHtmlTemplate = story.template;
         state.passages = story.passages.filter((p) => !IGNORED_PASSAGES.has(p.name));
         if (!state.passages.length) return false;
-        state.selected = 0;
+        const requestedPassage = String(parsed?.currentPassage || '').trim();
+        const requestedIdx = requestedPassage
+            ? state.passages.findIndex((p) => String(p?.name || '').trim() === requestedPassage)
+            : -1;
+        state.selected = requestedIdx >= 0 ? requestedIdx : 0;
         state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
         state.vars = parseStoryInitGlobals(state.storyInitBody);
+        state.openedHtmlBaseline = html;
         initializeStableBodySnapshots();
         setTextDirty(false);
         setSceneDirty(false);
@@ -2172,8 +2934,8 @@ function setupSceneEditor() {
     state.panel.editorEnabled = true;
     state.panel.three.enableEditorTools?.({
         onChange: () => {
-            syncSceneToBodyNow();
-            setSceneDirty(true);
+            const changed = syncSceneToBodyNow();
+            if (changed) setSceneDirty(true);
         },
         onSelect: (key) => {
             const normalized = String(key || '');
@@ -2208,6 +2970,13 @@ function composeBodyWithCurrentSceneSnapshot(baseBody) {
     let nextBody = String(baseBody || '');
     const snapshot = getSceneSnapshotForSave();
     if (!snapshot) return nextBody;
+    const sceneText = extractSceneLines(nextBody);
+    const hasVariableRefs = /(?:\bobjects\b[\s\S]*?\$[A-Za-z_]\w*)|(?:\bbackground\b\s*:\s*\$[A-Za-z_]\w*)/i.test(sceneText);
+    if (hasVariableRefs) {
+        // Keep authored variable references intact; avoid rewriting $DL to concrete JSON.
+        // Locked/global-driven models are preview-only in this mode.
+        return nextBody;
+    }
     const scene = buildSceneFromPassage(nextBody, state.vars) || {};
     const selectedBackgroundName = String(el.selectedBackgroundSelect?.value || '').trim();
     const selectedSkyColor = String(el.selectedSkyColorInput?.value || '').trim();
@@ -2342,6 +3111,10 @@ function getPanelRect(sceneConfig = null) {
 
 function refreshPanelAspectHandle() {
     if (!el.panelAspectHandle || !state.panelRectCache || !el.previewPane) return;
+    if (isStoryInitPassage()) {
+        el.panelAspectHandle.style.display = 'none';
+        return;
+    }
     const paneRect = el.previewPane.getBoundingClientRect();
     const rect = state.panelRectCache;
     el.panelAspectHandle.style.display = 'block';
@@ -2356,6 +3129,9 @@ function renderPreview() {
     if (!p || !el.stage) return;
     ensureStableBodySnapshot(state.selected);
     const scene = buildSceneFromPassage(p.body, state.vars);
+    const sceneForPanel = cloneSceneSpec(scene || {}) || {};
+    const locks = applyVariableDrivenSceneBindings(p.body || '', sceneForPanel);
+    const storyInit = isStoryInitPassage(p);
     const inlineAspect = extractPanelAspectCommand(p.body);
     state.panelAspectOverride = Number.isFinite(inlineAspect) ? inlineAspect : (16 / 9);
     state.lastSceneConfig = scene?.config || null;
@@ -2372,21 +3148,25 @@ function renderPreview() {
     const aspectMode = String(scene?.config?.aspect || 'free').toLowerCase() === 'fixed' ? 'fixed' : 'free';
     const env = getSceneEnvironment(scene);
     const sceneObjects = buildSceneObjectMap(scene?.objects);
-    const cleanedText = stripDialomicCommands(cleanText(p.body))
-        .replace(/<<[\s\S]*?>>/g, '')
-        .replace(/\[\[[\s\S]*?\]\]/g, '');
+    const cleanedText = storyInit
+        ? String(p.body || '')
+        : stripDialomicCommands(cleanText(p.body))
+            .replace(/<<[\s\S]*?>>/g, '')
+            .replace(/\[\[[\s\S]*?\]\]/g, '');
     const parsed = parseSpeakerBlocks(cleanedText, sceneObjects, state.format);
     const split = splitHiddenBody(p.body || '');
     state.textDraft.hiddenTail = split.hidden;
     refreshDraftFromPassageBody();
     refreshEnvironmentControlsFromPassage();
-    const links = parseLinkLabels(p.body);
+    const links = storyInit ? [] : parseLinkLabels(p.body);
     renderPreviewLinks(links);
     destroyPanel();
-    const narrationForPanel = (state.textDraft.narrationRaw || '').trim().length
-        ? plainTextToHtml(state.textDraft.narrationRaw || '')
-        : '&#8203;';
-    state.panel = new Panel(curr, target, `visual_${Date.now()}`, narrationForPanel, -1, scene, 'narration', topInset);
+    const narrationForPanel = storyInit
+        ? ((String(p.body || '').trim().length ? plainTextToHtml(String(p.body || '')) : '&#8203;'))
+        : ((state.textDraft.narrationRaw || '').trim().length
+            ? plainTextToHtml(state.textDraft.narrationRaw || '')
+            : '&#8203;');
+    state.panel = new Panel(curr, target, `visual_${Date.now()}`, narrationForPanel, -1, sceneForPanel, 'narration', topInset);
     state.panel?.three?.setMouseTiltEnabled?.(false);
     if (state.panel?.three?.scene) {
         state.panel.three.scene.background = new THREE.Color(env.skyColor);
@@ -2396,24 +3176,48 @@ function renderPreview() {
         state.savedCameraByPassage[passageKey] = cloneSceneSpec(scene.camera);
     }
     maybeCaptureImplicitCamera();
-    state.panel.setSpeakers?.(draftToPanelSpeakers());
+    state.panel.setSpeakers?.(storyInit ? [] : draftToPanelSpeakers());
+    state.lockedModelKeys = locks.lockedModelKeys;
+    state.backgroundLocked = locks.backgroundLocked;
+    state.panel?.three?.setEditorLockConfig?.({
+        modelKeys: Array.from(state.lockedModelKeys),
+        backgroundLocked: state.backgroundLocked,
+    });
+    if (storyInit) {
+        state.panel?.setStoryInitPreviewMode?.(true);
+        state.panel?.setTxt?.(narrationForPanel);
+        if (state.panel?.canvas) state.panel.canvas.style.display = 'none';
+        if (state.panel?.narrationBgEl) {
+            state.panel.narrationBgEl.style.top = '0px';
+            state.panel.narrationBgEl.style.height = `${curr.height}px`;
+        }
+        if (state.panel?.narrationEl) {
+            state.panel.narrationEl.style.top = '0px';
+            state.panel.narrationEl.style.height = `${curr.height}px`;
+        }
+    } else {
+        state.panel?.setStoryInitPreviewMode?.(false);
+    }
     suppressPreviewSpeakerAnimation();
     // Match viewer behavior: apply panel aspect mode and settle panel/canvas sizing
     // immediately so model slotting uses the same effective viewport.
     state.panel.setAspectMode?.(aspectMode);
     state.panel.setCurr?.(curr, false);
     try {
-        setupSceneEditor();
-        if (state.pendingSelectionKey && state.panel?.three) {
-            const picked = state.panel.three.setSelectedEditableModel?.(state.pendingSelectionKey);
-            if (picked) {
-                state.pendingSelectionKey = null;
+        if (!storyInit) {
+            setupSceneEditor();
+            if (state.pendingSelectionKey && state.panel?.three) {
+                const picked = state.panel.three.setSelectedEditableModel?.(state.pendingSelectionKey);
+                if (picked) {
+                    state.pendingSelectionKey = null;
+                }
             }
         }
     } catch (err) {
         console.error('[visual-editor] editor tools setup failed', err);
         setStatus(`Previewing "${p.name}" (editor tools unavailable)`);
     }
+    applyStoryInitPreviewMode(storyInit);
     startPreviewLoop();
     refreshPanelAspectHandle();
     refreshFloatingDeleteButton();
@@ -2428,11 +3232,22 @@ function renderPreview() {
 
 function renderPassageList() {
     el.passageSelect.innerHTML = '';
-    for (let i = 0; i < state.passages.length; i += 1) {
+    let displayNum = 1;
+    const indices = state.passages.map((_, i) => i);
+    const storyInitIdx = indices.find((i) => String(state.passages[i]?.name || '').trim().toLowerCase() === 'storyinit');
+    const ordered = storyInitIdx == null || storyInitIdx < 0
+        ? indices
+        : [storyInitIdx, ...indices.filter((i) => i !== storyInitIdx)];
+    for (const i of ordered) {
         const p = state.passages[i];
         const opt = document.createElement('option');
         opt.value = String(i);
-        opt.textContent = `${i + 1}. ${p.name}`;
+        if (String(p?.name || '').trim().toLowerCase() === 'storyinit') {
+            opt.textContent = p.name;
+        } else {
+            opt.textContent = `${displayNum}. ${p.name}`;
+            displayNum += 1;
+        }
         el.passageSelect.appendChild(opt);
     }
     const has = state.passages.length > 0;
@@ -2464,10 +3279,12 @@ async function loadFile(file) {
         const parsed = parseHtmlStory(text);
         state.passages = parsed.passages.filter((p) => !IGNORED_PASSAGES.has(p.name));
         state.sourceHtmlTemplate = parsed.template;
+        state.openedHtmlBaseline = text;
     } else {
         state.format = 'twee';
         state.passages = parseTwee(text).filter((p) => !IGNORED_PASSAGES.has(p.name));
         state.sourceHtmlTemplate = '';
+        state.openedHtmlBaseline = '';
     }
     state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
     state.vars = parseStoryInitGlobals(state.storyInitBody);
@@ -2496,7 +3313,8 @@ function onResize() {
     refreshPanelAspectHandle();
     refreshFloatingDeleteButton();
     const p = state.passages[state.selected];
-    if (p) renderPreviewLinks(parseLinkLabels(p.body));
+    applyStoryInitPreviewMode(isStoryInitPassage(p));
+    if (p) renderPreviewLinks(isStoryInitPassage(p) ? [] : parseLinkLabels(p.body));
 }
 
 function unselectAllEditorTargets() {
@@ -2641,7 +3459,23 @@ el.saveCameraBtn?.addEventListener('click', () => {
     if (!key) return;
     const spec = three.getCameraSpecSnapshot();
     state.savedCameraByPassage[key] = cloneSceneSpec(spec);
-    setStatus('Saved camera position for this passage.');
+    const p = state.passages[state.selected];
+    if (p) {
+        const prevBody = String(p.body || '');
+        const nextBody = upsertSceneCameraSpec(prevBody, spec);
+        if (nextBody !== prevBody) {
+            p.body = nextBody;
+            if (el.passageBody) el.passageBody.value = nextBody;
+            if (state.activeInlineEditor?.setSceneText) {
+                state.activeInlineEditor.setSceneText(extractSceneLines(nextBody), { applyLive: false });
+            }
+            refreshDraftFromPassageBody();
+            updatePanelFromTextDraft();
+            renderPreviewLinks(parseLinkLabels(nextBody));
+            persistVisualEditorState();
+        }
+    }
+    setStatus('Set camera for this passage.');
     refreshCameraButtons();
 });
 
@@ -2691,7 +3525,7 @@ el.addModelBtn?.addEventListener('click', () => {
         i += 1;
         key = `${asset}${i}`;
     }
-    state.panel.three.addModel(`${key}=${asset} MID CENTER LOOKFRONT`);
+    state.panel.three.addModel(`${key}=${asset}`);
     setSceneDirty(true);
 });
 
@@ -2699,7 +3533,9 @@ el.floatingAddSpeechBtn?.addEventListener('click', () => {
     const speaker = String(state.selectedModelKey || '').trim();
     if (!speaker || speaker === BACKGROUND_KEY) return;
     const rawLine = `${speaker}:: `;
-    state.textDraft.narrationRaw = `${String(state.textDraft.narrationRaw || '').replace(/\s*$/, '')}\n${rawLine}`.replace(/^\n+/, '');
+    const beforeAddRaw = String(state.textDraft.narrationRaw || '');
+    const textDirtyBeforeAdd = Boolean(state.hasTextEdits);
+    state.textDraft.narrationRaw = insertSpeechLineInDraft(rawLine);
     syncDraftIntoPassageBody();
     refreshDraftFromPassageBody();
     updatePanelFromTextDraft();
@@ -2732,8 +3568,8 @@ el.floatingAddSpeechBtn?.addEventListener('click', () => {
                     visible = oldLine ? removeFirstLineMatch(visible, oldLine) : replaceFirstBlock(visible, oldRaw, '');
                 } else if (oldRaw && visible.includes(oldRaw)) {
                     visible = replaceFirstBlock(visible, oldRaw, raw);
-                } else {
-                    visible = `${visible.replace(/\s*$/, '')}\n${raw}`.replace(/^\n+/, '');
+                } else if (!oldRaw) {
+                    visible = insertSpeechLineInDraft(raw);
                 }
                 state.textDraft.narrationRaw = visible;
                 syncDraftIntoPassageBody();
@@ -2743,22 +3579,13 @@ el.floatingAddSpeechBtn?.addEventListener('click', () => {
             },
             {
                 onCancel: () => {
-                    const visible = String(state.textDraft.narrationRaw || '');
-                    const fromIdx = state.textDraft.speakers?.find(
-                        (s) => Number.isFinite(Number(draftSourceIndex)) && Number(s?.sourceIndex) === Number(draftSourceIndex)
-                    );
-                    const fallback = state.textDraft.speakers?.[idx] || null;
-                    const target = fromIdx || fallback;
-                    if (!target) return;
-                    const payload = getSpeakerPayloadFromRaw(target.raw || '', target.speaker || speaker).trim();
-                    if (payload.length > 0) return;
-                    const removed = replaceSpeakerBlockAtSourceIndex(visible, target.sourceIndex, '');
-                    if (removed == null) return;
-                    state.textDraft.narrationRaw = removed;
+                    // Cancel should not mutate passage/editor text.
+                    // Revert to the exact pre-add visible body snapshot.
+                    state.textDraft.narrationRaw = beforeAddRaw;
                     syncDraftIntoPassageBody();
                     refreshDraftFromPassageBody();
                     updatePanelFromTextDraft();
-                    setTextDirty(true);
+                    setTextDirty(textDirtyBeforeAdd);
                 },
             }
         );
@@ -2783,11 +3610,32 @@ el.selectedSkyColorInput?.addEventListener('change', () => {
 });
 
 el.selectedEnvironmentResetBtn?.addEventListener('click', () => {
+    if (state.panel?.three?.isEditorBackgroundLocked?.()) return;
     undoEnvironmentChanges();
 });
 
 el.floatingDeleteModelBtn?.addEventListener('click', () => {
     if (!state.panel?.three || !state.selectedModelKey) return;
+    const selectedKey = String(state.selectedModelKey || '').trim().toLowerCase();
+    const isLockedGlobal = Boolean(selectedKey && selectedKey !== BACKGROUND_KEY && state.panel.three.isEditorModelLocked?.(selectedKey));
+    if (isLockedGlobal) {
+        const p = state.passages[state.selected];
+        if (!p) return;
+        const sourceVar = String(state.panel.three.getModelByKey?.(selectedKey)?.userData?.sourceId || selectedKey);
+        const next = removeVariableReferenceFromScene(String(p.body || ''), sourceVar);
+        if (next !== String(p.body || '')) {
+            p.body = next;
+            if (el.passageBody) el.passageBody.value = next;
+            if (state.activeInlineEditor?.setSceneText) {
+                state.activeInlineEditor.setSceneText(extractSceneLines(next), { applyLive: false });
+            }
+            refreshDraftFromPassageBody();
+            applySceneFromBodyLive(next, { ignoreCamera: true });
+            renderPreviewLinks(parseLinkLabels(next));
+            setSceneDirty(true);
+        }
+        return;
+    }
     if (state.selectedModelKey === BACKGROUND_KEY) {
         if (undoEnvironmentChanges()) {
             setSceneDirty(true);
@@ -2806,6 +3654,26 @@ el.floatingDeleteModelBtn?.addEventListener('click', () => {
 
 el.selectedDeleteModelBtn?.addEventListener('click', () => {
     if (!state.panel?.three || !state.selectedModelKey) return;
+    const selectedKey = String(state.selectedModelKey || '').trim().toLowerCase();
+    const isLockedGlobal = Boolean(selectedKey && selectedKey !== BACKGROUND_KEY && state.panel.three.isEditorModelLocked?.(selectedKey));
+    if (isLockedGlobal) {
+        const p = state.passages[state.selected];
+        if (!p) return;
+        const sourceVar = String(state.panel.three.getModelByKey?.(selectedKey)?.userData?.sourceId || selectedKey);
+        const next = removeVariableReferenceFromScene(String(p.body || ''), sourceVar);
+        if (next !== String(p.body || '')) {
+            p.body = next;
+            if (el.passageBody) el.passageBody.value = next;
+            if (state.activeInlineEditor?.setSceneText) {
+                state.activeInlineEditor.setSceneText(extractSceneLines(next), { applyLive: false });
+            }
+            refreshDraftFromPassageBody();
+            applySceneFromBodyLive(next, { ignoreCamera: true });
+            renderPreviewLinks(parseLinkLabels(next));
+            setSceneDirty(true);
+        }
+        return;
+    }
     const deletedKey = String(state.selectedModelKey);
     const removedLines = (state.textDraft.speakers || []).filter(
         (s) => String(s.speaker || '').trim().toLowerCase() === deletedKey.toLowerCase()
@@ -2953,13 +3821,24 @@ el.exportBtn?.addEventListener('click', async () => {
 
 el.previewStoryBtn?.addEventListener('click', async () => {
     if (state.format !== 'html') return;
+    let discardedUnsaved = false;
     await runWithUnsavedGuard(() => {
-        saveCurrentPassageBody();
-        saveSceneTransformsToPassage();
-        stageEditedHtmlForViewer();
+        if (discardedUnsaved && state.openedHtmlBaseline) {
+            const nameBase = state.filename.replace(/\.[^.]+$/, '') || 'story';
+            localStorage.setItem(VIEWER_IMPORTED_STORY_KEY, JSON.stringify({
+                html: state.openedHtmlBaseline,
+                name: `${nameBase}.html`,
+            }));
+        } else {
+            saveCurrentPassageBody();
+            stageEditedHtmlForViewer();
+        }
         window.location.href = import.meta.env.BASE_URL || './';
     }, {
         onSave: () => saveSceneTransformsToPassage(),
+        onDiscard: () => {
+            discardedUnsaved = true;
+        },
     });
 });
 

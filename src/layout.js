@@ -108,6 +108,15 @@ window.onload = () =>{
         if (data.type === "init") {
             
             if (data.sessionId && data.sessionId !== activeSessionId) return;
+            if (window.DL_DEBUG_DELIVERY) {
+                const dbgName = String(data?.info?.psgName || '');
+                const dbgPassage = String(data?.info?.passage || '');
+                console.log('[layout][passage-debug] init', {
+                    psgName: dbgName || '(missing)',
+                    passageLen: dbgPassage.length,
+                    links: Array.isArray(data?.info?.links) ? data.info.links.length : 0,
+                });
+            }
             if (refreshResets && currentMode === 'default' && !refreshRestarted) {
                 refreshRestarted = true;
                 awaitingRefreshInit = true;
@@ -124,6 +133,24 @@ window.onload = () =>{
         if (data.type === "passage") {
             if (data.sessionId && data.sessionId !== activeSessionId) return;
             console.log("passage recieved");
+            if (window.DL_DEBUG_DELIVERY) {
+                const dbgName = String(data?.info?.psgName || '');
+                const dbgPassage = String(data?.info?.passage || '');
+                const dbgLen = dbgPassage.length;
+                const dbgPreview = dbgPassage.replace(/\s+/g, ' ').slice(0, 140);
+                console.log('[layout][passage-debug] message', {
+                    psgName: dbgName || '(missing)',
+                    passageLen: dbgLen,
+                    links: Array.isArray(data?.info?.links) ? data.info.links.length : 0,
+                    preview: dbgPreview,
+                });
+                if (!dbgPassage.trim()) {
+                    console.warn('[layout][passage-debug] Blank passage body received', {
+                        psgName: dbgName || '(missing)',
+                        info: data?.info || null,
+                    });
+                }
+            }
             if (awaitingRefreshInit) return;
             if (!started){
                 init(data.info);
@@ -195,10 +222,23 @@ window.onload = () =>{
     }
 
     async function getCurrentDisplayedStoryForEditor() {
+        const getCurrentPassageName = () => {
+            try {
+                const sc = iframe?.contentWindow?.SugarCube;
+                const byPassage = String(sc?.State?.passage || '').trim();
+                if (byPassage) return byPassage;
+                const byActive = String(sc?.State?.active?.title || '').trim();
+                if (byActive) return byActive;
+            } catch {
+                // ignore; fallback below
+            }
+            return '';
+        };
         if (currentMode === 'imported' && importedHtml) {
             return {
                 html: importedHtml,
                 name: importedName || 'Imported Story.html',
+                currentPassage: getCurrentPassageName(),
             };
         }
         const html = await fetchDefaultStoryHtml(currentDefaultStoryUrl);
@@ -207,6 +247,7 @@ window.onload = () =>{
             return {
                 html,
                 name: `${selectedLabel}.html`,
+                currentPassage: getCurrentPassageName(),
             };
         }
         return null;
@@ -1349,6 +1390,13 @@ class LayoutUI {
         const baseConfig = this.normalizePanelConfig(vars?.DL?.config);
         const baseSolo = vars?.DL_solo === true;
         const cleaned = cleanText(info.passage);
+        if (window.DL_DEBUG_DELIVERY && !String(cleaned || '').trim()) {
+            console.warn('[layout][passage-debug] setPsgInfo cleaned passage is blank', {
+                psgName: String(info?.psgName || '(missing)'),
+                rawPassageLen: String(info?.passage || '').length,
+                links: Array.isArray(info?.links) ? info.links.length : 0,
+            });
+        }
         const extracted = extractPanelCommands(cleaned);
         this.panelCommands = extracted.commands || {};
         const mergedConfig = {

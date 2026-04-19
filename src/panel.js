@@ -269,6 +269,7 @@ export class ThreeScene {
         this.editorOrbitControls = null;
         this.editorTransformControls = null;
         this.editorTransformHelper = null;
+        this.editorGridHelper = null;
         this.editorRaycaster = new THREE.Raycaster();
         this.editorPointer = new THREE.Vector2();
         this.editorSelectedKey = null;
@@ -278,6 +279,8 @@ export class ThreeScene {
         this.editorIsDragging = false;
         this.editorPointerDown = null;
         this.editorClickHandler = null;
+        this.editorLockedModelKeys = new Set();
+        this.editorBackgroundLocked = false;
         this.mouseTiltHandler = (e) => {
             if (!this.mouseTiltEnabled) return;
             const cx = Number(e?.clientX);
@@ -317,6 +320,80 @@ export class ThreeScene {
 
         this.animate = this.animate.bind(this);
         renderer.setAnimationLoop(this.animate);
+    }
+
+    applyEditorLockVisual(model, locked) {
+        if (!model) return;
+        model.userData.editorLocked = Boolean(locked);
+        model.traverse((child) => {
+            if (!child?.isMesh || !child.material) return;
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            for (const mat of mats) {
+                if (!mat) continue;
+                if (!mat.userData) mat.userData = {};
+                if (!mat.userData.__editorLockBase) {
+                    mat.userData.__editorLockBase = {
+                        color: mat.color?.clone?.() || null,
+                        emissive: mat.emissive?.clone?.() || null,
+                        opacity: Number.isFinite(mat.opacity) ? mat.opacity : 1,
+                        transparent: Boolean(mat.transparent),
+                    };
+                }
+                const base = mat.userData.__editorLockBase;
+                if (locked) {
+                    if (base.color && mat.color) mat.color.copy(base.color).lerp(new THREE.Color(0x8a8a8a), 0.85);
+                    if (base.emissive && mat.emissive) mat.emissive.copy(base.emissive).lerp(new THREE.Color(0x333333), 0.75);
+                    mat.opacity = Math.min(base.opacity, 0.2);
+                    mat.transparent = true;
+                } else {
+                    if (base.color && mat.color) mat.color.copy(base.color);
+                    if (base.emissive && mat.emissive) mat.emissive.copy(base.emissive);
+                    mat.opacity = base.opacity;
+                    mat.transparent = base.transparent;
+                }
+                mat.needsUpdate = true;
+            }
+        });
+    }
+
+    setEditorLockConfig({ modelKeys = [], backgroundLocked = false } = {}) {
+        const keys = Array.isArray(modelKeys)
+            ? modelKeys.map((k) => String(k || '').toLowerCase()).filter(Boolean)
+            : [];
+        const lockedSet = new Set(keys);
+        // Also resolve authored variable-name locks through sourceId/modelKey mapping.
+        for (const [modelKey, model] of this.modelByKey.entries()) {
+            const src = String(model?.userData?.sourceId || '').toLowerCase();
+            if (src && lockedSet.has(src)) lockedSet.add(String(modelKey || '').toLowerCase());
+        }
+        this.editorLockedModelKeys = lockedSet;
+        this.editorBackgroundLocked = Boolean(backgroundLocked);
+        for (const [key, model] of this.modelByKey.entries()) {
+            this.applyEditorLockVisual(model, this.editorLockedModelKeys.has(String(key || '').toLowerCase()));
+        }
+        if (this.backgroundModel) {
+            this.applyEditorLockVisual(this.backgroundModel, this.editorBackgroundLocked);
+        }
+        const selected = String(this.editorSelectedKey || '').toLowerCase();
+        if (selected && this.isEditorModelLocked(selected) && this.editorTransformControls?.object) {
+            this.editorTransformControls.detach();
+        }
+        if (selected === EDITOR_BACKGROUND_KEY && this.editorBackgroundLocked && this.editorTransformControls?.object) {
+            this.editorTransformControls.detach();
+        }
+    }
+
+    isEditorModelLocked(key) {
+        const norm = String(key || '').toLowerCase();
+        if (!norm) return false;
+        if (norm === EDITOR_BACKGROUND_KEY) return this.editorBackgroundLocked;
+        if (this.editorLockedModelKeys.has(norm)) return true;
+        const model = this.getModelByKey(norm);
+        return Boolean(model?.userData?.editorLocked);
+    }
+
+    isEditorBackgroundLocked() {
+        return Boolean(this.editorBackgroundLocked);
     }
 
 
@@ -541,6 +618,14 @@ export class ThreeScene {
         if (this.editorTransformHelper?.isObject3D) {
             this.scene.add(this.editorTransformHelper);
         }
+        if (!this.editorGridHelper) {
+            const grid = new THREE.GridHelper(24, 24, 0x5a5a5a, 0x7a7a7a);
+            grid.position.set(0, 0, 0);
+            grid.material.transparent = true;
+            grid.material.opacity = 0.45;
+            this.editorGridHelper = grid;
+            this.scene.add(grid);
+        }
 
         this.editorClickHandler = {
             down: (event) => {
@@ -645,6 +730,30 @@ export class ThreeScene {
     }
 
     setSelectedEditableModel(key) {
+        const norm = String(key || '').toLowerCase();
+        if (norm === EDITOR_BACKGROUND_KEY) {
+            if (!this.backgroundModel) return false;
+            this.editorSelectedKey = EDITOR_BACKGROUND_KEY;
+            if (this.editorBackgroundLocked) {
+                this.editorTransformControls?.detach?.();
+            } else if (this.editorTransformControls) {
+                this.editorTransformControls.attach(this.backgroundModel);
+                this.editorTransformControls.visible = true;
+                this.editorTransformControls.showX = true;
+                this.editorTransformControls.showY = true;
+                this.editorTransformControls.showZ = true;
+            }
+            if (this.editorOnSelect) this.editorOnSelect(this.editorSelectedKey);
+            return true;
+        }
+        if (this.isEditorModelLocked(norm)) {
+            const model = this.getModelByKey(norm);
+            if (!model) return false;
+            this.editorTransformControls?.detach?.();
+            this.editorSelectedKey = norm;
+            if (this.editorOnSelect) this.editorOnSelect(this.editorSelectedKey);
+            return true;
+        }
         const model = this.getModelByKey(key);
         if (!model || !this.editorTransformControls) return false;
         this.editorTransformControls.attach(model);
@@ -891,6 +1000,9 @@ export class ThreeScene {
             if (modelKey) {
                 this.modelByKey.set(modelKey, model);
             }
+            if (modelKey) {
+                this.applyEditorLockVisual(model, this.editorLockedModelKeys.has(String(modelKey).toLowerCase()));
+            }
             const box = new THREE.Box3().setFromObject(model);
             const sphere = new THREE.Sphere();
             box.getBoundingSphere(sphere);
@@ -993,6 +1105,7 @@ export class ThreeScene {
                 child.userData.editorSelectable = true;
                 child.userData.modelKey = EDITOR_BACKGROUND_KEY;
             });
+            this.applyEditorLockVisual(model, this.editorBackgroundLocked);
         }, undefined, (error) => {
             console.error(error);
         });
@@ -1512,6 +1625,10 @@ export class ThreeScene {
             this.editorTransformControls = null;
             this.editorTransformHelper = null;
         }
+        if (this.editorGridHelper) {
+            this.scene.remove(this.editorGridHelper);
+            this.editorGridHelper = null;
+        }
         if (this.editorOrbitControls) {
             this.editorOrbitControls.dispose?.();
             this.editorOrbitControls = null;
@@ -1606,6 +1723,7 @@ export class Panel {
         this.narrationMinTop = null;
         this.narrationFixedTop = null;
         this.aspectMode = 'free';
+        this.storyInitPreviewMode = false;
         this.fixedNarrationReserve = 0;
         this.layerBaseZ = 100;
         this.speechLayerBaseZ = 300;
@@ -2047,31 +2165,37 @@ export class Panel {
         } else {
             this.narrationEl.style.display = 'block';
             this.narrationBgEl.style.display = 'block';
+            if (this.storyInitPreviewMode) {
+                reserve = height;
+                this.narrationEl.style.maxHeight = `${Math.max(0, reserve)}px`;
+                this.narrationEl.style.overflowX = 'hidden';
+                this.narrationEl.style.overflowY = 'auto';
+            } else {
+                const style = window.getComputedStyle(this.narrationEl);
+                const parsePx = (value, fallback = 0) => {
+                    const n = parseFloat(value);
+                    return Number.isFinite(n) ? n : fallback;
+                };
+                const lineHeight = parsePx(style.lineHeight, this.baseLineHeight);
+                const boxChromeHeight =
+                    parsePx(style.paddingTop) +
+                    parsePx(style.paddingBottom) +
+                    parsePx(style.borderTopWidth) +
+                    parsePx(style.borderBottomWidth);
+                const oneLineHeight = Math.max(0, lineHeight + boxChromeHeight);
+                const threeLineHeight = Math.max(0, lineHeight * 3 + boxChromeHeight);
 
-            const style = window.getComputedStyle(this.narrationEl);
-            const parsePx = (value, fallback = 0) => {
-                const n = parseFloat(value);
-                return Number.isFinite(n) ? n : fallback;
-            };
-            const lineHeight = parsePx(style.lineHeight, this.baseLineHeight);
-            const boxChromeHeight =
-                parsePx(style.paddingTop) +
-                parsePx(style.paddingBottom) +
-                parsePx(style.borderTopWidth) +
-                parsePx(style.borderBottomWidth);
-            const oneLineHeight = Math.max(0, lineHeight + boxChromeHeight);
-            const threeLineHeight = Math.max(0, lineHeight * 3 + boxChromeHeight);
+                this.narrationEl.style.maxHeight = '';
+                this.narrationEl.style.overflowX = 'hidden';
+                this.narrationEl.style.overflowY = 'visible';
+                const naturalHeight = this.narrationEl.getBoundingClientRect().height;
+                const cap = Math.max(oneLineHeight, Math.min(threeLineHeight, naturalHeight));
+                reserve = Math.min(height - 40, Math.max(oneLineHeight, cap));
 
-            this.narrationEl.style.maxHeight = '';
-            this.narrationEl.style.overflowX = 'hidden';
-            this.narrationEl.style.overflowY = 'visible';
-            const naturalHeight = this.narrationEl.getBoundingClientRect().height;
-            const cap = Math.max(oneLineHeight, Math.min(threeLineHeight, naturalHeight));
-            reserve = Math.min(height - 40, Math.max(oneLineHeight, cap));
-
-            this.narrationEl.style.maxHeight = `${Math.max(0, reserve)}px`;
-            this.narrationEl.style.overflowX = 'hidden';
-            this.narrationEl.style.overflowY = naturalHeight > reserve ? 'auto' : 'hidden';
+                this.narrationEl.style.maxHeight = `${Math.max(0, reserve)}px`;
+                this.narrationEl.style.overflowX = 'hidden';
+                this.narrationEl.style.overflowY = naturalHeight > reserve ? 'auto' : 'hidden';
+            }
         }
 
         this.fixedNarrationReserve = Math.max(0, reserve);
@@ -2083,7 +2207,7 @@ export class Panel {
         this.narrationEl.style.top = `${this.narrationData.top}px`;
 
         const canvasTop = panelRef.top + this.fixedNarrationReserve;
-        const canvasHeight = Math.max(40, height - this.fixedNarrationReserve);
+        const canvasHeight = this.storyInitPreviewMode ? 0 : Math.max(40, height - this.fixedNarrationReserve);
         this.canvas.style.left = `${panelRef.left}px`;
         this.canvas.style.top = `${canvasTop}px`;
         this.canvas.style.width = `${width}px`;
@@ -2092,13 +2216,18 @@ export class Panel {
         this.textEl.style.top = `${canvasTop}px`;
         this.textEl.style.width = `${width}px`;
         this.textEl.style.height = `${canvasHeight}px`;
-        if (this.three) this.three.resize(width, canvasHeight);
+        if (this.three && canvasHeight > 0) this.three.resize(width, canvasHeight);
 
         this.syncNarrationBackground();
     }
 
     setTopInset(inset){
         this.topInset = inset || 0;
+        this.updateNarrationTarget();
+    }
+
+    setStoryInitPreviewMode(enabled = false){
+        this.storyInitPreviewMode = Boolean(enabled);
         this.updateNarrationTarget();
     }
 
