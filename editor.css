@@ -625,7 +625,7 @@ body.debug-mode .debug-only {
   position: absolute;
   top: 12px;
   right: 12px;
-  z-index: 2600;
+  z-index: 3600;
   display: flex;
   gap: 6px;
 }
