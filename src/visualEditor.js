@@ -1624,13 +1624,7 @@ function applyDraftToPassageBody(sourceBody) {
 function syncDraftIntoPassageBody() {
     const p = state.passages[state.selected];
     if (!p) return;
-    // Preserve unsaved 3D model/background transforms when applying text edits.
-    // Without this, actions like adding/editing speech can rewrite passage text
-    // on top of stale $DL and visually "move" models back.
-    const baseBody = state.hasSceneEdits
-        ? composeBodyWithCurrentSceneSnapshot(String(p.body || ''))
-        : String(p.body || '');
-    const next = applyDraftToPassageBody(baseBody);
+    const next = String(state.textDraft.narrationRaw || '');
     logBodyDiff(p.body, next, `sync:${p.name || state.selected}`);
     p.body = next;
     if (el.passageBody) el.passageBody.value = next;
@@ -2131,11 +2125,6 @@ function openNarrationTabbedEditor(hostEl) {
     if (!hostEl || !el.previewPane) return;
     const p = state.passages[state.selected];
     if (!p) return;
-    if (state.hasSceneEdits) {
-        // Commit live scene transforms into passage before text-tab editing so
-        // tab commits cannot overwrite newer scene state.
-        syncSceneToBodyNow();
-    }
     const raw = String(p.body || '');
     if (isStoryInitPassage(p)) {
         openInlineTextEditor(
@@ -3556,9 +3545,6 @@ el.addModelBtn?.addEventListener('click', () => {
 el.floatingAddSpeechBtn?.addEventListener('click', () => {
     const speaker = String(state.selectedModelKey || '').trim();
     if (!speaker || speaker === BACKGROUND_KEY) return;
-    if (state.hasSceneEdits) {
-        syncSceneToBodyNow();
-    }
     const rawLine = `${speaker}:: `;
     const beforeAddRaw = String(state.textDraft.narrationRaw || '');
     const textDirtyBeforeAdd = Boolean(state.hasTextEdits);
