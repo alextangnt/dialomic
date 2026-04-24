@@ -1212,6 +1212,24 @@ function extractChoiceLines(raw) {
     }).join('\n');
 }
 
+function isChoiceDividerLine(line) {
+    return /^%%%+\s*$/.test(String(line || '').trim());
+}
+
+function normalizeChoiceDivider(raw) {
+    const lines = splitLinesPreserve(raw);
+    const withoutDivider = lines.filter((line) => !isChoiceDividerLine(line));
+    const firstChoiceIdx = withoutDivider.findIndex((line) => {
+        const src = String(line || '');
+        const t = src.trim();
+        return /\[\[[^\]]+\]\]/.test(src) || /<<(?:link|button)\b/i.test(t);
+    });
+    if (firstChoiceIdx < 0) return withoutDivider.join('\n');
+    const out = [...withoutDivider];
+    out.splice(firstChoiceIdx, 0, '%%%');
+    return out.join('\n');
+}
+
 function getSceneLineIndices(raw) {
     const lines = splitLinesPreserve(raw);
     const idxs = [];
@@ -1255,6 +1273,7 @@ function getTextLineIndices(raw) {
     const idxs = [];
     for (let i = 0; i < lines.length; i += 1) {
         if (sceneSet.has(i) || choiceSet.has(i)) continue;
+        if (isChoiceDividerLine(lines[i])) continue;
         idxs.push(i);
     }
     return idxs;
@@ -1272,9 +1291,9 @@ function mergeLinesAtIndices(baseRaw, indices, editedRaw, insertAt = 'bottom', p
         ? splitLinesPreserve(editedRaw)
         : splitLinesPreserve(editedRaw).filter((ln) => String(ln).trim().length > 0);
     if (!indices.length) {
-        if (!edited.length) return base.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
-        if (insertAt === 'top') return [...edited, ...base].join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
-        return [...base, ...edited].join('\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+        if (!edited.length) return base.join('\n');
+        if (insertAt === 'top') return [...edited, ...base].join('\n');
+        return [...base, ...edited].join('\n');
     }
     const out = [...base];
     const replaceCount = Math.min(indices.length, edited.length);
@@ -1290,7 +1309,7 @@ function mergeLinesAtIndices(baseRaw, indices, editedRaw, insertAt = 'bottom', p
         out.splice(insertAfter + 1, 0, ...extra);
     }
     if (preserveEmpty) return out.join('\n').replace(/\r\n/g, '\n');
-    return out.join('\n').replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '').trimEnd();
+    return out.join('\n');
 }
 
 function parseSpeakerRawBlock(raw, fallbackSpeaker = '') {
@@ -2155,7 +2174,7 @@ function openNarrationTabbedEditor(hostEl) {
         hostEl,
         () => textRaw,
         (val) => {
-            const nextRaw = String(val || '');
+            const nextRaw = normalizeChoiceDivider(String(val || ''));
             const validScene = validateDlMacroInPassage(nextRaw, state.vars);
             if (!validScene.ok) {
                 p.body = initialRaw;
@@ -2213,17 +2232,21 @@ function openNarrationTabbedEditor(hostEl) {
                     String(choicesValue || ''),
                     'bottom'
                 );
-                return nextRaw;
+                return normalizeChoiceDivider(nextRaw);
             },
             onSceneChange: (sceneVal, baseTextVal) => {
                 const textRaw = String(baseTextVal || state.textDraft.narrationRaw || '');
                 const sceneIdx = getSceneLineIndices(textRaw);
-                return mergeLinesAtIndices(textRaw, sceneIdx, String(sceneVal || ''), 'top');
+                return normalizeChoiceDivider(
+                    mergeLinesAtIndices(textRaw, sceneIdx, String(sceneVal || ''), 'top')
+                );
             },
             onChoicesChange: (choicesVal, baseTextVal) => {
                 const textRaw = String(baseTextVal || state.textDraft.narrationRaw || '');
                 const choiceIdx = getChoiceLineIndices(textRaw);
-                return mergeLinesAtIndices(textRaw, choiceIdx, String(choicesVal || ''), 'bottom');
+                return normalizeChoiceDivider(
+                    mergeLinesAtIndices(textRaw, choiceIdx, String(choicesVal || ''), 'bottom')
+                );
             },
             onCancel: () => {
                 const currentRaw = String(p.body || '');

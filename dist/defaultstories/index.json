@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-04-24T19:05:46.773Z",
+  "generatedAt": "2026-04-24T20:17:58.263Z",
   "stories": [
     {
       "label": "Template",
@@ -8,6 +8,10 @@
     {
       "label": "GuessingGame",
       "url": "defaultstories/GuessingGame.html"
+    },
+    {
+      "label": "Template 10psg",
+      "url": "defaultstories/template_10psg.html"
     }
   ]
 }
