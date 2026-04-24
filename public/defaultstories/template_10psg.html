@@ -111,25 +111,33 @@ rat1:: There are three choices below.
 [[Choice to Passage2|Passage2]]
 [[Choice to Passage3|Passage3]]
 [[Choice to Passage4|Passage4]]
-&lt;&lt;set $DL = {objects: [{
-      &quot;id&quot;: &quot;rat1&quot;,
-      &quot;spec&quot;: &quot;rat MID CENTER LOOKFRONT&quot;,
-      &quot;position&quot;: [
+&lt;&lt;set $DL = {
+  "objects": [
+    {
+      "id": "rat1",
+      "spec": "rat MID CENTER LOOKFRONT",
+      "position": [
         0,
         0,
         0
       ],
-      &quot;rotation&quot;: [
+      "rotation": [
         0,
         0,
         0
       ],
-      &quot;scale&quot;: [
+      "scale": [
         1,
         1,
         1
       ]
-    }]}&gt;&gt;</tw-passagedata><tw-passagedata pid="2" name="StoryInit" tags="" position="925,325" size="100,100">&lt;&lt;set $DL = {config: {
+    }
+  ],
+  "skyColor": "#bfe3ff",
+  "background": {
+    "name": "none"
+  }
+}&gt;&gt;</tw-passagedata><tw-passagedata pid="2" name="StoryInit" tags="" position="925,325" size="100,100">&lt;&lt;set $DL = {config: {
     panels: &quot;stack&quot;,
     rows: 3,
     cols: 1,

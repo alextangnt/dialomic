@@ -5,8 +5,6 @@ import {
     splitHtmlParagraphs,
     splitParagraphs,
     buildSceneObjectMap,
-    splitHiddenBody,
-    composeBodyWithHidden,
     removeSpeakerParagraphsForModel,
 } from './passageText.js';
 
@@ -847,10 +845,9 @@ function upsertSceneCameraSpec(bodyRaw, cameraSpec) {
     const sceneText = extractSceneLines(baseBody);
     const hasVariableRefs = /(?:\bobjects\b[\s\S]*?\$[A-Za-z_]\w*)|(?:\bbackground\b\s*:\s*\$[A-Za-z_]\w*)/i.test(sceneText);
     if (hasVariableRefs) {
-        const macroRe = /<<set\s+\$DL\s*=\s*([\s\S]*?)>>/i;
-        const m = sceneText.match(macroRe);
-        if (!m) return baseBody;
-        const expr = String(m[1] || '').trim();
+        const matches = getDlMacroMatches(sceneText);
+        if (!matches.length) return baseBody;
+        const expr = String(matches[matches.length - 1].expr || '').trim();
         if (!expr.startsWith('{') || !expr.endsWith('}')) return baseBody;
         const cameraBlock = `"camera": ${JSON.stringify(cameraSpec, null, 2)}`;
         let nextExpr = expr;
@@ -864,7 +861,7 @@ function upsertSceneCameraSpec(bodyRaw, cameraSpec) {
                 return `${needsComma ? ',' : ''}\n${cameraBlock}\n}`;
             });
         }
-        const nextSceneText = sceneText.replace(macroRe, `<<set $DL = ${nextExpr}>>`);
+        const nextSceneText = writeDlExprToPassage(sceneText, nextExpr);
         if (nextSceneText === sceneText) return baseBody;
         return mergeLinesAtIndices(
             baseBody,
@@ -1010,12 +1007,6 @@ function parseHtmlStory(html) {
         body: node.textContent || '',
     }));
     return { passages, template: html };
-}
-
-function cleanText(text) {
-    const i = String(text || '').indexOf('%%%');
-    if (i === -1) return String(text || '');
-    return String(text || '').slice(0, i);
 }
 
 function stripDialomicCommands(text) {
@@ -1589,10 +1580,7 @@ function buildDraftTextBlock() {
 
 function applyDraftToPassageBody(sourceBody) {
     const source = String(sourceBody || '').replace(/\r\n/g, '\n');
-    const hiddenIndex = source.indexOf('%%%');
-    const visibleSource = hiddenIndex >= 0 ? source.slice(0, hiddenIndex) : source;
-    const hiddenTail = hiddenIndex >= 0 ? source.slice(hiddenIndex) : '';
-    const lines = visibleSource.split('\n');
+    const lines = source.split('\n');
     const bodyLines = buildDraftTextBlock().filter((line) => !/\[\[[^\]]+\]\]/.test(String(line)));
     const editableIdx = [];
     let firstLinkIdx = -1;
@@ -1626,19 +1614,17 @@ function applyDraftToPassageBody(sourceBody) {
         out.splice(insertAt, 0, ...extra);
     }
 
-    let visibleOut = out.join('\n')
+    const visibleOut = out.join('\n')
         .replace(/\n{3,}/g, '\n\n')
         .replace(/^\n+/, '')
         .trimEnd();
-    if (!hiddenTail) return visibleOut;
-    if (!visibleOut) return hiddenTail;
-    return `${visibleOut}\n${hiddenTail.replace(/^\n+/, '')}`;
+    return visibleOut;
 }
 
 function syncDraftIntoPassageBody() {
     const p = state.passages[state.selected];
     if (!p) return;
-    const next = composeBodyWithHidden(state.textDraft.narrationRaw || '', state.textDraft.hiddenTail || '');
+    const next = String(state.textDraft.narrationRaw || '');
     logBodyDiff(p.body, next, `sync:${p.name || state.selected}`);
     p.body = next;
     if (el.passageBody) el.passageBody.value = next;
@@ -1679,10 +1665,8 @@ function removeLockedGlobalFromCurrentPassage(selectedKey) {
     if (!p) return false;
     const sourceVar = String(state.panel?.three?.getModelByKey?.(selectedKey)?.userData?.sourceId || selectedKey);
     const next = removeVariableReferenceFromScene(String(p.body || ''), sourceVar);
-    const split = splitHiddenBody(next);
-    const pruned = removeSpeakerParagraphsForModel(split.visible, state.format, selectedKey);
-    const finalBody = composeBodyWithHidden(pruned.body, split.hidden);
-    return applyCurrentPassageBody(finalBody, { applyScene: true, markSceneDirty: true });
+    const pruned = removeSpeakerParagraphsForModel(next, state.format, selectedKey);
+    return applyCurrentPassageBody(pruned.body, { applyScene: true, markSceneDirty: true });
 }
 
 function tryDeleteSelectedModel() {
@@ -1721,14 +1705,13 @@ function tryDeleteSelectedModel() {
 function refreshDraftFromPassageBody() {
     const p = state.passages[state.selected];
     if (!p) return;
-    const split = splitHiddenBody(p.body);
-    const visibleBody = split.visible;
+    const visibleBody = String(p.body || '');
     const scene = buildSceneFromPassage(p.body, state.vars) || {};
     const sceneObjects = buildSceneObjectMap(scene?.objects);
     const parsed = parseSpeakerBlocks(visibleBody, sceneObjects, state.format, { requireKnownSpeaker: false });
     state.textDraft.narrationRaw = visibleBody;
     state.textDraft.narration = parseNarrationRawBlock(visibleBody);
-    state.textDraft.hiddenTail = split.hidden;
+    state.textDraft.hiddenTail = '';
     state.textDraft.speakers = (parsed.speakers || []).map((s) => ({
         speaker: String(s.speaker || ''),
         text: htmlToPlainText(s.html || ''),
@@ -2785,9 +2768,26 @@ function parseStoryInitGlobals(storyInitBody) {
     return vars;
 }
 
+function getDlMacroMatches(sourceText) {
+    const source = String(sourceText || '');
+    const re = /<<set\s+\$DL\s*=\s*([\s\S]*?)>>/gi;
+    const matches = [];
+    let m;
+    while ((m = re.exec(source)) !== null) {
+        matches.push({
+            index: m.index,
+            length: String(m[0] || '').length,
+            full: String(m[0] || ''),
+            expr: String(m[1] || ''),
+        });
+    }
+    return matches;
+}
+
 function extractDlExpr(passageBody) {
-    const m = String(passageBody || '').match(/<<set\s+\$DL\s*=\s*([\s\S]*?)>>/i);
-    return m ? m[1] : null;
+    const matches = getDlMacroMatches(passageBody);
+    if (!matches.length) return null;
+    return matches[matches.length - 1].expr;
 }
 
 function stripMacros(body) {
@@ -2839,19 +2839,17 @@ function toPrettyDlExpression(dl) {
 
 function writeDlExprToPassage(body, dlExpr) {
     const src = String(body || '');
-    const hiddenIndex = src.indexOf('%%%');
-    const visibleSource = hiddenIndex >= 0 ? src.slice(0, hiddenIndex) : src;
-    const hiddenTail = hiddenIndex >= 0 ? src.slice(hiddenIndex) : '';
     const macro = `<<set $DL = ${dlExpr}>>`;
     let visibleOut;
-    if (/<<set\s+\$DL\s*=/.test(visibleSource)) {
-        visibleOut = visibleSource.replace(/<<set\s+\$DL\s*=\s*[\s\S]*?>>/i, macro);
+    const matches = getDlMacroMatches(src);
+    if (matches.length) {
+        const insertAt = matches[0].index;
+        const withoutAllDl = src.replace(/<<set\s+\$DL\s*=\s*[\s\S]*?>>/gi, '');
+        visibleOut = `${withoutAllDl.slice(0, insertAt)}${macro}${withoutAllDl.slice(insertAt)}`;
     } else {
-        visibleOut = `${macro}\n${visibleSource}`.trimStart();
+        visibleOut = `${macro}\n${src}`.trimStart();
     }
-    if (!hiddenTail) return visibleOut;
-    if (!visibleOut) return hiddenTail;
-    return `${visibleOut}\n${hiddenTail.replace(/^\n+/, '')}`;
+    return visibleOut;
 }
 
 function destroyPanel() {
@@ -3166,12 +3164,11 @@ function renderPreview() {
     const sceneObjects = buildSceneObjectMap(scene?.objects);
     const cleanedText = storyInit
         ? String(p.body || '')
-        : stripDialomicCommands(cleanText(p.body))
+        : stripDialomicCommands(String(p.body || ''))
             .replace(/<<[\s\S]*?>>/g, '')
             .replace(/\[\[[\s\S]*?\]\]/g, '');
     const parsed = parseSpeakerBlocks(cleanedText, sceneObjects, state.format);
-    const split = splitHiddenBody(p.body || '');
-    state.textDraft.hiddenTail = split.hidden;
+    state.textDraft.hiddenTail = '';
     refreshDraftFromPassageBody();
     refreshEnvironmentControlsFromPassage();
     const links = storyInit ? [] : parseLinkLabels(p.body);
@@ -3680,13 +3677,12 @@ el.clearSceneBtn?.addEventListener('click', () => {
         state.panel.three.removeEditableModelByKey?.(key);
     }
     if (keys.length) {
-        const split = splitHiddenBody(state.textDraft.narrationRaw || '');
-        let visible = split.visible;
+        let visible = String(state.textDraft.narrationRaw || '');
         for (const key of keys) {
             const next = removeSpeakerParagraphsForModel(visible, state.format, key);
             visible = next.body;
         }
-        if (visible !== split.visible) {
+        if (visible !== String(state.textDraft.narrationRaw || '')) {
             state.textDraft.narrationRaw = visible;
             syncDraftIntoPassageBody();
             refreshDraftFromPassageBody();
