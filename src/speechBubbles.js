@@ -1,11 +1,23 @@
 import * as THREE from 'three';
 
+/*
+ * Speech bubble layout + drawing utilities.
+ * Handles body/tail geometry, collision/physics adjustments, and editor hooks.
+ */
+
 // Global debug toggle for projected speaker target circles.
 export let SPEECH_BUBBLE_DEBUG_TARGET = false;
+
+/**
+ * Enable/disable projected speaker target debug circles.
+ */
 export function setSpeechBubbleDebugTarget(enabled) {
     SPEECH_BUBBLE_DEBUG_TARGET = Boolean(enabled);
 }
 
+/**
+ * Normalize leading HTML whitespace artifacts from rich-text speaker payloads.
+ */
 export function stripLeadingHtmlWhitespace(html) {
     if (!html) return '';
     const container = document.createElement('div');

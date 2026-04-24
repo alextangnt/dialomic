@@ -1,15 +1,24 @@
 import { Panel } from './panel.js';
+import { stripHtml, splitHtmlParagraphs, buildSceneObjectMap } from './passageText.js';
 
+/*
+ * Viewer runtime orchestrator:
+ * - receives passage payloads from the story iframe
+ * - computes panel/bubble/narration layout
+ * - sends user interactions back to the iframe
+ */
 let loaded = false;
 let started = false;
 let iframe;
 let vars = {};
 let layout;
 let activeSessionId = null;
-window.DL_DEBUG_DELIVERY = true
 const EDITED_STORY_STORAGE_KEY = 'DL_IMPORTED_STORY_HTML';
 const EDITOR_BOOT_STORY_KEY = 'DL_VISUAL_EDITOR_BOOT_STORY';
 
+/**
+ * Read live SugarCube variable state from the story iframe safely.
+ */
 function getSugarCubeVars() {
     try {
         return iframe?.contentWindow?.SugarCube?.State?.variables || null;
@@ -18,20 +27,24 @@ function getSugarCubeVars() {
     }
 }
 
+function isStoryInitPayload(info) {
+    return String(info?.psgName || '').trim().toLowerCase() === 'storyinit';
+}
+
 
 window.onload = () =>{
-    console.log("HIIIII");
     iframe = document.getElementById("logicEngine");
     const fileInput = document.getElementById("storyFile");
     const statusEl = document.getElementById("fileStatus");
     const storyStatusEl = document.getElementById("storyStatus");
     const defaultStorySelect = document.getElementById("defaultStorySelect");
     const editorLink = document.getElementById("editorLink");
-    const defaultStories = [
+    const FALLBACK_DEFAULT_STORIES = [
         { label: 'Template', url: 'defaultstories/template.html' },
-        { label: 'Story', url: 'defaultstories/story.html' },
+        { label: 'GuessingGame', url: 'defaultstories/GuessingGame.html' },
     ];
-    const templateStoryUrl = defaultStories[0].url;
+    let defaultStories = [...FALLBACK_DEFAULT_STORIES];
+    let templateStoryUrl = defaultStories[0]?.url || '';
     const defaultStoryHtmlCache = new Map();
     const fetchDefaultStoryHtml = async (url) => {
         const key = String(url || '');
@@ -52,7 +65,7 @@ window.onload = () =>{
         defaultStoryHtmlCache.set(key, p);
         return p;
     };
-    const defaultStoryHtmlPromise = fetchDefaultStoryHtml(templateStoryUrl);
+    let defaultStoryHtmlPromise = Promise.resolve(null);
     const refreshResets = true;
     let importedHtml = null;
     let importedName = null;
@@ -61,6 +74,19 @@ window.onload = () =>{
     let pendingStart = false;
     let refreshRestarted = false;
     let awaitingRefreshInit = false;
+    const applyPassageInfoWithRetry = (info, attempt = 0) => {
+        const sugarVars = getSugarCubeVars();
+        if (!sugarVars && attempt < 12) {
+            setTimeout(() => applyPassageInfoWithRetry(info, attempt + 1), 30);
+            return;
+        }
+        if (!started) {
+            init(info);
+        }
+        if (!layout) return;
+        layout.setPsgInfo(info);
+        layout.setPanel();
+    };
     try {
         const stored = localStorage.getItem(EDITED_STORY_STORAGE_KEY);
         if (stored) {
@@ -77,7 +103,6 @@ window.onload = () =>{
 
     loaded = true;
     iframe.addEventListener("load", (event) => {
-        console.log("Iframe has loaded!");
         activeSessionId = Math.random().toString(36).slice(2);
         iframe.contentWindow.postMessage({ type: "ping", sessionId: activeSessionId }, event.origin);
     });
@@ -88,16 +113,7 @@ window.onload = () =>{
         if (!isSameOrigin && !isNullFromIframe) return;
         let data = event.data;
 
-        if (data.type === "fromthree") {
-            console.log("from three");
-        }
-
-        if (data.type === "renderer") {
-            console.log("getting renderer");
-        }
-
         if (data.type === "pong") {
-            console.log("SugarCube is ready inside the iframe!");
             if (pendingStart) {
                 const targetOrigin = iframe.getAttribute('srcdoc') ? '*' : window.location.origin;
                 iframe.contentWindow.postMessage({ type: "start" }, targetOrigin);
@@ -108,15 +124,6 @@ window.onload = () =>{
         if (data.type === "init") {
             
             if (data.sessionId && data.sessionId !== activeSessionId) return;
-            if (window.DL_DEBUG_DELIVERY) {
-                const dbgName = String(data?.info?.psgName || '');
-                const dbgPassage = String(data?.info?.passage || '');
-                console.log('[layout][passage-debug] init', {
-                    psgName: dbgName || '(missing)',
-                    passageLen: dbgPassage.length,
-                    links: Array.isArray(data?.info?.links) ? data.info.links.length : 0,
-                });
-            }
             if (refreshResets && currentMode === 'default' && !refreshRestarted) {
                 refreshRestarted = true;
                 awaitingRefreshInit = true;
@@ -132,31 +139,15 @@ window.onload = () =>{
 
         if (data.type === "passage") {
             if (data.sessionId && data.sessionId !== activeSessionId) return;
-            console.log("passage recieved");
-            if (window.DL_DEBUG_DELIVERY) {
-                const dbgName = String(data?.info?.psgName || '');
-                const dbgPassage = String(data?.info?.passage || '');
-                const dbgLen = dbgPassage.length;
-                const dbgPreview = dbgPassage.replace(/\s+/g, ' ').slice(0, 140);
-                console.log('[layout][passage-debug] message', {
-                    psgName: dbgName || '(missing)',
-                    passageLen: dbgLen,
-                    links: Array.isArray(data?.info?.links) ? data.info.links.length : 0,
-                    preview: dbgPreview,
-                });
-                if (!dbgPassage.trim()) {
-                    console.warn('[layout][passage-debug] Blank passage body received', {
-                        psgName: dbgName || '(missing)',
-                        info: data?.info || null,
-                    });
-                }
+            if (awaitingRefreshInit) {
+                // After refresh-start handshake, the first real passage is the one we want.
+                // Do not drop it; consume it and clear the guard.
+                awaitingRefreshInit = false;
             }
-            if (awaitingRefreshInit) return;
-            if (!started){
-                init(data.info);
+            if (isStoryInitPayload(data.info)) {
+                return;
             }
-            layout.setPsgInfo(data.info);
-            layout.setPanel();
+            applyPassageInfoWithRetry(data.info);
         }
     });
 
@@ -219,6 +210,75 @@ window.onload = () =>{
         } else if (importedHtml) {
             loadStoryHtml(importedHtml, importedName);
         }
+    }
+
+    function sanitizeStoryUrl(raw) {
+        const url = String(raw || '').trim();
+        if (!url) return '';
+        if (/^https?:\/\//i.test(url)) return '';
+        if (!url.toLowerCase().endsWith('.html')) return '';
+        return url.replace(/^\/+/, '');
+    }
+
+    function inferStoryLabel(url) {
+        const file = String(url || '').split('/').pop() || '';
+        const base = file.replace(/\.html$/i, '').replace(/[-_]+/g, ' ').trim();
+        return base || 'Story';
+    }
+
+    async function loadDefaultStoriesFromManifest() {
+        try {
+            const resp = await fetch('defaultstories/index.json', { cache: 'no-store' });
+            if (!resp.ok) return [];
+            const payload = await resp.json();
+            const rows = Array.isArray(payload?.stories) ? payload.stories : [];
+            return rows
+                .map((entry) => {
+                    if (typeof entry === 'string') {
+                        const url = sanitizeStoryUrl(entry);
+                        if (!url) return null;
+                        return { label: inferStoryLabel(url), url };
+                    }
+                    const url = sanitizeStoryUrl(entry?.url);
+                    if (!url) return null;
+                    const label = String(entry?.label || '').trim() || inferStoryLabel(url);
+                    return { label, url };
+                })
+                .filter(Boolean);
+        } catch {
+            return [];
+        }
+    }
+
+    function populateDefaultStorySelect() {
+        if (!defaultStorySelect) return;
+        defaultStorySelect.innerHTML = '';
+        for (const story of defaultStories) {
+            const opt = document.createElement('option');
+            opt.value = story.url;
+            opt.textContent = story.label;
+            defaultStorySelect.appendChild(opt);
+        }
+        if (currentDefaultStoryUrl) {
+            defaultStorySelect.value = currentDefaultStoryUrl;
+        }
+    }
+
+    async function initDefaultStories() {
+        const fromManifest = await loadDefaultStoriesFromManifest();
+        if (fromManifest.length > 0) {
+            defaultStories = fromManifest;
+        }
+        const templateEntry = defaultStories.find((s) => /template\.html$/i.test(String(s?.url || '')))
+            || defaultStories[0]
+            || null;
+        templateStoryUrl = templateEntry?.url || '';
+        const preferred = defaultStories.find((s) => !/template\.html$/i.test(String(s?.url || '')))
+            || templateEntry
+            || null;
+        currentDefaultStoryUrl = preferred?.url || '';
+        defaultStoryHtmlPromise = templateStoryUrl ? fetchDefaultStoryHtml(templateStoryUrl) : Promise.resolve(null);
+        populateDefaultStorySelect();
     }
 
     async function getCurrentDisplayedStoryForEditor() {
@@ -314,7 +374,7 @@ window.onload = () =>{
         const storyData = doc.querySelector('tw-storydata');
         if (!storyData) throw new Error('Template missing <tw-storydata>');
 
-        const getPassage = (name) => passages.find((p) => p.name === name);
+        const getPassage = (name) => passages.find((p) => String(p?.name || '').trim().toLowerCase() === String(name || '').trim().toLowerCase());
         const specialNames = new Set([
             'StoryTitle',
             'StoryAuthor',
@@ -328,7 +388,7 @@ window.onload = () =>{
             'StoryStylesheet',
             'StoryJavaScript',
             'StoryDisplayTitle',
-        ]);
+        ].map((n) => String(n).toLowerCase()));
         const storyTitle = getPassage('StoryTitle')?.body?.trim()
             || sourceName?.replace(/\.[^.]+$/, '')
             || 'Dialomic Story';
@@ -346,14 +406,14 @@ window.onload = () =>{
             }
         }
 
-        const startCandidate = passages.find((p) => !specialNames.has(p.name)) || passages[0];
+        const startCandidate = passages.find((p) => !specialNames.has(String(p?.name || '').trim().toLowerCase())) || passages[0];
         let startPid = 1;
         storyData.querySelectorAll('tw-passagedata').forEach((n) => n.remove());
 
         for (let i = 0; i < passages.length; i += 1) {
             const p = passages[i];
             const pid = i + 1;
-            if (p.name === startCandidate.name) startPid = pid;
+            if (String(p?.name || '').trim().toLowerCase() === String(startCandidate?.name || '').trim().toLowerCase()) startPid = pid;
             const pass = doc.createElement('tw-passagedata');
             pass.setAttribute('pid', String(pid));
             pass.setAttribute('name', p.name);
@@ -394,14 +454,6 @@ window.onload = () =>{
     }
 
     if (defaultStorySelect) {
-        defaultStorySelect.innerHTML = '';
-        for (const story of defaultStories) {
-            const opt = document.createElement('option');
-            opt.value = story.url;
-            opt.textContent = story.label;
-            defaultStorySelect.appendChild(opt);
-        }
-        defaultStorySelect.value = currentDefaultStoryUrl;
         defaultStorySelect.addEventListener('change', () => {
             const url = String(defaultStorySelect.value || '').trim();
             if (!url) return;
@@ -426,12 +478,15 @@ window.onload = () =>{
         });
     }
 
-    setMode(importedHtml ? 'imported' : 'default');
+    initDefaultStories().then(() => {
+        setMode(importedHtml ? 'imported' : 'default');
+    });
 };
 
+/**
+ * Bootstrap or refresh viewer state from a newly received passage payload.
+ */
 function init(info){
-    console.log("INIT");
-
     if (!started){
         layout = new LayoutUI();
         started = true;
@@ -445,11 +500,14 @@ function init(info){
     vars = sugarVars;
     layout.lo = vars.DL_setup;
     layout.loCurr = vars.DL_curr;
+    if (isStoryInitPayload(info)) return;
     layout.setPsgInfo(info);
+    // Render immediately on init so first passage does not depend on a follow-up
+    // :passage message timing from the iframe bridge.
+    layout.setPanel();
 }
 
 function cleanText(s){
-    console.log(s);
     let i = s.indexOf("%%%");
     if (i !== -1){
         return s.substring(0, i);
@@ -487,20 +545,6 @@ function withDefaultSceneCamera(scene) {
         next.camera = cloneSceneSpec(DEFAULT_PANEL_CAMERA);
     }
     return next;
-}
-
-function stripHtml(html) {
-    if (!html) return '';
-    const el = document.createElement('div');
-    el.innerHTML = html;
-    return (el.textContent || '').replace(/\r\n/g, '\n');
-}
-
-function splitHtmlParagraphs(html) {
-    const normalized = String(html || '')
-        .replace(/\r\n/g, '\n')
-        .replace(/\n\s*\n/g, '<br>');
-    return normalized.split(/<br\s*\/?>/i);
 }
 
 function extractPanelCommands(text) {
@@ -575,7 +619,6 @@ function extractPanelCommands(text) {
 }
 
 function parseSpeakerBlocks(text, sceneObjects) {
-    // console.log(sceneObjects);
     const originalParas = splitHtmlParagraphs(text);
     const cleanedParas = originalParas.map((p) => stripHtml(p));
     const narrationParas = [];
@@ -611,38 +654,6 @@ function parseSpeakerBlocks(text, sceneObjects) {
         speakers,
         narrationText: narrationParas.join('\n\n'),
     };
-}
-
-function buildSceneObjectMap(objs) {
-    if (!objs) return {};
-    if (Array.isArray(objs)) {
-        const map = {};
-        objs.forEach((obj, i) => {
-            if (typeof obj === 'string') {
-                const trimmed = obj.trim();
-                let key = '';
-                let spec = trimmed;
-                const eqIdx = trimmed.indexOf('=');
-                if (eqIdx > 0) {
-                    key = trimmed.slice(0, eqIdx).trim();
-                    spec = trimmed.slice(eqIdx + 1).trim();
-                }
-                if (key) {
-                    map[key] = spec;
-                } else {
-                    const modelKey = (trimmed.split(/\s+/)[0] || '').toLowerCase();
-                    if (modelKey) map[modelKey] = obj;
-                }
-            } else if (obj && typeof obj === 'object') {
-                const key = (obj.id || obj.name || obj.model || `obj_${i}`);
-                if (key) map[String(key)] = obj;
-            }
-            map[`obj_${i}`] = obj;
-        });
-        return map;
-    }
-    if (typeof objs === 'object') return objs;
-    return {};
 }
 
 class LayoutUI {
@@ -736,11 +747,6 @@ class LayoutUI {
 
     getPanelCapacity() {
         return Math.max(1, this.panelConfig.rows * this.panelConfig.cols);
-    }
-
-    logPanelCount() {
-        const count = Object.keys(this.panelsOnscreen).length;
-        console.log('[layout] panelsOnscreen:', count);
     }
 
     reconcileLargePanelOrder() {
@@ -1007,96 +1013,6 @@ class LayoutUI {
             panel.setHovered?.(name === this.hoverPanelName);
         }
     }
-
-    // initEventDebug() {
-    //     if (!window.DL_DEBUG_EVENTS) return;
-    //     let mouseMoves = 0;
-    //     let pointerMoves = 0;
-    //     let lastEventAt = 0;
-    //     const stamp = () => {
-    //         lastEventAt = performance.now();
-    //     };
-    //     const onMouse = () => { mouseMoves += 1; stamp(); };
-    //     const onPointer = () => { pointerMoves += 1; stamp(); };
-    //     window.addEventListener('mousemove', onMouse, { capture: true, passive: true });
-    //     window.addEventListener('pointermove', onPointer, { capture: true, passive: true });
-    //     document.addEventListener('mousemove', onMouse, { capture: true, passive: true });
-    //     document.addEventListener('pointermove', onPointer, { capture: true, passive: true });
-    //     setInterval(() => {
-    //         console.log('[event-debug]', {
-    //             mouseMoves,
-    //             pointerMoves,
-    //             hasFocus: document.hasFocus(),
-    //             visibility: document.visibilityState,
-    //             msSinceEvent: Math.round(performance.now() - lastEventAt),
-    //         });
-    //         mouseMoves = 0;
-    //         pointerMoves = 0;
-    //     }, 1000);
-    // }
-
-    // initPointerDebug() {
-    //     if (!window.DL_DEBUG_POINTER) return;
-    //     const overlay = document.createElement('div');
-    //     overlay.id = 'pointer-debug-overlay';
-    //     overlay.style.position = 'fixed';
-    //     overlay.style.left = '0';
-    //     overlay.style.top = '0';
-    //     overlay.style.width = '0';
-    //     overlay.style.height = '0';
-    //     overlay.style.border = '2px solid rgba(255, 0, 0, 0.8)';
-    //     overlay.style.background = 'rgba(255, 0, 0, 0.08)';
-    //     overlay.style.zIndex = '2147483647';
-    //     overlay.style.pointerEvents = 'none';
-    //     document.body.appendChild(overlay);
-
-    //     const label = document.createElement('div');
-    //     label.id = 'pointer-debug-label';
-    //     label.style.position = 'fixed';
-    //     label.style.left = '0';
-    //     label.style.top = '0';
-    //     label.style.zIndex = '2147483647';
-    //     label.style.pointerEvents = 'none';
-    //     label.style.background = 'rgba(0, 0, 0, 0.75)';
-    //     label.style.color = '#fff';
-    //     label.style.font = '11px/1.2 "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
-    //     label.style.padding = '2px 4px';
-    //     label.style.borderRadius = '3px';
-    //     document.body.appendChild(label);
-
-    //     document.addEventListener('pointermove', (e) => {
-    //         const x = e.clientX;
-    //         const y = e.clientY;
-    //         const el = document.elementFromPoint(x, y);
-    //         if (!el) return;
-    //         const rect = el.getBoundingClientRect();
-    //         overlay.style.left = `${rect.left}px`;
-    //         overlay.style.top = `${rect.top}px`;
-    //         overlay.style.width = `${rect.width}px`;
-    //         overlay.style.height = `${rect.height}px`;
-    //         const name = el.id ? `#${el.id}` : (el.className ? `.${String(el.className).split(' ').join('.')}` : el.tagName.toLowerCase());
-    //         label.textContent = `${el.tagName.toLowerCase()} ${name}`.trim();
-    //         label.style.left = `${Math.min(window.innerWidth - 10, rect.left + 4)}px`;
-    //         label.style.top = `${Math.max(0, rect.top - 18)}px`;
-    //     }, { passive: true });
-
-    //     document.addEventListener('pointerdown', (e) => {
-    //         const x = e.clientX;
-    //         const y = e.clientY;
-    //         const el = document.elementFromPoint(x, y);
-    //         if (!el) return;
-    //         const style = window.getComputedStyle(el);
-    //         const name = el.id ? `#${el.id}` : (el.className ? `.${String(el.className).split(' ').join('.')}` : el.tagName.toLowerCase());
-    //         console.log('[pointer-debug] down', {
-    //             tag: el.tagName.toLowerCase(),
-    //             name,
-    //             zIndex: style.zIndex,
-    //             pointerEvents: style.pointerEvents,
-    //             opacity: style.opacity,
-    //             position: style.position,
-    //         });
-    //     }, { passive: true });
-    // }
 
     onKeyDown(event) {
         const active = document.activeElement;
@@ -1386,17 +1302,11 @@ class LayoutUI {
     setPsgInfo(info) {
        
         this.psgName = info.psgName;
-        vars = getSugarCubeVars() || {};
+        const liveVars = getSugarCubeVars();
+        if (liveVars) vars = liveVars;
         const baseConfig = this.normalizePanelConfig(vars?.DL?.config);
         const baseSolo = vars?.DL_solo === true;
         const cleaned = cleanText(info.passage);
-        if (window.DL_DEBUG_DELIVERY && !String(cleaned || '').trim()) {
-            console.warn('[layout][passage-debug] setPsgInfo cleaned passage is blank', {
-                psgName: String(info?.psgName || '(missing)'),
-                rawPassageLen: String(info?.passage || '').length,
-                links: Array.isArray(info?.links) ? info.links.length : 0,
-            });
-        }
         const extracted = extractPanelCommands(cleaned);
         this.panelCommands = extracted.commands || {};
         const mergedConfig = {
@@ -1411,7 +1321,6 @@ class LayoutUI {
         this.panelAspectRatio = Number.isFinite(this.panelCommands.aspectRatio)
             ? this.panelCommands.aspectRatio
             : null;
-        // console.log(vars?.DL?.objects);
         const sceneObjects = buildSceneObjectMap(vars?.DL?.objects);
         const parsed = parseSpeakerBlocks(extracted.text, sceneObjects);
         this.speakers = parsed.speakers || [];
@@ -1467,9 +1376,10 @@ class LayoutUI {
 
         let data = {left: 0, top: this.topInset + this.h, width: 360, height: 150};
         let target = {left: 0, top: this.topInset + this.h / 4, width: this.w, height: 300};
-        let vars = getSugarCubeVars() || {};
-        let scene = withDefaultSceneCamera(vars.DL);
-        console.log(scene);
+        const liveVars = getSugarCubeVars();
+        if (liveVars) vars = liveVars;
+        const sceneVars = liveVars || vars || {};
+        let scene = withDefaultSceneCamera(sceneVars.DL);
 
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, this.txt, -1, scene, 'narration', this.topInset);
@@ -1534,7 +1444,6 @@ class LayoutUI {
         }
         this.activePanelName = name;
         this.applyPanelLayering();
-        this.logPanelCount();
     }
 
     makeResponse(i) {
@@ -1548,10 +1457,10 @@ class LayoutUI {
         let name = this.psgName + choice;
         let data = {left: 0, top: this.topInset + this.h, width: 100, height: 100};
         target = {left: this.w * 3 / 4, top: this.topInset + this.h / 3, width: 200, height: 200};
-        vars = getSugarCubeVars() || {};
-        let scene = withDefaultSceneCamera(vars.DL);
-        // console.log("makeresponese make response");
-        // console.log(vars);
+        const liveVars = getSugarCubeVars();
+        if (liveVars) vars = liveVars;
+        const sceneVars = liveVars || vars || {};
+        let scene = withDefaultSceneCamera(sceneVars.DL);
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, choice, i,scene, 'narration', this.topInset);
             p.panelSize = 'small';
@@ -1602,14 +1511,12 @@ class LayoutUI {
         for (let panel in this.panelsOnscreen){
             let p = this.panelsOnscreen[panel];
             if (!p.onScreen){
-                // console.log(p.text + " removed");
                 this.pressed = false;
                 delete this.panelsOnscreen[panel];
                 this.largePanelOrder = this.largePanelOrder.filter((key) => key !== panel);
                 if (this.activePanelName === panel) this.activePanelName = null;
                 if (this.hoverPanelName === panel) this.hoverPanelName = null;
                 this.applyPanelLayering();
-                this.logPanelCount();
             } else {
                 let linkExists = p.update();
                 if (linkExists !== -1){

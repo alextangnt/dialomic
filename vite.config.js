@@ -1,6 +1,9 @@
 import { defineConfig } from 'vite';
 import { resolve } from 'node:path';
 
+/**
+ * Build both runtime viewer and visual editor as separate HTML entrypoints.
+ */
 export default defineConfig({
   base: process.env.VITE_BASE || '/',
   build: {

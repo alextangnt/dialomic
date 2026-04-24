@@ -1,0 +1,13 @@
+{
+  "generatedAt": "2026-04-24T18:31:28.685Z",
+  "stories": [
+    {
+      "label": "Template",
+      "url": "defaultstories/template.html"
+    },
+    {
+      "label": "GuessingGame",
+      "url": "defaultstories/GuessingGame.html"
+    }
+  ]
+}

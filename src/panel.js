@@ -6,6 +6,14 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { backgroundConfigs, backgroundDefaults } from './backgrounds.js';
 import { SpeechBubbleLayout, getHtmlTextLength, stripLeadingHtmlWhitespace } from './speechBubbles.js';
 
+/*
+ * 3D panel runtime + rendering primitives used by both viewer and visual editor.
+ * Contains:
+ * - scene/model loading and transforms
+ * - camera + shot framing
+ * - editor gizmo/orbit tooling
+ * - panel DOM composition with narration/speech layers
+ */
 
 export class TextBox {
     constructor(left,top,size,font){
@@ -107,7 +115,6 @@ const EDITOR_BACKGROUND_KEY = '__background__';
 const exitFrames = 16;
 
 function normalizeSceneObjects(scene) {
-    // console.log(scene);
     const objs = scene?.objects;
     const list = [];
     const byId = {};
@@ -509,7 +516,6 @@ export class ThreeScene {
     }
 
     parseModelInfo(info){
-        // console.log(info);
         let specString = '';
         let explicitPosition = null;
         let explicitRotation = null;
@@ -565,6 +571,9 @@ export class ThreeScene {
         
     }
 
+    /**
+     * Enable orbit + transform tools used by the visual editor for direct scene editing.
+     */
     enableEditorTools(options = {}) {
         if (!this.models.length) {
             // Defer editor setup until at least one model has loaded.
@@ -933,20 +942,15 @@ export class ThreeScene {
 
     addModel(obj){
         let {filename, dist, distName, locKey, angle, specString, explicitPosition, explicitRotation, explicitScale} = this.parseModelInfo(obj);
-        // console.log(filename);
-        // console.log(dist);
-        // console.log(locKey);
         // let file = obj.model;
         // let pos = obj.position;
         // let scale = obj.scale;
         // let rotation = obj.rotation;
         // if (rotation) {
         //     rotation.forEach((v,i) => rotation[i] = v*Math.PI/4);
-        //     console.log(rotation);
         // }
     
         // let filename = '/src/assets/animals/'+file+'.glb';
-        // console.log(filename);
         let loader = this.loader;
         let scene = this.scene;
         let models = this.models;
@@ -1559,10 +1563,8 @@ export class ThreeScene {
         anim.currentKey = current.key;
         if (model.userData) model.userData.speaking = true;
         if (!anim.foundLogged.has(current.key)) {
-            // console.log('[speaker hop] animating key:', current.key);
             anim.foundLogged.add(current.key);
         }
-        // console.log(model);
         if (!model) {
             anim.index = (anim.index + 1) % anim.queue.length;
             anim.startTime = now;
@@ -1640,7 +1642,6 @@ export class ThreeScene {
 
 export class Panel {
     constructor(curr, target, id, text, linked, scene, textType = 'narration', topInset = 0) {
-        // console.log("make panel");
         // let curr = {left: left, top: top, width: width, height: height};
         // let target = {left: left, top: top, width: width, height: height};
         this.data = curr;
@@ -1656,7 +1657,6 @@ export class Panel {
         this.isAnimatingOut = false;
         this.isDeleted = false;
 
-        // console.log(this.data);
         this.canvas = document.createElement('canvas');
         this.canvas.style.position = 'absolute';
         this.canvas.style.left = `${curr.left}px`;
@@ -2025,12 +2025,10 @@ export class Panel {
             this.move(t.left, t.top);
             this.resize(t.width, t.height);
             this.movingToTarget = {left:false, top:false, width:false, height:false};
-            // console.log(this.id + " is done updating");
             this.isUpdating = false;
         }
         
         if (c.left+c.width<0 || c.top+c.height<0 || c.left>wwidth || c.top>wheight){
-            // console.log("off screen")
             this.isUpdating = false;
             this.onScreen = false;
             this.canvas.style.display = 'none';
@@ -2064,7 +2062,6 @@ export class Panel {
     update(){
         
         if (!this.isUpdating) {
-            // console.log(this.linked);
             this.positionSpeechBubbles();
             return this.linked;
         }
@@ -2082,7 +2079,6 @@ export class Panel {
     }
 
     setSpeakers(speakers) {
-        // console.log(speakers);
         this.speakers = Array.isArray(speakers) ? speakers : [];
         if (this.three && this.three.setSpeakerQueue) {
             this.three.setSpeakerQueue(this.speakers);

@@ -3,6 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
+/**
+ * Small wrapper used by npm scripts to run local Vite from node_modules.
+ */
 const root = path.resolve(__dirname, '..');
 const viteBin = path.join(
   root,

@@ -1,5 +1,21 @@
 import * as THREE from 'three';
 import { Panel } from './panel.js';
+import {
+    stripHtml,
+    splitHtmlParagraphs,
+    splitParagraphs,
+    buildSceneObjectMap,
+    splitHiddenBody,
+    composeBodyWithHidden,
+    removeSpeakerParagraphsForModel,
+} from './passageText.js';
+
+/*
+ * Visual editor runtime:
+ * - parses Twine/Twee passages
+ * - renders single-passage 3D scene previews
+ * - keeps text/scene/camera editing workflows synchronized
+ */
 
 const VISUAL_EDITOR_STATE_KEY = 'DL_VISUAL_EDITOR_STATE_V1';
 const VIEWER_IMPORTED_STORY_KEY = 'DL_IMPORTED_STORY_HTML';
@@ -898,6 +914,9 @@ function showUnsavedDialog() {
     });
 }
 
+/**
+ * Guard navigation/actions with save/discard/cancel behavior for unsaved edits.
+ */
 async function runWithUnsavedGuard(action, { onSave, onDiscard } = {}) {
     if (!state.hasUnsavedChanges) {
         await Promise.resolve(action());
@@ -1065,94 +1084,6 @@ function upsertPanelAspectCommand(body, ratio) {
     return `%%aspect=${aspectToken}%%\n${source}`.trimStart();
 }
 
-function stripHtml(html) {
-    if (!html) return '';
-    const node = document.createElement('div');
-    node.innerHTML = html;
-    return (node.textContent || '').replace(/\r\n/g, '\n');
-}
-
-function splitHtmlParagraphs(html) {
-    const normalized = String(html || '')
-        .replace(/\r\n/g, '\n')
-        // Visual editor loads source passage text; viewer parses rendered DOM
-        // where newlines are preserved as <br>. Mirror that behavior here.
-        .replace(/\n/g, '<br>');
-    return normalized.split(/<br\s*\/?>/i);
-}
-
-function buildSceneObjectMap(objs) {
-    if (!objs) return {};
-    if (Array.isArray(objs)) {
-        const map = {};
-        objs.forEach((obj, i) => {
-            if (typeof obj === 'string') {
-                const trimmed = obj.trim();
-                let key = '';
-                let spec = trimmed;
-                const eqIdx = trimmed.indexOf('=');
-                if (eqIdx > 0) {
-                    key = trimmed.slice(0, eqIdx).trim();
-                    spec = trimmed.slice(eqIdx + 1).trim();
-                }
-                if (key) map[key] = spec;
-                if (key) map[String(key).toLowerCase()] = spec;
-                else {
-                    const modelKey = (trimmed.split(/\s+/)[0] || '').toLowerCase();
-                    if (modelKey) map[modelKey] = obj;
-                }
-            } else if (obj && typeof obj === 'object') {
-                const key = (obj.id || obj.name || obj.model || `obj_${i}`);
-                if (key) {
-                    map[String(key)] = obj;
-                    map[String(key).toLowerCase()] = obj;
-                }
-            }
-            map[`obj_${i}`] = obj;
-        });
-        return map;
-    }
-    if (typeof objs === 'object') {
-        const map = { ...objs };
-        for (const [k, v] of Object.entries(objs)) {
-            if (!k) continue;
-            map[String(k).toLowerCase()] = v;
-        }
-        return map;
-    }
-    return {};
-}
-
-function splitParagraphs(text, format) {
-    if (format === 'twee') {
-        // In Twee authoring, a single newline is a practical paragraph boundary.
-        return String(text || '').split('\n').map((p) => p.trim()).filter(Boolean);
-    }
-    return splitHtmlParagraphs(text);
-}
-
-function removeSpeakerParagraphsForModel(body, format, modelKey) {
-    const key = String(modelKey || '').trim().toLowerCase();
-    if (!key) return { body: String(body || ''), removed: 0 };
-    const parts = splitParagraphs(body, format);
-    const kept = [];
-    let removed = 0;
-    for (const part of parts) {
-        const plain = stripHtml(part).trim();
-        const firstLine = plain.split('\n').find((l) => l.trim().length > 0) || '';
-        const m = firstLine.match(/^([^:]+)::\s*(.*)$/);
-        const speaker = String(m?.[1] || '').trim().toLowerCase();
-        if (speaker && speaker === key) {
-            removed += 1;
-            continue;
-        }
-        kept.push(part);
-    }
-    // splitParagraphs() is line-based for both html and twee in the editor.
-    const sep = '\n';
-    return { body: kept.join(sep), removed };
-}
-
 function htmlToPlainText(html) {
     const withBreaks = String(html || '')
         .replace(/<br\s*\/?>/gi, '\n')
@@ -1172,16 +1103,6 @@ function plainTextToHtml(text) {
     return escapeHtml(String(text || '')).replace(/\n/g, '<br>');
 }
 
-function splitHiddenBody(sourceBody) {
-    const source = String(sourceBody || '').replace(/\r\n/g, '\n');
-    const idx = source.indexOf('%%%');
-    if (idx < 0) return { visible: source, hidden: '' };
-    return {
-        visible: source.slice(0, idx),
-        hidden: source.slice(idx),
-    };
-}
-
 function cloneSceneSpec(value) {
     if (!value || typeof value !== 'object') return value;
     if (typeof structuredClone === 'function') {
@@ -1196,14 +1117,6 @@ function cloneSceneSpec(value) {
     } catch {
         return { ...value };
     }
-}
-
-function composeBodyWithHidden(visibleBody, hiddenTail) {
-    const visible = String(visibleBody || '').replace(/\r\n/g, '\n').trimEnd();
-    const hidden = String(hiddenTail || '');
-    if (!hidden) return visible;
-    if (!visible) return hidden;
-    return `${visible}\n${hidden.replace(/^\n+/, '')}`;
 }
 
 function replaceFirstBlock(source, oldBlock, newBlock) {
@@ -1712,6 +1625,80 @@ function syncDraftIntoPassageBody() {
     if (el.passageBody) el.passageBody.value = next;
 }
 
+function applyCurrentPassageBody(nextBody, { applyScene = true, markSceneDirty = true } = {}) {
+    const p = state.passages[state.selected];
+    if (!p) return false;
+    const next = String(nextBody || '');
+    if (next === String(p.body || '')) return false;
+    p.body = next;
+    if (el.passageBody) el.passageBody.value = next;
+    if (state.activeInlineEditor?.setSceneText) {
+        state.activeInlineEditor.setSceneText(extractSceneLines(next), { applyLive: false });
+    }
+    refreshDraftFromPassageBody();
+    if (applyScene) applySceneFromBodyLive(next, { ignoreCamera: true });
+    renderPreviewLinks(parseLinkLabels(next));
+    if (markSceneDirty) setSceneDirty(true);
+    return true;
+}
+
+function removeSpeakerLinesFromCurrentDraft(modelKey) {
+    const key = String(modelKey || '').trim();
+    if (!key) return 0;
+    const currentVisible = String(state.textDraft.narrationRaw || '');
+    const { body: cleanedVisible, removed } = removeSpeakerParagraphsForModel(currentVisible, state.format, key);
+    if (cleanedVisible === currentVisible) return removed;
+    state.textDraft.narrationRaw = cleanedVisible;
+    syncDraftIntoPassageBody();
+    refreshDraftFromPassageBody();
+    updatePanelFromTextDraft();
+    return removed;
+}
+
+function removeLockedGlobalFromCurrentPassage(selectedKey) {
+    const p = state.passages[state.selected];
+    if (!p) return false;
+    const sourceVar = String(state.panel?.three?.getModelByKey?.(selectedKey)?.userData?.sourceId || selectedKey);
+    const next = removeVariableReferenceFromScene(String(p.body || ''), sourceVar);
+    const split = splitHiddenBody(next);
+    const pruned = removeSpeakerParagraphsForModel(split.visible, state.format, selectedKey);
+    const finalBody = composeBodyWithHidden(pruned.body, split.hidden);
+    return applyCurrentPassageBody(finalBody, { applyScene: true, markSceneDirty: true });
+}
+
+function tryDeleteSelectedModel() {
+    if (!state.panel?.three || !state.selectedModelKey) return false;
+    const selectedKey = String(state.selectedModelKey || '').trim().toLowerCase();
+    const isLockedGlobal = Boolean(
+        selectedKey &&
+        selectedKey !== BACKGROUND_KEY &&
+        state.panel.three.isEditorModelLocked?.(selectedKey)
+    );
+    if (isLockedGlobal) {
+        removeLockedGlobalFromCurrentPassage(selectedKey);
+        return true;
+    }
+    const deletedKey = String(state.selectedModelKey);
+    const removedLines = (state.textDraft.speakers || []).filter(
+        (s) => String(s.speaker || '').trim().toLowerCase() === deletedKey.toLowerCase()
+    ).length;
+    if (removedLines > 0) {
+        const ok = window.confirm(
+            `Model "${deletedKey}" has ${removedLines} speech bubble paragraph${removedLines === 1 ? '' : 's'}. Delete model and remove those paragraph${removedLines === 1 ? '' : 's'}?`
+        );
+        if (!ok) return false;
+    }
+    const removed = state.panel.three.removeEditableModelByKey?.(deletedKey);
+    if (!removed) return false;
+    removeSpeakerLinesFromCurrentDraft(deletedKey);
+    setTextDirty(true);
+    setSceneDirty(true);
+    refreshModelSelect();
+    refreshFloatingDeleteButton();
+    refreshCurrentPanelTextAndBubbles();
+    return true;
+}
+
 function refreshDraftFromPassageBody() {
     const p = state.passages[state.selected];
     if (!p) return;
@@ -1782,7 +1769,6 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     const globalsSnapshot = parseStoryInitGlobals(String(storyInit?.body || state.storyInitBody || ''));
     state.vars = globalsSnapshot;
     window.__DL_GLOBALS__ = cloneSceneSpec(globalsSnapshot);
-    console.log('[visual-editor][globals]', cloneSceneSpec(globalsSnapshot));
     if (state.panel?.three) {
         state.panel.three.setSpeakerAnimationPaused?.(true);
         state.panel.three.renderer?.setAnimationLoop?.(null);
@@ -2966,6 +2952,10 @@ function getSceneSnapshotForSave() {
     return state.panel?.three?.getEditableSceneSnapshot?.() || null;
 }
 
+/**
+ * Compose updated passage body using current panel snapshot while preserving authored
+ * variable references for global-driven scenes.
+ */
 function composeBodyWithCurrentSceneSnapshot(baseBody) {
     let nextBody = String(baseBody || '');
     const snapshot = getSceneSnapshotForSave();
@@ -3011,6 +3001,9 @@ function composeBodyWithCurrentSceneSnapshot(baseBody) {
     return nextBody;
 }
 
+/**
+ * Persist current text + scene edits back to the selected passage body.
+ */
 function saveSceneTransformsToPassage() {
     const p = state.passages[state.selected];
     if (!p || !state.panel?.three) return;
@@ -3617,23 +3610,13 @@ el.selectedEnvironmentResetBtn?.addEventListener('click', () => {
 el.floatingDeleteModelBtn?.addEventListener('click', () => {
     if (!state.panel?.three || !state.selectedModelKey) return;
     const selectedKey = String(state.selectedModelKey || '').trim().toLowerCase();
-    const isLockedGlobal = Boolean(selectedKey && selectedKey !== BACKGROUND_KEY && state.panel.three.isEditorModelLocked?.(selectedKey));
+    const isLockedGlobal = Boolean(
+        selectedKey &&
+        selectedKey !== BACKGROUND_KEY &&
+        state.panel.three.isEditorModelLocked?.(selectedKey)
+    );
     if (isLockedGlobal) {
-        const p = state.passages[state.selected];
-        if (!p) return;
-        const sourceVar = String(state.panel.three.getModelByKey?.(selectedKey)?.userData?.sourceId || selectedKey);
-        const next = removeVariableReferenceFromScene(String(p.body || ''), sourceVar);
-        if (next !== String(p.body || '')) {
-            p.body = next;
-            if (el.passageBody) el.passageBody.value = next;
-            if (state.activeInlineEditor?.setSceneText) {
-                state.activeInlineEditor.setSceneText(extractSceneLines(next), { applyLive: false });
-            }
-            refreshDraftFromPassageBody();
-            applySceneFromBodyLive(next, { ignoreCamera: true });
-            renderPreviewLinks(parseLinkLabels(next));
-            setSceneDirty(true);
-        }
+        removeLockedGlobalFromCurrentPassage(selectedKey);
         return;
     }
     if (state.selectedModelKey === BACKGROUND_KEY) {
@@ -3653,49 +3636,7 @@ el.floatingDeleteModelBtn?.addEventListener('click', () => {
 });
 
 el.selectedDeleteModelBtn?.addEventListener('click', () => {
-    if (!state.panel?.three || !state.selectedModelKey) return;
-    const selectedKey = String(state.selectedModelKey || '').trim().toLowerCase();
-    const isLockedGlobal = Boolean(selectedKey && selectedKey !== BACKGROUND_KEY && state.panel.three.isEditorModelLocked?.(selectedKey));
-    if (isLockedGlobal) {
-        const p = state.passages[state.selected];
-        if (!p) return;
-        const sourceVar = String(state.panel.three.getModelByKey?.(selectedKey)?.userData?.sourceId || selectedKey);
-        const next = removeVariableReferenceFromScene(String(p.body || ''), sourceVar);
-        if (next !== String(p.body || '')) {
-            p.body = next;
-            if (el.passageBody) el.passageBody.value = next;
-            if (state.activeInlineEditor?.setSceneText) {
-                state.activeInlineEditor.setSceneText(extractSceneLines(next), { applyLive: false });
-            }
-            refreshDraftFromPassageBody();
-            applySceneFromBodyLive(next, { ignoreCamera: true });
-            renderPreviewLinks(parseLinkLabels(next));
-            setSceneDirty(true);
-        }
-        return;
-    }
-    const deletedKey = String(state.selectedModelKey);
-    const removedLines = (state.textDraft.speakers || []).filter(
-        (s) => String(s.speaker || '').trim().toLowerCase() === deletedKey.toLowerCase()
-    ).length;
-    if (removedLines > 0) {
-        const ok = window.confirm(
-            `Model "${deletedKey}" has ${removedLines} speech bubble paragraph${removedLines === 1 ? '' : 's'}. Delete model and remove those paragraph${removedLines === 1 ? '' : 's'}?`
-        );
-        if (!ok) return;
-    }
-    const removed = state.panel.three.removeEditableModelByKey?.(deletedKey);
-    if (removed) {
-        state.textDraft.speakers = (state.textDraft.speakers || []).filter(
-            (s) => String(s.speaker || '').trim().toLowerCase() !== deletedKey.toLowerCase()
-        );
-        syncDraftIntoPassageBody();
-        setTextDirty(true);
-        setSceneDirty(true);
-        refreshModelSelect();
-        refreshFloatingDeleteButton();
-        refreshCurrentPanelTextAndBubbles();
-    }
+    tryDeleteSelectedModel();
 });
 
 el.clearSceneBtn?.addEventListener('click', () => {
@@ -3714,6 +3655,21 @@ el.clearSceneBtn?.addEventListener('click', () => {
     if (!ok) return;
     for (const key of keys) {
         state.panel.three.removeEditableModelByKey?.(key);
+    }
+    if (keys.length) {
+        const split = splitHiddenBody(state.textDraft.narrationRaw || '');
+        let visible = split.visible;
+        for (const key of keys) {
+            const next = removeSpeakerParagraphsForModel(visible, state.format, key);
+            visible = next.body;
+        }
+        if (visible !== split.visible) {
+            state.textDraft.narrationRaw = visible;
+            syncDraftIntoPassageBody();
+            refreshDraftFromPassageBody();
+            updatePanelFromTextDraft();
+            setTextDirty(true);
+        }
     }
     updateCurrentPassageEnvironment({ backgroundName: 'none' });
     state.selectedModelKey = BACKGROUND_KEY;

@@ -311,7 +311,7 @@ iframe {
     color: #eef5ff;
     box-shadow: 0 2px 0 #214b82;
     border-radius: 8px;
-    padding: 6px 14px;
+    padding: 6px 32px 6px 14px;
     min-width: 164px;
     text-align: center;
     outline: none;
@@ -319,15 +319,21 @@ iframe {
     -webkit-appearance: none;
     font-family: inherit;
     font-size: 12px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='%23eef5ff' d='M5 6 0 0h10z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+    background-size: 10px 6px;
+    transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
 }
 
 #defaultStorySelect:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 4px 0 #214b82;
+    background-color: #3d72b6;
+    border-color: #26558f;
+    box-shadow: 0 2px 0 #26558f;
 }
 
 #defaultStorySelect:active {
-    transform: translateY(0);
+    background-color: #335f97;
     box-shadow: 0 2px 0 #214b82;
 }
 

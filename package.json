@@ -1,5 +1,7 @@
 {
   "scripts": {
+    "predev": "node scripts/generate-default-stories-manifest.js",
+    "prebuild": "node scripts/generate-default-stories-manifest.js",
     "dev": "node scripts/start-dev.js",
     "build": "vite build"
   },

@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 const fs = require('fs');
 
+/**
+ * Inject public/messaging.js script tag into a Twine HTML file.
+ * Usage: node scripts/add-messaging-script.js <input> [output]
+ */
 const args = process.argv.slice(2);
 const snippet = '<script src="messaging.js"></script>';
 

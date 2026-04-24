@@ -1,10 +1,16 @@
-export const backgroundDefaults = {
+/**
+ * Default background transform used when a specific background has no override.
+ */
+export const backgroundDefaults = Object.freeze({
     scale: 2,
     position: { x: 0, y: -0.6, z: 0 },
     rotation: { x: 0, y: 0, z: 0 },
-};
+});
 
-export const backgroundConfigs = {
+/**
+ * Named background transform presets keyed by background asset slug.
+ */
+export const backgroundConfigs = Object.freeze({
     // Example:
     "bus_stop": {
         scale: 2,
@@ -26,4 +32,4 @@ export const backgroundConfigs = {
         position: { x: 0, y: -0.35, z: -4 },
         rotation: { x: 0, y: -0.5, z: 0 },
     }
-};
+});
