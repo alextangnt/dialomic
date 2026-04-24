@@ -39,6 +39,7 @@ window.onload = () =>{
     const storyStatusEl = document.getElementById("storyStatus");
     const defaultStorySelect = document.getElementById("defaultStorySelect");
     const editorLink = document.getElementById("editorLink");
+    const IMPORTED_STORY_SELECT_VALUE = '__imported_story__';
     const FALLBACK_DEFAULT_STORIES = [
         { label: 'Template', url: 'defaultstories/template.html' },
         { label: 'GuessingGame', url: 'defaultstories/GuessingGame.html' },
@@ -209,6 +210,7 @@ window.onload = () =>{
             });
         } else if (importedHtml) {
             loadStoryHtml(importedHtml, importedName);
+            if (defaultStorySelect) defaultStorySelect.value = IMPORTED_STORY_SELECT_VALUE;
         }
     }
 
@@ -257,6 +259,14 @@ window.onload = () =>{
             const opt = document.createElement('option');
             opt.value = story.url;
             opt.textContent = story.label;
+            defaultStorySelect.appendChild(opt);
+        }
+        if (importedHtml) {
+            const opt = document.createElement('option');
+            opt.value = IMPORTED_STORY_SELECT_VALUE;
+            opt.textContent = importedName
+                ? `Imported: ${importedName}`
+                : 'Imported Story';
             defaultStorySelect.appendChild(opt);
         }
         if (currentDefaultStoryUrl) {
@@ -442,6 +452,7 @@ window.onload = () =>{
                 importedHtml = fileText;
                 importedName = file.name;
             }
+            populateDefaultStorySelect();
             setMode('imported');
         } catch (err) {
             console.error(err);
@@ -457,8 +468,11 @@ window.onload = () =>{
         defaultStorySelect.addEventListener('change', () => {
             const url = String(defaultStorySelect.value || '').trim();
             if (!url) return;
-            importedHtml = null;
-            importedName = null;
+            if (url === IMPORTED_STORY_SELECT_VALUE) {
+                if (!importedHtml) return;
+                setMode('imported');
+                return;
+            }
             setMode('default', { defaultUrl: url });
         });
     }
