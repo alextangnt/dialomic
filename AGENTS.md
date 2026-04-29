@@ -4,11 +4,11 @@ This file is a working project memory for Codex/LLM agents.
 Update it whenever architecture, data contracts, or workflows change.
 
 ## Project
-Dialomic: a Twine/SugarCube viewer + visual scene editor that renders 3D comic-style panels (Three.js), narration, and speech bubbles.
+Dialomic: a Twine/SugarCube player + visual scene editor that renders 3D comic-style panels (Three.js), narration, and speech bubbles.
 
 ## Core Runtime Architecture
 
-### Viewer (play mode)
+### Player (play mode)
 - Entry page: `index.html`
 - Main runtime: `src/layout.js`
 - 3D panel runtime: `src/panel.js`
@@ -19,7 +19,7 @@ Dialomic: a Twine/SugarCube viewer + visual scene editor that renders 3D comic-s
 - Messaging bridge script: `public/messaging.js`
 
 Flow:
-1. Viewer loads story HTML into iframe (default or imported).
+1. Player loads story HTML into iframe (default or imported).
 2. Iframe posts passage/init messages.
 3. `layout.js` parses passage text + `$DL` scene vars.
 4. `panel.js` renders Three.js panel(s), narration, and bubbles.
@@ -40,7 +40,7 @@ Flow:
 
 ## Shared Text/Data Utilities
 - Shared helper module: `src/passageText.js`
-- Contains shared passage/body operations used by viewer and editor:
+- Contains shared passage/body operations used by player and editor:
   - HTML stripping/parsing
   - paragraph splitting
   - scene-object map building
@@ -69,17 +69,17 @@ Flow:
 - `%%...%%` tokens are used for per-passage Dialomic commands.
 
 ## Current Engineering Direction
-- Reduce duplication between viewer/editor parsing logic (ongoing).
-- Keep viewer behavior stable while editor evolves.
+- Reduce duplication between player/editor parsing logic (ongoing).
+- Keep player behavior stable while editor evolves.
 - Centralize body mutation paths to prevent desync between:
   - passage text
   - scene preview
   - draft/editor buffers
 
 ## Known Critical Files
-- `src/layout.js` — viewer orchestration + iframe bridge
+- `src/layout.js` — player orchestration + iframe bridge
 - `src/panel.js` — panel rendering lifecycle
-- `src/speechBubbles.js` — bubble positioning, tails, stacking, editor/viewer variants
+- `src/speechBubbles.js` — bubble positioning, tails, stacking, editor/player variants
 - `src/visualEditor.js` — editor workflows and save/export logic
 - `src/passageText.js` — shared body/text helpers
 - `public/messaging.js` — iframe-side messaging relay
@@ -94,12 +94,12 @@ Flow:
 When you make changes, update this file with:
 1. New/changed modules and ownership.
 2. New data contracts or token syntax.
-3. Behavior changes that affect viewer vs editor parity.
+3. Behavior changes that affect player vs editor parity.
 4. Migration notes (if old formats/paths break).
 5. Any temporary hacks/toggles that future agents must remove.
 
 ## Notes for Future Agents
 - Prefer shared helpers over local duplicate parsing code.
-- Avoid introducing viewer-side regressions while working on editor UX.
+- Avoid introducing player-side regressions while working on editor UX.
 - Verify passage-body mutations do not reorder/duplicate unrelated content.
 - Keep speech/model linkage deterministic (speaker key normalization is important).

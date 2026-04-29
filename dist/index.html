@@ -2,26 +2,61 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Dialomic</title>
-    <!-- p5/openprocessing scripts removed: not used and can interfere with pointer events -->
-    <script type="module" crossorigin src="/assets/main-BhAPrmM3.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/passageText-D7_m_22r.js">
-    <link rel="stylesheet" crossorigin href="/assets/passageText-D0Vje-a3.css">
+    <script type="module" crossorigin src="/assets/main-9Jt3I6E3.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/style-Cka54Et1.js">
+    <link rel="stylesheet" crossorigin href="/assets/style-CsTZGG0m.css">
+    <link rel="stylesheet" crossorigin href="/assets/editor-BLTUo455.css">
+    <link rel="stylesheet" crossorigin href="/assets/landing-Cye4KmYG.css">
   </head>
   <body>
     <div class="background-element" id="paper-bg"></div>
-    <iframe id="logicEngine" src="about:blank"></iframe>
-    <div id="topbar">
-      <div id="storyStatus">Default story</div>
-      <div id="storyControls">
-        <input id="storyFile" type="file" accept=".html,.twee,.tw,text/html,text/plain">
-      </div>
-      <div id="storyActions">
-        <select id="defaultStorySelect" title="Default story"></select>
-        <a id="editorLink" href="./visual-editor.html">✎ Edit Scenes</a>
-      </div>
-    </div>
-    <footer id="viewerStatusBar"><span id="fileStatus"></span></footer>
+
+    <main class="landing-shell">
+      <section class="landing-hero">
+        <h1><a class="landing-brand-link" href="./index.html">Dialomic</a></h1>
+        <p class="landing-tagline">Dialomic, an interactive 3d graphic novel designer and engine — create 3d scenes for Twine stories, add dialogue, and play your stories directly in the browser.</p>
+      </section>
+
+      <section class="landing-actions">
+        <div class="action-block">
+          <button id="newStoryBtn" type="button" class="landing-btn landing-btn-primary">+ New Story</button>
+          <div id="newStoryDialog" class="new-story-dialog" hidden>
+            <label for="newStoryName">Story name</label>
+            <input id="newStoryName" type="text" maxlength="120" placeholder="My New Story">
+            <div class="dialog-actions-row">
+              <button id="newStoryCancelBtn" type="button" class="landing-btn landing-btn-ghost">Cancel</button>
+              <button id="newStoryCreateBtn" type="button" class="landing-btn landing-btn-primary">Create</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-block">
+          <div class="story-picker shell">
+            <select id="viewStorySelect" aria-label="Select a story"></select>
+            <button id="importStoryBtn" type="button" class="landing-btn landing-btn-ghost" title="Import story" aria-label="Import story">Upload html</button>
+            <button id="openPlayerBtn" type="button" class="landing-btn landing-btn-secondary">▶ Play</button>
+            <input id="importStoryFile" class="landing-import-file" type="file" accept=".html,.twee,.tw,text/html,text/plain" hidden>
+          </div>
+        </div>
+      </section>
+
+      <section class="landing-info">
+        <div class="landing-card">
+          <h2>About</h2>
+          <p>Play through a sample story and select choices to advance the narrative.</p>
+        </div>
+        <div class="landing-card">
+          <h2>How It Works</h2>
+          <p>Edit the current story, modify scenes, add models, speech bubbles, and choices to make the story your own.</p>
+        </div>
+        <div class="landing-card">
+          <h2>Docs</h2>
+          <p><a class="landing-doc-link" href="https://github.com/alextangnt/dialomic" target="_blank" rel="noopener noreferrer">Open GitHub repository and docs</a></p>
+        </div>
+      </section>
+    </main>
+
   </body>
 </html>
-    

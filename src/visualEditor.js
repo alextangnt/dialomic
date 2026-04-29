@@ -16,8 +16,8 @@ import {
  */
 
 const VISUAL_EDITOR_STATE_KEY = 'DL_VISUAL_EDITOR_STATE_V1';
-const VIEWER_IMPORTED_STORY_KEY = 'DL_IMPORTED_STORY_HTML';
-const VIEWER_EDITOR_BOOT_STORY_KEY = 'DL_VISUAL_EDITOR_BOOT_STORY';
+const PLAYER_IMPORTED_STORY_KEY = 'DL_IMPORTED_STORY_HTML';
+const PLAYER_EDITOR_BOOT_STORY_KEY = 'DL_VISUAL_EDITOR_BOOT_STORY';
 const BACKGROUND_KEY = '__background__';
 const FALLBACK_ANIMAL_ASSET_NAMES = ['cat', 'cow', 'deer', 'hare', 'rat', 'wolf'];
 const FALLBACK_BACKGROUND_ASSET_NAMES = ['ballpark', 'beach', 'bus_stop', 'tennis_court'];
@@ -25,11 +25,19 @@ let ANIMAL_ASSET_NAMES = [...FALLBACK_ANIMAL_ASSET_NAMES];
 let BACKGROUND_ASSET_NAMES = [...FALLBACK_BACKGROUND_ASSET_NAMES];
 
 const el = {
+    editorHomeLink: document.getElementById('editorHomeLink'),
     file: document.getElementById('editorFile'),
     exportBtn: document.getElementById('exportBtn'),
     previewStoryBtn: document.getElementById('previewStoryBtn'),
     formatText: document.getElementById('formatText'),
     passageSelect: document.getElementById('passageSelect'),
+    addPassageBtn: document.getElementById('addPassageBtn'),
+    deletePassageBtn: document.getElementById('deletePassageBtn'),
+    passageDialogBackdrop: document.getElementById('passageDialogBackdrop'),
+    passageDialog: document.getElementById('passageDialog'),
+    newPassageName: document.getElementById('newPassageName'),
+    newPassageCancelBtn: document.getElementById('newPassageCancelBtn'),
+    newPassageCreateBtn: document.getElementById('newPassageCreateBtn'),
     passageBody: document.getElementById('passageBody'),
     applyBtn: document.getElementById('applyBtn'),
     modelSelect: document.getElementById('modelSelect'),
@@ -66,6 +74,11 @@ const el = {
     dialogSaveBtn: document.getElementById('dialogSaveBtn'),
     dialogDiscardBtn: document.getElementById('dialogDiscardBtn'),
     dialogCancelBtn: document.getElementById('dialogCancelBtn'),
+    confirmDialog: document.getElementById('confirmDialog'),
+    confirmTitle: document.getElementById('confirmTitle'),
+    confirmMessage: document.getElementById('confirmMessage'),
+    confirmOkBtn: document.getElementById('confirmOkBtn'),
+    confirmCancelBtn: document.getElementById('confirmCancelBtn'),
 };
 
 const state = {
@@ -102,6 +115,7 @@ const state = {
     lockedModelKeys: new Set(),
     backgroundLocked: false,
     openedHtmlBaseline: '',
+    startPassageName: '',
 };
 const IGNORED_PASSAGES = new Set(['StoryTitle', 'StoryData']);
 
@@ -124,6 +138,15 @@ function setSceneDirty(next) {
     state.hasSceneEdits = Boolean(next);
     setDirty(state.hasTextEdits || state.hasSceneEdits);
     refreshRevertSceneButton();
+}
+
+/**
+ * Mark scene-dirty due to a 3D/editor interaction and immediately reflect
+ * current scene snapshot in passage/text state (camera excluded elsewhere).
+ */
+function markSceneDirtyFrom3d() {
+    syncSceneToBodyNow();
+    setSceneDirty(true);
 }
 
 function getCurrentPassageKey() {
@@ -911,6 +934,27 @@ function showUnsavedDialog() {
     });
 }
 
+function showConfirmDialog(message, title = 'Confirm') {
+    return new Promise((resolve) => {
+        if (!el.confirmDialog) {
+            resolve(window.confirm(String(message || 'Are you sure?')));
+            return;
+        }
+        if (el.confirmTitle) el.confirmTitle.textContent = String(title || 'Confirm');
+        if (el.confirmMessage) el.confirmMessage.textContent = String(message || 'Are you sure?');
+        el.confirmDialog.hidden = false;
+        const cleanup = () => {
+            el.confirmDialog.hidden = true;
+            el.confirmOkBtn?.removeEventListener('click', onOk);
+            el.confirmCancelBtn?.removeEventListener('click', onCancel);
+        };
+        const onOk = () => { cleanup(); resolve(true); };
+        const onCancel = () => { cleanup(); resolve(false); };
+        el.confirmOkBtn?.addEventListener('click', onOk);
+        el.confirmCancelBtn?.addEventListener('click', onCancel);
+    });
+}
+
 /**
  * Guard navigation/actions with save/discard/cancel behavior for unsaved edits.
  */
@@ -938,9 +982,9 @@ function updatePreviewStoryButton() {
     el.previewStoryBtn.disabled = !isHtml;
     el.previewStoryBtn.classList.toggle('enabled', isHtml);
     if (isHtml) {
-        el.previewStoryBtn.title = 'Open viewer';
+        el.previewStoryBtn.title = 'Open player';
     } else {
-        el.previewStoryBtn.title = 'compile locally first, then import to viewer directly';
+        el.previewStoryBtn.title = 'compile locally first, then import to player directly';
     }
 }
 
@@ -1001,12 +1045,17 @@ function parseHtmlStory(html) {
     const doc = parser.parseFromString(html, 'text/html');
     const storyData = doc.querySelector('tw-storydata');
     if (!storyData) throw new Error('Not a Twine HTML file');
-    const passages = Array.from(storyData.querySelectorAll('tw-passagedata')).map((node) => ({
+    const nodes = Array.from(storyData.querySelectorAll('tw-passagedata'));
+    const passages = nodes.map((node) => ({
+        pid: Number(node.getAttribute('pid') || 0),
         name: node.getAttribute('name') || '',
         tags: String(node.getAttribute('tags') || '').split(/\s+/).map((s) => s.trim()).filter(Boolean),
         body: node.textContent || '',
     }));
-    return { passages, template: html };
+    const startPid = Number(storyData.getAttribute('startnode') || 0);
+    const startPassage = nodes.find((n) => Number(n.getAttribute('pid') || 0) === startPid);
+    const startPassageName = String(startPassage?.getAttribute('name') || '').trim();
+    return { passages, template: html, startPassageName };
 }
 
 function stripDialomicCommands(text) {
@@ -1624,10 +1673,11 @@ function applyDraftToPassageBody(sourceBody) {
 function syncDraftIntoPassageBody() {
     const p = state.passages[state.selected];
     if (!p) return;
-    const next = String(state.textDraft.narrationRaw || '');
+    const next = normalizeChoiceDivider(String(state.textDraft.narrationRaw || ''));
     logBodyDiff(p.body, next, `sync:${p.name || state.selected}`);
     p.body = next;
     if (el.passageBody) el.passageBody.value = next;
+    state.textDraft.narrationRaw = next;
 }
 
 function applyCurrentPassageBody(nextBody, { applyScene = true, markSceneDirty = true } = {}) {
@@ -1695,7 +1745,7 @@ function tryDeleteSelectedModel() {
     if (!removed) return false;
     removeSpeakerLinesFromCurrentDraft(deletedKey);
     setTextDirty(true);
-    setSceneDirty(true);
+    markSceneDirtyFrom3d();
     refreshModelSelect();
     refreshFloatingDeleteButton();
     refreshCurrentPanelTextAndBubbles();
@@ -2325,6 +2375,7 @@ function wireInlineTextEditors() {
                     refreshDraftFromPassageBody();
                     updatePanelFromTextDraft();
                     setTextDirty(true);
+                    markSceneDirtyFrom3d();
                 }
             );
         });
@@ -2350,6 +2401,7 @@ function removeSpeechBubbleAt(index) {
     refreshDraftFromPassageBody();
     updatePanelFromTextDraft();
     setTextDirty(true);
+    markSceneDirtyFrom3d();
 }
 
 function refreshSpeechBubbleDeleteButtons() {
@@ -2528,7 +2580,7 @@ function updateCurrentPassageEnvironment({ backgroundName, skyColor }) {
     p.body = nextBody;
     el.passageBody.value = nextBody;
     persistVisualEditorState();
-    setSceneDirty(true);
+    markSceneDirtyFrom3d();
     state.selectedModelKey = BACKGROUND_KEY;
     state.pendingSelectionKey = BACKGROUND_KEY;
     applySceneFromBodyLive(nextBody, { ignoreCamera: true });
@@ -2586,12 +2638,12 @@ function downloadText(filename, text) {
     URL.revokeObjectURL(url);
 }
 
-function stageEditedHtmlForViewer() {
+function stageEditedHtmlForPlayer() {
     if (state.format !== 'html' || !state.passages.length) return false;
     saveCurrentPassageBody();
     const html = serializeHtml();
     const nameBase = state.filename.replace(/\.[^.]+$/, '') || 'story';
-    localStorage.setItem(VIEWER_IMPORTED_STORY_KEY, JSON.stringify({
+    localStorage.setItem(PLAYER_IMPORTED_STORY_KEY, JSON.stringify({
         html,
         name: `${nameBase}.html`,
     }));
@@ -2605,6 +2657,7 @@ function persistVisualEditorState() {
             filename: state.filename,
             sourceHtmlTemplate: state.sourceHtmlTemplate,
             passages: state.passages,
+            startPassageName: state.startPassageName,
             selected: state.selected,
             ts: Date.now(),
         };
@@ -2623,6 +2676,7 @@ function restoreVisualEditorState() {
         state.format = parsed.format === 'html' ? 'html' : 'twee';
         state.filename = String(parsed.filename || 'Edited Story');
         state.sourceHtmlTemplate = String(parsed.sourceHtmlTemplate || '');
+        state.startPassageName = String(parsed.startPassageName || '');
         state.passages = parsed.passages
             .map((p) => ({
                 name: String(p?.name || ''),
@@ -2636,7 +2690,6 @@ function restoreVisualEditorState() {
         state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
         state.vars = parseStoryInitGlobals(state.storyInitBody);
         state.openedHtmlBaseline = state.format === 'html' ? serializeHtml() : '';
-        el.formatText.textContent = `Type: ${state.format}`;
         renderPassageList();
         setStatus(`Restored Visual Editor state: ${state.filename}`);
         return true;
@@ -2646,18 +2699,19 @@ function restoreVisualEditorState() {
     }
 }
 
-function restoreBootStoryFromViewer() {
+function restoreBootStoryFromPlayer() {
     try {
-        const raw = localStorage.getItem(VIEWER_EDITOR_BOOT_STORY_KEY);
+        const raw = localStorage.getItem(PLAYER_EDITOR_BOOT_STORY_KEY);
         if (!raw) return false;
-        localStorage.removeItem(VIEWER_EDITOR_BOOT_STORY_KEY);
+        localStorage.removeItem(PLAYER_EDITOR_BOOT_STORY_KEY);
         const parsed = JSON.parse(raw);
         const html = String(parsed?.html || '');
         if (!html.trim()) return false;
         const story = parseHtmlStory(html);
         state.format = 'html';
-        state.filename = String(parsed?.name || 'Viewer Story.html');
+        state.filename = String(parsed?.name || 'Player Story.html');
         state.sourceHtmlTemplate = story.template;
+        state.startPassageName = String(story.startPassageName || '');
         state.passages = story.passages.filter((p) => !IGNORED_PASSAGES.has(p.name));
         if (!state.passages.length) return false;
         const requestedPassage = String(parsed?.currentPassage || '').trim();
@@ -2671,14 +2725,13 @@ function restoreBootStoryFromViewer() {
         initializeStableBodySnapshots();
         setTextDirty(false);
         setSceneDirty(false);
-        el.formatText.textContent = `Type: ${state.format}`;
         updatePreviewStoryButton();
         renderPassageList();
         persistVisualEditorState();
-        setStatus(`Loaded from viewer: ${state.filename}`);
+        setStatus(`Loaded from player: ${state.filename}`);
         return true;
     } catch (err) {
-        console.warn('[visual-editor] Failed to restore viewer boot story', err);
+        console.warn('[visual-editor] Failed to restore player boot story', err);
         return false;
     }
 }
@@ -3023,6 +3076,28 @@ function composeBodyWithCurrentSceneSnapshot(baseBody) {
 }
 
 /**
+ * Sync current 3D snapshot into the selected passage body even if dirty flags
+ * are stale. Used by preview/export flows so player gets the exact current scene.
+ */
+function syncCurrentSceneSnapshotToPassageBody() {
+    const p = state.passages[state.selected];
+    if (!p) return false;
+    if (!state.panel?.three) return false;
+    const prevBody = String(p.body || '');
+    const nextBody = composeBodyWithCurrentSceneSnapshot(prevBody);
+    if (nextBody === prevBody) return false;
+    p.body = nextBody;
+    if (el.passageBody) el.passageBody.value = nextBody;
+    if (state.activeInlineEditor?.setSceneText) {
+        state.activeInlineEditor.setSceneText(extractSceneLines(nextBody), { applyLive: false });
+    }
+    refreshDraftFromPassageBody();
+    renderPreviewLinks(parseLinkLabels(nextBody));
+    persistVisualEditorState();
+    return true;
+}
+
+/**
  * Persist current text + scene edits back to the selected passage body.
  */
 function saveSceneTransformsToPassage() {
@@ -3212,7 +3287,7 @@ function renderPreview() {
         state.panel?.setStoryInitPreviewMode?.(false);
     }
     suppressPreviewSpeakerAnimation();
-    // Match viewer behavior: apply panel aspect mode and settle panel/canvas sizing
+    // Match player behavior: apply panel aspect mode and settle panel/canvas sizing
     // immediately so model slotting uses the same effective viewport.
     state.panel.setAspectMode?.(aspectMode);
     state.panel.setCurr?.(curr, false);
@@ -3277,9 +3352,30 @@ function renderPassageList() {
     el.passageSelect.value = String(state.selected);
     const p = state.passages[state.selected];
     el.passageBody.value = p.body || '';
+    refreshPassageActionButtons();
     persistVisualEditorState();
     updatePreviewStoryButton();
     renderPreview();
+}
+
+function isProtectedPassageName(name) {
+    const n = String(name || '').trim().toLowerCase();
+    if (!n) return false;
+    if (n === 'storyinit') return true;
+    return n === String(state.startPassageName || '').trim().toLowerCase();
+}
+
+function refreshPassageActionButtons() {
+    const p = state.passages[state.selected];
+    const canDelete = Boolean(p) && !isProtectedPassageName(p.name);
+    if (el.deletePassageBtn) el.deletePassageBtn.disabled = !canDelete;
+}
+
+function getNextDefaultPassageName() {
+    const used = new Set((state.passages || []).map((p) => String(p?.name || '').trim().toLowerCase()));
+    let n = 2;
+    while (used.has(`passage ${n}`)) n += 1;
+    return `passage ${n}`;
 }
 
 async function loadFile(file) {
@@ -3292,11 +3388,13 @@ async function loadFile(file) {
         const parsed = parseHtmlStory(text);
         state.passages = parsed.passages.filter((p) => !IGNORED_PASSAGES.has(p.name));
         state.sourceHtmlTemplate = parsed.template;
+        state.startPassageName = String(parsed.startPassageName || '');
         state.openedHtmlBaseline = text;
     } else {
         state.format = 'twee';
         state.passages = parseTwee(text).filter((p) => !IGNORED_PASSAGES.has(p.name));
         state.sourceHtmlTemplate = '';
+        state.startPassageName = '';
         state.openedHtmlBaseline = '';
     }
     state.storyInitBody = state.passages.find((p) => p.name === 'StoryInit')?.body || '';
@@ -3305,7 +3403,6 @@ async function loadFile(file) {
     state.selected = 0;
     setTextDirty(false);
     setSceneDirty(false);
-    el.formatText.textContent = `Type: ${state.format}`;
     updatePreviewStoryButton();
     renderPassageList();
     persistVisualEditorState();
@@ -3374,6 +3471,67 @@ el.passageSelect?.addEventListener('change', async () => {
     if (state.selected !== next) {
         el.passageSelect.value = String(prev);
     }
+    refreshPassageActionButtons();
+});
+
+function setPassageDialogOpen(open) {
+    if (!el.passageDialog) return;
+    el.passageDialog.hidden = !open;
+    // Keep add-passage popup inline without page overlay.
+    if (el.passageDialogBackdrop) el.passageDialogBackdrop.hidden = true;
+    if (open && el.newPassageName) {
+        const btnRect = el.addPassageBtn?.getBoundingClientRect();
+        if (btnRect) {
+            el.passageDialog.style.top = `${Math.round(btnRect.bottom + 8)}px`;
+            el.passageDialog.style.left = `${Math.round(btnRect.left)}px`;
+            el.passageDialog.style.right = 'auto';
+        }
+        el.newPassageName.value = getNextDefaultPassageName();
+        el.newPassageName.focus();
+        el.newPassageName.select();
+    }
+}
+
+el.addPassageBtn?.addEventListener('click', () => {
+    setPassageDialogOpen(true);
+});
+
+el.newPassageCancelBtn?.addEventListener('click', () => {
+    setPassageDialogOpen(false);
+});
+el.passageDialogBackdrop?.addEventListener('click', () => {
+    setPassageDialogOpen(false);
+});
+
+el.newPassageCreateBtn?.addEventListener('click', () => {
+    const raw = String(el.newPassageName?.value || '').trim() || getNextDefaultPassageName();
+    if (!raw) return;
+    const existing = new Set((state.passages || []).map((p) => String(p?.name || '').trim().toLowerCase()));
+    let name = raw;
+    let i = 2;
+    while (existing.has(name.toLowerCase())) {
+        name = `${raw} ${i}`;
+        i += 1;
+    }
+    state.passages.push({ name, tags: [], body: '' });
+    state.selected = state.passages.length - 1;
+    setPassageDialogOpen(false);
+    setTextDirty(true);
+    persistVisualEditorState();
+    renderPassageList();
+});
+
+el.deletePassageBtn?.addEventListener('click', () => {
+    const p = state.passages[state.selected];
+    if (!p || isProtectedPassageName(p.name)) return;
+    showConfirmDialog(`Delete passage "${p.name}"?`, 'Delete Passage').then((ok) => {
+        if (!ok) return;
+        state.passages.splice(state.selected, 1);
+        state.selected = Math.max(0, Math.min(state.selected, state.passages.length - 1));
+        setTextDirty(true);
+        persistVisualEditorState();
+        renderPassageList();
+    });
 });
 
 el.applyBtn?.addEventListener('click', () => {
@@ -3409,6 +3567,12 @@ el.modelSelect?.addEventListener('change', () => {
 });
 
 window.addEventListener('pointerdown', (event) => {
+    if (!el.passageDialog?.hidden) {
+        const t = event.target;
+        if (t instanceof Element && !t.closest('#passageDialog') && !t.closest('#addPassageBtn')) {
+            setPassageDialogOpen(false);
+        }
+    }
     if (!state.panelRectCache) return;
     if (document.activeElement === el.selectedSkyColorInput) return;
     const target = event.target;
@@ -3539,7 +3703,7 @@ el.addModelBtn?.addEventListener('click', () => {
         key = `${asset}${i}`;
     }
     state.panel.three.addModel(`${key}=${asset}`);
-    setSceneDirty(true);
+    markSceneDirtyFrom3d();
 });
 
 el.floatingAddSpeechBtn?.addEventListener('click', () => {
@@ -3550,6 +3714,9 @@ el.floatingAddSpeechBtn?.addEventListener('click', () => {
     const textDirtyBeforeAdd = Boolean(state.hasTextEdits);
     state.textDraft.narrationRaw = insertSpeechLineInDraft(rawLine);
     syncDraftIntoPassageBody();
+    // Keep scene/body aligned immediately so player parsing can resolve the
+    // newly referenced speaker model without requiring re-entering the passage.
+    syncCurrentSceneSnapshotToPassageBody();
     refreshDraftFromPassageBody();
     updatePanelFromTextDraft();
     setTextDirty(true);
@@ -3589,6 +3756,7 @@ el.floatingAddSpeechBtn?.addEventListener('click', () => {
                 refreshDraftFromPassageBody();
                 updatePanelFromTextDraft();
                 setTextDirty(true);
+                markSceneDirtyFrom3d();
             },
             {
                 onCancel: () => {
@@ -3641,7 +3809,7 @@ el.floatingDeleteModelBtn?.addEventListener('click', () => {
     }
     if (state.selectedModelKey === BACKGROUND_KEY) {
         if (undoEnvironmentChanges()) {
-            setSceneDirty(true);
+            markSceneDirtyFrom3d();
             refreshFloatingDeleteButton();
             refreshSelectedModelBadge();
         }
@@ -3649,7 +3817,7 @@ el.floatingDeleteModelBtn?.addEventListener('click', () => {
     }
     const reverted = state.panel.three.revertEditableModelTransformByKey?.(state.selectedModelKey);
     if (reverted) {
-        setSceneDirty(true);
+        markSceneDirtyFrom3d();
         refreshModelSelect();
         refreshFloatingDeleteButton();
     }
@@ -3671,11 +3839,11 @@ el.clearSceneBtn?.addEventListener('click', () => {
         refreshFloatingDeleteButton();
         return;
     }
-    const ok = window.confirm(`Clear ${keys.length} model${keys.length === 1 ? '' : 's'} from this scene?`);
-    if (!ok) return;
-    for (const key of keys) {
-        state.panel.three.removeEditableModelByKey?.(key);
-    }
+    showConfirmDialog(`Clear ${keys.length} model${keys.length === 1 ? '' : 's'} from this scene?`, 'Clear Scene').then((ok) => {
+        if (!ok) return;
+        for (const key of keys) {
+            state.panel.three.removeEditableModelByKey?.(key);
+        }
     if (keys.length) {
         let visible = String(state.textDraft.narrationRaw || '');
         for (const key of keys) {
@@ -3692,11 +3860,12 @@ el.clearSceneBtn?.addEventListener('click', () => {
     }
     updateCurrentPassageEnvironment({ backgroundName: 'none' });
     state.selectedModelKey = BACKGROUND_KEY;
-    setSceneDirty(true);
+    markSceneDirtyFrom3d();
     refreshModelSelect();
     refreshSelectedModelBadge();
     refreshFloatingDeleteButton();
     refreshCurrentPanelTextAndBubbles();
+    });
 });
 
 el.saveSceneBtn?.addEventListener('click', () => {
@@ -3752,7 +3921,7 @@ el.panelAspectHandle?.addEventListener('pointermove', (event) => {
     const key = getCurrentPassageKey();
     if (key) state.aspectDirtyByPassage[key] = true;
     refreshPanelAspectHandle();
-    setSceneDirty(true);
+    markSceneDirtyFrom3d();
 });
 
 el.panelAspectHandle?.addEventListener('pointerup', (event) => {
@@ -3800,20 +3969,31 @@ el.previewStoryBtn?.addEventListener('click', async () => {
     await runWithUnsavedGuard(() => {
         if (discardedUnsaved && state.openedHtmlBaseline) {
             const nameBase = state.filename.replace(/\.[^.]+$/, '') || 'story';
-            localStorage.setItem(VIEWER_IMPORTED_STORY_KEY, JSON.stringify({
+            localStorage.setItem(PLAYER_IMPORTED_STORY_KEY, JSON.stringify({
                 html: state.openedHtmlBaseline,
                 name: `${nameBase}.html`,
             }));
         } else {
             saveCurrentPassageBody();
-            stageEditedHtmlForViewer();
+            // Force one final live scene->body sync before staging for player.
+            syncCurrentSceneSnapshotToPassageBody();
+            stageEditedHtmlForPlayer();
         }
-        window.location.href = import.meta.env.BASE_URL || './';
+        window.location.href = './player.html';
     }, {
         onSave: () => saveSceneTransformsToPassage(),
         onDiscard: () => {
             discardedUnsaved = true;
         },
+    });
+});
+
+el.editorHomeLink?.addEventListener('click', async (event) => {
+    event.preventDefault();
+    await runWithUnsavedGuard(() => {
+        window.location.href = './index.html';
+    }, {
+        onSave: () => saveSceneTransformsToPassage(),
     });
 });
 
@@ -3840,6 +4020,6 @@ updatePreviewStoryButton();
 
 initDebugMode();
 
-if (!restoreBootStoryFromViewer() && !restoreVisualEditorState()) {
+if (!restoreBootStoryFromPlayer() && !restoreVisualEditorState()) {
     setStatus('Load a file to start visual passage preview.');
 }

@@ -413,12 +413,27 @@ iframe {
     font-weight: 600;
 }
 
+#playerTitle {
+    font-weight: 700;
+    color: #1a2430;
+    margin-right: 10px;
+    white-space: nowrap;
+    font-size: 15px;
+    letter-spacing: 0.02em;
+}
+
+#playerTitle .landing-brand-link {
+    color: #f39a2d;
+    margin-right: 6px;
+    text-shadow: 0 2px 0 rgba(0, 0, 0, 0.28);
+}
+
 #fileStatus {
     opacity: 0.8;
     font-size: 11px;
 }
 
-#viewerStatusBar {
+#playerStatusBar {
     position: fixed;
     left: 0;
     right: 0;

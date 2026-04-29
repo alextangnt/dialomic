@@ -4,28 +4,37 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Dialomic Visual Editor</title>
-    <script type="module" crossorigin src="/assets/visualEditor-BH6-RpXB.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/passageText-D7_m_22r.js">
-    <link rel="stylesheet" crossorigin href="/assets/passageText-D0Vje-a3.css">
-    <link rel="stylesheet" crossorigin href="/assets/visualEditor-Q17jlP9b.css">
+    <script type="module" crossorigin src="/assets/visualEditor-CZ5Fh3FH.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/style-Cka54Et1.js">
+    <link rel="modulepreload" crossorigin href="/assets/passageText-iwbgI23G.js">
+    <link rel="stylesheet" crossorigin href="/assets/style-CsTZGG0m.css">
+    <link rel="stylesheet" crossorigin href="/assets/editor-BLTUo455.css">
   </head>
   <body>
     <header class="editor-topbar">
       <div class="topbar-row topbar-row-main">
-        <div class="title">Dialomic Visual Editor</div>
+        <div class="title"><a id="editorHomeLink" class="landing-brand-link" href="./index.html">Dialomic</a> Visual Editor</div>
         <div class="actions-right">
           <button id="exportBtn" type="button" disabled>⤓ Export</button>
           <button id="previewStoryBtn" type="button" disabled>▶ Preview Story</button>
         </div>
       </div>
       <div class="topbar-row topbar-row-actions">
-        <label class="compact-label" for="editorFile">File</label>
-        <input id="editorFile" class="compact-file" type="file" accept=".html,.twee,.tw,text/html,text/plain">
-        <span id="formatText" class="compact-label compact-format-text">Type: -</span>
         <label class="compact-label" for="passageSelect">Passage</label>
         <select id="passageSelect" class="compact-passage"></select>
+        <button id="addPassageBtn" type="button" class="passage-add-btn">+ Add Passage</button>
+        <button id="deletePassageBtn" type="button" class="passage-delete-btn">✕ Delete Passage</button>
       </div>
     </header>
+    <div id="passageDialogBackdrop" class="passage-dialog-backdrop" hidden></div>
+    <div id="passageDialog" class="new-story-dialog" hidden>
+      <label for="newPassageName">Passage name</label>
+      <input id="newPassageName" type="text" maxlength="120" placeholder="New Passage">
+      <div class="dialog-actions-row">
+        <button id="newPassageCancelBtn" type="button" class="landing-btn landing-btn-ghost">Cancel</button>
+        <button id="newPassageCreateBtn" type="button" class="landing-btn landing-btn-primary">Create Passage</button>
+      </div>
+    </div>
 
     <main class="visual-main">
       <aside id="debugPane" class="visual-pane debug-only">
@@ -80,7 +89,7 @@
       <button id="addModelBtn" type="button" class="add-model-btn" title="Add model" aria-label="Add model">+</button>
       <button id="clearSceneBtn" type="button" title="Remove all models">✕ Clear Scene</button>
       <button id="revertSceneBtn" type="button" title="Revert to last saved scene">↶ Revert Scene</button>
-      <button id="saveSceneBtn" class="floating-save" type="button" disabled>Save Scene</button>
+      <button id="saveSceneBtn" class="floating-save" type="button" disabled>Save Story</button>
     </div>
 
     <footer id="statusBar">Load a file to preview a passage scene.</footer>
@@ -93,6 +102,16 @@
           <button id="dialogSaveBtn" type="button">Save</button>
           <button id="dialogDiscardBtn" type="button">Don't Save</button>
           <button id="dialogCancelBtn" type="button">Cancel</button>
+        </div>
+      </div>
+    </div>
+    <div id="confirmDialog" class="dialog-backdrop" hidden>
+      <div class="dialog-card">
+        <h3 id="confirmTitle">Confirm</h3>
+        <p id="confirmMessage">Are you sure?</p>
+        <div class="dialog-actions">
+          <button id="confirmCancelBtn" type="button">Cancel</button>
+          <button id="confirmOkBtn" type="button">Confirm</button>
         </div>
       </div>
     </div>

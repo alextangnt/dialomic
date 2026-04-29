@@ -1,6 +1,6 @@
 /*
  * Bridge script injected into SugarCube/Twine HTML.
- * It relays passage payloads to the parent viewer and accepts UI commands back.
+ * It relays passage payloads to the parent player and accepts UI commands back.
  */
 
 let allLinks = [];
@@ -29,7 +29,7 @@ function preserveWhitespaceInNode(root) {
 }
 
 /**
- * Build the payload consumed by the Dialomic viewer for the current passage.
+ * Build the payload consumed by the Dialomic player for the current passage.
  */
 function buildPassagePayload(ev) {
     const psgName = String(ev?.passage?.name || '');
@@ -75,7 +75,7 @@ function postPassagePayload(payload) {
 }
 
 /**
- * Handle commands sent from the viewer.
+ * Handle commands sent from the player.
  */
 function handleViewerMessage(event) {
     const data = event.data || {};

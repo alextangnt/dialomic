@@ -7,7 +7,7 @@ import { backgroundConfigs, backgroundDefaults } from './backgrounds.js';
 import { SpeechBubbleLayout, getHtmlTextLength, stripLeadingHtmlWhitespace } from './speechBubbles.js';
 
 /*
- * 3D panel runtime + rendering primitives used by both viewer and visual editor.
+ * 3D panel runtime + rendering primitives used by both player and visual editor.
  * Contains:
  * - scene/model loading and transforms
  * - camera + shot framing
@@ -622,6 +622,12 @@ export class ThreeScene {
             }
         });
         this.editorTransformControls.addEventListener('objectChange', () => {
+            const obj = this.editorTransformControls?.object || null;
+            // Keep speaker hop baseline synced with live editor transforms so
+            // entering speech editors (which pauses hop) does not snap Y back.
+            if (obj?.userData) {
+                obj.userData.baseY = obj.position.y;
+            }
             if (this.editorOnChange) this.editorOnChange();
         });
         if (this.editorTransformHelper?.isObject3D) {
@@ -683,7 +689,7 @@ export class ThreeScene {
         }
         if (!has) return;
         // Do not retarget camera automatically in editor bounds sync.
-        // Retargeting makes initial framing diverge from viewer framing.
+        // Retargeting makes initial framing diverge from player framing.
     }
 
     selectEditableModelFromPointer(event) {

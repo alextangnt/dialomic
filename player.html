@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Dialomic Player</title>
+    <link rel="stylesheet" type="text/css" href="style.css">
+    <link rel="stylesheet" type="text/css" href="landing.css">
+    <!-- p5/openprocessing scripts removed: not used and can interfere with pointer events -->
+  </head>
+  <body>
+    <div class="background-element" id="paper-bg"></div>
+    <iframe id="logicEngine" src="about:blank"></iframe>
+    <div id="topbar">
+      <div id="playerTitle"><a id="playerHomeLink" class="landing-brand-link" href="./index.html">Dialomic</a> Player</div>
+      <div id="storyActions">
+        <select id="defaultStorySelect" title="Default story"></select>
+        <a id="editorLink" href="./visual-editor.html">✎ Edit Story</a>
+      </div>
+    </div>
+    <footer id="playerStatusBar"></footer>
+    <script id="p5" type="module" src="./src/layout.js"></script>
+  </body>
+</html>
+    

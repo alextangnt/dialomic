@@ -1,4 +1,29 @@
 # Dialomic
+
+## Dialomic Visual Editor Creation
+Dialomic is an interactive 3D graphic novel designer and runtime for Twine/SugarCube stories.
+
+High-level flow:
+1. Open the Dialomic index page.
+2. Click `+ New Story` to start from the template, or import an existing HTML story in the Play container.
+3. Click `▶ Play` to open the Dialomic Player and run the current story.
+4. Click `✎ Edit Story` in the Player to open Dialomic Visual Editor on the active story/passage.
+5. In Visual Editor, edit scenes directly: models, transforms, background/sky, speech bubbles, narration, choices, and scene macros.
+6. Use `Save Story` to commit scene/text changes and `Preview Story` to return to Player.
+
+Core pages:
+- `index.html`: landing page, story creation/import, and play launcher.
+- `player.html`: interactive story runtime (Twine logic iframe + Dialomic panel UI).
+- `visual-editor.html`: single-passage scene editor with 3D controls and text tabs.
+
+Notes:
+- `ifid` for newly created stories is auto-generated.
+- Imported stories are staged locally in browser storage and available immediately in Play.
+- Scene edits sync into passage text so Player and Editor remain consistent.
+
+---
+
+## Dialomic Text-Only Creation
 Dialomic turns Twine stories into interactive webcomics with animated 3D panels, narration overlays, and speech bubbles. Authors write standard SugarCube passages and add a few formatting conventions so scenes and dialogue can be parsed automatically.
 
 Visit the [Dialomic web player](https://alextangnt.github.io/dialomic/) for a sample story and to play your stories!

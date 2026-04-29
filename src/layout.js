@@ -2,7 +2,7 @@ import { Panel } from './panel.js';
 import { stripHtml, splitHtmlParagraphs, buildSceneObjectMap } from './passageText.js';
 
 /*
- * Viewer runtime orchestrator:
+ * Player runtime orchestrator:
  * - receives passage payloads from the story iframe
  * - computes panel/bubble/narration layout
  * - sends user interactions back to the iframe
@@ -15,6 +15,8 @@ let layout;
 let activeSessionId = null;
 const EDITED_STORY_STORAGE_KEY = 'DL_IMPORTED_STORY_HTML';
 const EDITOR_BOOT_STORY_KEY = 'DL_VISUAL_EDITOR_BOOT_STORY';
+const PLAYER_START_SELECTION_KEY = 'DL_PLAYER_START_SELECTION';
+const USER_STORIES_STORAGE_KEY = 'DL_USER_STORIES';
 
 /**
  * Read live SugarCube variable state from the story iframe safely.
@@ -40,6 +42,7 @@ window.onload = () =>{
     const defaultStorySelect = document.getElementById("defaultStorySelect");
     const editorLink = document.getElementById("editorLink");
     const IMPORTED_STORY_SELECT_VALUE = '__imported_story__';
+    const USER_STORY_SELECT_PREFIX = '__user_story__:';
     const FALLBACK_DEFAULT_STORIES = [
         { label: 'Template', url: 'defaultstories/template.html' },
         { label: 'GuessingGame', url: 'defaultstories/GuessingGame.html' },
@@ -70,7 +73,9 @@ window.onload = () =>{
     const refreshResets = true;
     let importedHtml = null;
     let importedName = null;
+    let userStories = [];
     let currentMode = 'default';
+    let currentUserStoryId = '';
     let currentDefaultStoryUrl = defaultStories[1]?.url || defaultStories[0]?.url;
     let pendingStart = false;
     let refreshRestarted = false;
@@ -100,6 +105,19 @@ window.onload = () =>{
         }
     } catch (err) {
         console.warn('[layout] Failed to load edited story from storage', err);
+    }
+    try {
+        const raw = localStorage.getItem(USER_STORIES_STORAGE_KEY);
+        const parsed = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(parsed)) {
+            userStories = parsed.filter((s) =>
+                typeof s?.id === 'string' &&
+                typeof s?.name === 'string' &&
+                typeof s?.html === 'string'
+            );
+        }
+    } catch (err) {
+        console.warn('[layout] Failed to load user stories', err);
     }
 
     loaded = true;
@@ -183,8 +201,8 @@ window.onload = () =>{
         const patched = injectMessaging(html);
         iframe.removeAttribute("src");
         iframe.setAttribute("srcdoc", patched);
-        statusEl.textContent = name ? `Loaded: ${name}` : 'Loaded';
-        if (storyStatusEl) storyStatusEl.textContent = String(opts.storyStatus || 'Your imported story');
+        if (statusEl) statusEl.textContent = name ? `Loaded: ${name}` : 'Loaded';
+        if (storyStatusEl) storyStatusEl.textContent = String(opts.storyStatus || (name || 'Imported story'));
         pendingStart = true;
     }
 
@@ -202,12 +220,18 @@ window.onload = () =>{
                     resetLayout();
                     iframe.removeAttribute('srcdoc');
                     iframe.setAttribute('src', currentDefaultStoryUrl);
-                    statusEl.textContent = `Loaded default: ${selectedLabel}`;
+                    if (statusEl) statusEl.textContent = `Loaded default: ${selectedLabel}`;
                     if (storyStatusEl) storyStatusEl.textContent = selectedLabel;
                     pendingStart = true;
                 }
                 if (defaultStorySelect) defaultStorySelect.value = currentDefaultStoryUrl;
             });
+        } else if (mode === 'user') {
+            const userStory = options.userStory || userStories.find((s) => s.id === options.userStoryId);
+            if (!userStory) return;
+            currentUserStoryId = String(userStory.id);
+            loadStoryHtml(userStory.html, `${userStory.name}.html`, { storyStatus: userStory.name });
+            if (defaultStorySelect) defaultStorySelect.value = `${USER_STORY_SELECT_PREFIX}${currentUserStoryId}`;
         } else if (importedHtml) {
             loadStoryHtml(importedHtml, importedName);
             if (defaultStorySelect) defaultStorySelect.value = IMPORTED_STORY_SELECT_VALUE;
@@ -261,6 +285,12 @@ window.onload = () =>{
             opt.textContent = story.label;
             defaultStorySelect.appendChild(opt);
         }
+        for (const story of userStories) {
+            const opt = document.createElement('option');
+            opt.value = `${USER_STORY_SELECT_PREFIX}${story.id}`;
+            opt.textContent = `Custom: ${story.name}`;
+            defaultStorySelect.appendChild(opt);
+        }
         if (importedHtml) {
             const opt = document.createElement('option');
             opt.value = IMPORTED_STORY_SELECT_VALUE;
@@ -310,6 +340,16 @@ window.onload = () =>{
                 name: importedName || 'Imported Story.html',
                 currentPassage: getCurrentPassageName(),
             };
+        }
+        if (currentMode === 'user') {
+            const found = userStories.find((s) => s.id === currentUserStoryId);
+            if (found?.html) {
+                return {
+                    html: found.html,
+                    name: `${found.name}.html`,
+                    currentPassage: getCurrentPassageName(),
+                };
+            }
         }
         const html = await fetchDefaultStoryHtml(currentDefaultStoryUrl);
         if (typeof html === 'string' && html.trim()) {
@@ -447,7 +487,7 @@ window.onload = () =>{
                 const templateHtml = await defaultStoryHtmlPromise;
                 importedHtml = compileTweeToHtml(fileText, templateHtml, file.name);
                 importedName = `${file.name} (compiled)`;
-                statusEl.textContent = `Compiled and loaded: ${file.name}`;
+                if (statusEl) statusEl.textContent = `Compiled and loaded: ${file.name}`;
             } else {
                 importedHtml = fileText;
                 importedName = file.name;
@@ -456,7 +496,7 @@ window.onload = () =>{
             setMode('imported');
         } catch (err) {
             console.error(err);
-            statusEl.textContent = 'Failed to load file';
+            if (statusEl) statusEl.textContent = 'Failed to load file';
         }
     }
 
@@ -471,6 +511,13 @@ window.onload = () =>{
             if (url === IMPORTED_STORY_SELECT_VALUE) {
                 if (!importedHtml) return;
                 setMode('imported');
+                return;
+            }
+            if (url.startsWith(USER_STORY_SELECT_PREFIX)) {
+                const id = url.slice(USER_STORY_SELECT_PREFIX.length);
+                const story = userStories.find((s) => s.id === id);
+                if (!story) return;
+                setMode('user', { userStory: story });
                 return;
             }
             setMode('default', { defaultUrl: url });
@@ -493,12 +540,39 @@ window.onload = () =>{
     }
 
     initDefaultStories().then(() => {
-        setMode(importedHtml ? 'imported' : 'default');
+        let forcedSelection = null;
+        try {
+            const raw = localStorage.getItem(PLAYER_START_SELECTION_KEY) || localStorage.getItem('DL_VIEWER_START_SELECTION');
+            if (raw) forcedSelection = JSON.parse(raw);
+            localStorage.removeItem(PLAYER_START_SELECTION_KEY);
+            localStorage.removeItem('DL_VIEWER_START_SELECTION');
+        } catch {
+            forcedSelection = null;
+        }
+        if (importedHtml) {
+            setMode('imported');
+            return;
+        }
+        if (forcedSelection?.kind === 'user') {
+            const story = userStories.find((s) => s.id === String(forcedSelection.id || ''));
+            if (story) {
+                setMode('user', { userStory: story });
+                return;
+            }
+        }
+        if (forcedSelection?.kind === 'default') {
+            const url = String(forcedSelection.url || '').trim();
+            if (url) {
+                setMode('default', { defaultUrl: url });
+                return;
+            }
+        }
+        setMode('default');
     });
 };
 
 /**
- * Bootstrap or refresh viewer state from a newly received passage payload.
+ * Bootstrap or refresh player state from a newly received passage payload.
  */
 function init(info){
     if (!started){
@@ -650,7 +724,11 @@ function parseSpeakerBlocks(text, sceneObjects) {
             continue;
         }
         const speaker = match[1].trim();
-        if (!speaker || !sceneObjects || !sceneObjects[speaker]) {
+        const speakerKey = String(speaker || '').trim();
+        const speakerObj = sceneObjects
+            ? (sceneObjects[speakerKey] || sceneObjects[speakerKey.toLowerCase()])
+            : null;
+        if (!speakerKey || !speakerObj) {
             narrationParas.push(originalParas[i] || '');
             continue;
         }
@@ -661,7 +739,7 @@ function parseSpeakerBlocks(text, sceneObjects) {
             const after = originalPara.slice(splitIdx + 2);
             updatedPara = after.replace(/^\s+/, '').replace(/^(?:<br\s*\/?>\s*)+/gi, '');
         }
-        speakers.push({ speaker, html: updatedPara.trim() });
+        speakers.push({ speaker: speakerKey, html: updatedPara.trim() });
     }
 
     return {

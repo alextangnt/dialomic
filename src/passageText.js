@@ -1,5 +1,5 @@
 /**
- * Shared passage text helpers used by viewer and visual editor.
+ * Shared passage text helpers used by player and visual editor.
  */
 
 /**
