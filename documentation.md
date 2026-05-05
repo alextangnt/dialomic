@@ -1,3 +1,4 @@
+[Try Dialomic here!](https://alextangnt.github.io/dialomic/)
 ![welcome](documentation/welcome.gif)
 ## 1. Project Overview
 Dialomic is a browser-based application for creating and playing interactive 3D webcomics using Twine/SugarCube story logic. It combines:
