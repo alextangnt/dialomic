@@ -23,19 +23,16 @@ This project is heavily inspired by browser-based creation tools, especially tho
 Despite the fact that one can tell interactive stories Scratch, Bitsy, or base Twine, I haven't seen one that easily combines Twine's logic and story control engine with 3D visuals, especially on the browser. Crafting 3D scenes directly in the browser with [three.js](https://threejs.org/) allows for a ton of flexibility and iteration in shot and scene composition, as well as procedural animation.
 
 ## 3. System Evolution: Text-Only to Visual Editor
+Dialomic runs on Twine's logic engine. It requires the stories to be built with the [Sugarcube](https://www.motoslave.net/sugarcube/2/) storyformat, meaning Authors ahve to write Twine code with Sugarcube styling.
+
+The inital difficulty of this project was figuring out how to access Sugarcube state variables while playing a story. Since building a Twine story creates a text-based .html file that runs in the browser, I didn't know how a custom story could use Sugarcube logic. I didn't want to write my own compiler to reproduce Sugarcube in my own system. However, with a browser-based story, I could actually run the .html file behind the scenes as an iframe, read text from it and display it in my own UI, then pass clicks to the iframe. While it seems a bit complicated, this method works very consistently using [postMessage()](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage) API and carefully controlling the timing of events.
+
 ### Initial Text-Based Phase
 I started this process with a fully text-based workflow. I didn't know how powerful three.js was, and thought that making a visual editor would be way too difficult. I also didn't know much about how Twine built .html files using story formats.
 
-Essentially, I presumed the author would create a Twine story however they felt most comfortable. Through the Twine app, in the browser, or as a .twee file that was built and turned into html. I expected authors to compose each scene fully in text within their passages. See the [text-based documentation](textOnly.md) for more details. Essentially,
-- Authors wrote SugarCube passages.
-- Scene state lived in passage variables (primarily `$DL`).
-- Objects were defined in the scene states as strings. If an object was given a tag, it became a speaker. These strings included model type, as well as the object's position and orientation in the scene. I defined a whole language of string tokens to define an object's "stage placement" in the scene.
-- Dialogue bubbles used `speaker:: line` syntax.
-- A messaging bridge connected a hidden Twine runtime iframe to Dialomic's rendering layer.
-- Paragraphs are split on blank lines, meaning each individual paragraph will be parsed for "speaker" or "narration".
-- Everything after `%%%` is ignored by the scene/narration parser, so choice text doesn't get included in narration.
+Essentially, I presumed the author would create a Twine story however they felt most comfortable. Through the Twine app, in the browser, or as a .twee file that was built and turned into html. I expected authors to compose each scene fully in text within their passages. See the [text-based documentation](textOnly.md) for more details.
 
-Example passage block:
+For an example of this text-based format that still applies to the current edition:
 ```twine
 <<set $DL = {
   objects: [
@@ -56,6 +53,12 @@ This is narration (plain passage text).
 ![Old format](documentation/dialomic_3dscene.gif)
 
 In this model, Twine drives logic and stores variables, Dialomic renders panels based on those variables.
+
+### Working with an LLM
+
+During this school year, I was highly advised to install Codex or another LLM to use for my coding projects, both to increase the scope and complexity of my output, and to simply learn how to work with an LLM. Though I had significant reservations, I caved in February, and started working with Codex after completing the a functional text-based prototype on my own.
+
+I was really surprised and almost offended at how easily it took on tasks that would have taken me weeks. I took a back seat as a project director while Codex took on more and more of the code itself. Because I had AI assistance, I was able to rescope this project far beyond my realistic plans. Full disclosure, Dialomic would never have come this far without AI assistance.
 
 ### Transition to Visual Editing
 As scene complexity grew (camera, model transforms, backgrounds, bubble placement, multi-panel layout), raw text editing became error-prone and harder to maintain. Also, I wanted to create my own stories the system I had created, but the positioning system would have been too limiting for the shots I wanted to compose in a more serious story.
@@ -104,3 +107,5 @@ There is no limit to the features I want to add, even at this current stage and 
 - Renaming stories, renaming passages
 - Importing custom models
 - More default animations, as well as the ability to add custom animation clips. Rigged models!?
+
+Dialomic ended approaching and even surpassing the ambitious stretch goals I had when initially drafting the idea, and it's come so much farther than I actually planned for. I'm at the point I expected I would be after another year or so of work. There are still tons of quality-of-life changes I would like to make in the near future, but I'm excited about what I have, along with what's to come.
