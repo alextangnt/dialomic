@@ -523,6 +523,8 @@ body.debug-mode .debug-only {
   max-height: 55vh;
   resize: none;
   overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   overscroll-behavior: none;
   box-sizing: border-box;
   border: 1px solid #9fc6d4;
@@ -530,11 +532,20 @@ body.debug-mode .debug-only {
   padding: 8px 9px;
   font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
-  line-height: 1.3;
+  line-height: 16px;
+  letter-spacing: 0;
+  tab-size: 4;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   background: #fffef7;
   color: #1a2430;
   position: relative;
   z-index: 2;
+}
+
+.inline-text-editor-input::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .inline-code-field {
@@ -544,12 +555,39 @@ body.debug-mode .debug-only {
   max-height: 55vh;
 }
 
+.inline-cm-editor,
+.inline-cm-editor .cm-editor {
+  height: 100%;
+}
+
+.inline-cm-editor .cm-editor {
+  border: 1px solid #9fc6d4;
+  border-radius: 6px;
+  background: #fffef7;
+  font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+}
+
+.inline-cm-editor .cm-scroller {
+  overflow: auto;
+  overscroll-behavior: contain;
+  line-height: 16px;
+}
+
+.inline-cm-editor .cm-content {
+  white-space: pre-wrap;
+  word-break: normal;
+  overflow-wrap: break-word;
+  tab-size: 4;
+  padding: 8px 9px;
+}
+
 .inline-code-field.has-tokens .inline-text-editor-input {
   box-shadow: inset 0 0 0 1px rgba(86, 136, 255, 0.45);
-  color: transparent;
+  color: #1a2430;
   caret-color: #1a2430;
   text-shadow: none;
-  background: transparent;
+  background: #fffef7;
 }
 
 .inline-text-editor-highlight {
@@ -563,11 +601,13 @@ body.debug-mode .debug-only {
   white-space: pre-wrap;
   word-break: normal;
   overflow-wrap: break-word;
+  tab-size: 4;
   pointer-events: none;
   font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
-  line-height: 1.3;
-  color: #1a2430;
+  line-height: 16px;
+  letter-spacing: 0;
+  color: transparent;
   z-index: 1;
 }
 
@@ -589,6 +629,14 @@ body.debug-mode .debug-only {
 .inline-text-editor-highlight .js-string { color: #1c7c54; }
 .inline-text-editor-highlight .js-number { color: #8c3f00; }
 .inline-text-editor-highlight .js-punct { color: #4a5568; }
+.inline-cm-editor .cm-sugar-macro { color: #6a1fb3; font-weight: 700; }
+.inline-cm-editor .cm-sugar-link { color: #2b6f21; font-weight: 700; }
+.inline-cm-editor .cm-dialomic-macro { color: #915b15; font-weight: 700; }
+.inline-cm-editor .cm-speaker-prefix { color: #a63d00; font-weight: 700; }
+.inline-cm-editor .cm-sugar-var { color: #0f55b8; font-weight: 700; }
+.inline-cm-editor .cm-js-string { color: #1c7c54; }
+.inline-cm-editor .cm-js-number { color: #8c3f00; }
+.inline-cm-editor .cm-js-punct { color: #4a5568; }
 .inline-text-editor-highlight .lint-error {
   text-decoration: underline wavy #d91f26;
   text-underline-offset: 2px;

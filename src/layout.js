@@ -726,6 +726,15 @@ function withDefaultSceneCamera(scene) {
     return next;
 }
 
+function cloneSnapshotValue(value) {
+    if (value == null) return value;
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch (_) {
+        return value;
+    }
+}
+
 function extractPanelCommands(text) {
     const commands = {};
     const source = String(text || '');
@@ -855,6 +864,12 @@ class LayoutUI {
         this.panelOrderCounter = 0;
         this.activePanelName = null;
         this.hoverPanelName = null;
+        this.panelHistory = [];
+        this.historyCursor = null;
+        this.historyCurrentSnapshot = null;
+        this.historyMode = false;
+        this.historyScrollLockUntil = 0;
+        this.suppressHistoryCapture = false;
 
         this.topInset = this.getTopInset();
         this.w = window.innerWidth;
@@ -873,6 +888,27 @@ class LayoutUI {
         this.linksRoot = document.createElement('div');
         this.linksRoot.id = 'link-list';
         document.body.appendChild(this.linksRoot);
+        this.historyReturnBtn = document.createElement('button');
+        this.historyReturnBtn.type = 'button';
+        this.historyReturnBtn.id = 'history-return-btn';
+        this.historyReturnBtn.textContent = '↓';
+        this.historyReturnBtn.style.position = 'fixed';
+        this.historyReturnBtn.style.left = '50%';
+        this.historyReturnBtn.style.transform = 'translateX(-50%)';
+        this.historyReturnBtn.style.width = '44px';
+        this.historyReturnBtn.style.height = '44px';
+        this.historyReturnBtn.style.borderRadius = '999px';
+        this.historyReturnBtn.style.border = 'none';
+        this.historyReturnBtn.style.background = '#000';
+        this.historyReturnBtn.style.color = '#fff';
+        this.historyReturnBtn.style.fontSize = '24px';
+        this.historyReturnBtn.style.fontWeight = '700';
+        this.historyReturnBtn.style.lineHeight = '1';
+        this.historyReturnBtn.style.cursor = 'pointer';
+        this.historyReturnBtn.style.display = 'none';
+        this.historyReturnBtn.style.zIndex = '9400';
+        this.historyReturnBtn.addEventListener('click', () => this.exitHistoryMode());
+        document.body.appendChild(this.historyReturnBtn);
 
         this.inputRoot = document.createElement('div');
         this.inputRoot.id = 'input-list';
@@ -893,6 +929,7 @@ class LayoutUI {
 
         window.addEventListener('resize', () => this.onResize());
         window.addEventListener('keydown', (event) => this.onKeyDown(event));
+        window.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
         window.addEventListener('pointermove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true });
         window.addEventListener('mousemove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true });
     }
@@ -901,6 +938,7 @@ class LayoutUI {
         if (this.linksRoot) this.linksRoot.remove();
         if (this.inputRoot) this.inputRoot.remove();
         if (this.restartBtn) this.restartBtn.remove();
+        if (this.historyReturnBtn) this.historyReturnBtn.remove();
     }
 
     normalizePanelConfig(rawConfig) {
@@ -1092,10 +1130,11 @@ class LayoutUI {
     }
 
     setActiveLargePanel(activeName) {
-        for (let i = 0; i < this.largePanelOrder.length; i++) {
-            const name = this.largePanelOrder[i];
+        const names = Object.keys(this.panelsOnscreen || {});
+        for (let i = 0; i < names.length; i++) {
+            const name = names[i];
             const panel = this.panelsOnscreen[name];
-            if (!panel || panel.panelSize === 'small') continue;
+            if (!panel || panel.panelSize === 'small' || panel.onScreen === false) continue;
             panel.three?.setSpeakerAnimationPaused?.(name !== activeName);
         }
     }
@@ -1111,6 +1150,10 @@ class LayoutUI {
         this.updatePanelLayoutImmediate();
         for (let panel in this.panelsOnscreen){
             this.panelsOnscreen[panel].syncNarrationPosition?.();
+        }
+        if (this.historyMode && Number.isInteger(this.historyCursor)) {
+            this.showHistoryPageAt(this.historyCursor);
+            this.showHistoryControls();
         }
         this.applyPanelLayering();
     }
@@ -1202,6 +1245,13 @@ class LayoutUI {
         if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || this.inputRoot?.contains(active))) {
             return;
         }
+        if (this.historyMode) {
+            if (event.key === ' ' || event.key === 'Enter' || event.key === 'Escape') {
+                event.preventDefault();
+                this.exitHistoryMode();
+            }
+            return;
+        }
         if (event.key === 'r' || event.key === 'R') {
             this.restartStory();
         }
@@ -1224,6 +1274,29 @@ class LayoutUI {
         }
     }
 
+    onWheel(event) {
+        const active = document.activeElement;
+        if (active && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || this.inputRoot?.contains(active))) return;
+        event.preventDefault();
+        const now = performance.now();
+        if (now < this.historyScrollLockUntil) return;
+        const dy = Number(event.deltaY) || 0;
+        if (dy === 0) return;
+        if (Math.abs(dy) < 45) return;
+        const direction = dy < 0 ? -1 : 1;
+        if (direction < 0) {
+            if (this.enterOrStepBackHistory()) {
+                this.historyScrollLockUntil = now + 320;
+            }
+            return;
+        }
+        if (this.historyMode) {
+            if (this.stepForwardOrExitHistory()) {
+                this.historyScrollLockUntil = now + 320;
+            }
+        }
+    }
+
     restartStory() {
         if (!loaded) return;
         iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, window.location.origin);
@@ -1238,6 +1311,252 @@ class LayoutUI {
         this.panelsOnscreen = {};
         this.currPanel = null;
         this.largePanelOrder = [];
+        this.panelHistory = [];
+        this.historyCursor = null;
+        this.historyCurrentSnapshot = null;
+        this.historyMode = false;
+    }
+
+    captureVisiblePageSnapshot() {
+        this.reconcileLargePanelOrder();
+        const order = this.largePanelOrder.filter((name) => {
+            const p = this.panelsOnscreen[name];
+            return p && p.panelSize !== 'small' && p.onScreen !== false && !p.isAnimatingOut;
+        });
+        if (!order.length) return null;
+        const panels = order.map((name) => {
+            const p = this.panels[name] || this.panelsOnscreen[name];
+            if (!p) return null;
+            return {
+                name,
+                rect: {
+                    left: p.data.left,
+                    top: p.data.top,
+                    width: p.data.width,
+                    height: p.data.height,
+                },
+                speechBounds: p.speechBounds ? {
+                    left: p.speechBounds.left,
+                    top: p.speechBounds.top,
+                    right: p.speechBounds.right,
+                    bottom: p.speechBounds.bottom,
+                } : null,
+                aspectMode: this.panelConfig?.aspect || 'free',
+                customAspectRatio: Number.isFinite(p.customAspectRatio) ? p.customAspectRatio : null,
+                passageAsSeen: {
+                    narrationText: p.txt || '',
+                    narrationHtml: p.text || '',
+                    speakers: cloneSnapshotValue(p.speakers || []),
+                    scene: cloneSnapshotValue(p.scene || null),
+                },
+            };
+        }).filter(Boolean);
+        if (!panels.length) return null;
+        return {
+            order,
+            panels,
+            viewport: {
+                w: this.w,
+                h: this.h,
+                topInset: this.topInset,
+            },
+        };
+    }
+
+    getHistoryRectForViewport(item, snapshot) {
+        const rect = item?.rect || { left: 0, top: this.topInset, width: 360, height: 150 };
+        const srcW = Math.max(1, Number(snapshot?.viewport?.w) || this.w || window.innerWidth || 1);
+        const srcH = Math.max(1, Number(snapshot?.viewport?.h) || this.h || (window.innerHeight - this.topInset) || 1);
+        const dstW = Math.max(1, this.w || window.innerWidth || 1);
+        const dstH = Math.max(1, this.h || (window.innerHeight - this.topInset) || 1);
+        const scaleX = dstW / srcW;
+        const scaleY = dstH / srcH;
+        const srcTopInset = Number(snapshot?.viewport?.topInset) || 0;
+        const relTop = rect.top - srcTopInset;
+        return {
+            left: rect.left * scaleX,
+            top: this.topInset + (relTop * scaleY),
+            width: rect.width * scaleX,
+            height: rect.height * scaleY,
+        };
+    }
+
+    pushHistorySnapshot() {
+        if (this.suppressHistoryCapture || this.historyMode) return;
+        const snapshot = this.captureVisiblePageSnapshot();
+        if (!snapshot) return;
+        const signature = JSON.stringify(snapshot.panels.map((p) => `${p.name}:${Math.round(p.rect.left)},${Math.round(p.rect.top)},${Math.round(p.rect.width)},${Math.round(p.rect.height)}`));
+        const last = this.panelHistory[this.panelHistory.length - 1];
+        if (last?.signature === signature) return;
+        this.panelHistory.push({ ...snapshot, signature });
+        if (this.panelHistory.length > 40) this.panelHistory.shift();
+    }
+
+    showHistoryControls() {
+        this.linksRoot.style.visibility = 'hidden';
+        this.linksRoot.style.pointerEvents = 'none';
+        this.linksRoot.style.display = 'flex';
+        this.inputRoot.style.display = 'none';
+        const y = Math.max(this.topInset + 96, window.innerHeight - 92);
+        this.historyReturnBtn.style.top = `${y}px`;
+        this.historyReturnBtn.style.display = 'block';
+    }
+
+    showLiveControls() {
+        this.historyReturnBtn.style.display = 'none';
+        this.linksRoot.style.visibility = 'visible';
+        this.linksRoot.style.pointerEvents = '';
+        this.linksRoot.style.display = 'flex';
+        this.renderLinks();
+        this.renderFormUI();
+    }
+
+    showHistoryPageAt(index) {
+        if (index < 0 || index >= this.panelHistory.length) return false;
+        const snapshot = this.panelHistory[index];
+        if (!snapshot) return false;
+        const keep = new Set(snapshot.order);
+        const offscreen = { left: 0, top: this.topInset - 400, width: 360, height: 150 };
+        this.suppressHistoryCapture = true;
+        for (const name of Object.keys(this.panelsOnscreen)) {
+            const p = this.panelsOnscreen[name];
+            if (!p || p.panelSize === 'small') continue;
+            if (!keep.has(name)) {
+                p.three?.setSpeakerAnimationPaused?.(true);
+                p.setTarget(offscreen, { animateOut: true });
+            }
+        }
+        for (const item of snapshot.panels) {
+            const p = this.panels[item.name];
+            if (!p) continue;
+            p.historyModeLiveAnchors = true;
+            p.panelSize = 'large';
+            p.setAspectMode?.(item.aspectMode || 'free');
+            p.customAspectRatio = Number.isFinite(item.customAspectRatio) ? item.customAspectRatio : null;
+            if (item.passageAsSeen) {
+                const narration = item.passageAsSeen.narrationText || item.passageAsSeen.narrationHtml || '';
+                p.setTxt?.(narration);
+                p.setSpeakers?.(cloneSnapshotValue(item.passageAsSeen.speakers || []));
+                if (item.passageAsSeen.scene) {
+                    p.setScene?.(cloneSnapshotValue(item.passageAsSeen.scene));
+                }
+            }
+            const scaledRect = this.getHistoryRectForViewport(item, snapshot);
+            if (!this.panelsOnscreen[item.name]) this.panelsOnscreen[item.name] = p;
+            p.setSpeechBounds?.(item.speechBounds || {
+                left: scaledRect.left,
+                top: scaledRect.top,
+                right: scaledRect.left + scaledRect.width,
+                bottom: scaledRect.top + scaledRect.height,
+            });
+            p.setTarget(scaledRect);
+            p.setNarrationMinTop?.(null);
+            p.setNarrationFixedTop?.(null);
+            p.updateTextMode?.();
+            p.syncNarrationPosition?.();
+            p.three?.setSpeakerAnimationPaused?.(true);
+            if (p.speechLayout?.items) {
+                for (const it of p.speechLayout.items) {
+                    it.anchorNorm = null;
+                }
+            }
+            this.bindPanelHover(item.name, p);
+        }
+        this.largePanelOrder = [...snapshot.order];
+        this.activePanelName = snapshot.order[snapshot.order.length - 1] || this.activePanelName;
+        this.hoverPanelName = null;
+        this.historyCursor = index;
+        this.historyMode = true;
+        this.applyPanelLayering();
+        this.showHistoryControls();
+        this.suppressHistoryCapture = false;
+        return true;
+    }
+
+    enterOrStepBackHistory() {
+        if (!this.historyMode) {
+            if (!this.panelHistory.length) return false;
+            this.historyCurrentSnapshot = this.captureVisiblePageSnapshot();
+            return this.showHistoryPageAt(this.panelHistory.length - 1);
+        }
+        if (this.historyCursor === null || this.historyCursor <= 0) return false;
+        return this.showHistoryPageAt(this.historyCursor - 1);
+    }
+
+    stepForwardOrExitHistory() {
+        if (!this.historyMode) return false;
+        if (this.historyCursor === null) return this.exitHistoryMode();
+        if (this.historyCursor < this.panelHistory.length - 1) {
+            return this.showHistoryPageAt(this.historyCursor + 1);
+        }
+        return this.exitHistoryMode();
+    }
+
+    exitHistoryMode() {
+        if (!this.historyMode) return false;
+        const offscreen = { left: 0, top: this.topInset - 400, width: 360, height: 150 };
+        const keep = new Set(this.historyCurrentSnapshot?.order || []);
+        this.suppressHistoryCapture = true;
+        for (const name of Object.keys(this.panelsOnscreen)) {
+            const p = this.panelsOnscreen[name];
+            if (!p || p.panelSize === 'small') continue;
+            if (!keep.has(name)) {
+                p.three?.setSpeakerAnimationPaused?.(true);
+                p.setTarget(offscreen, { animateOut: true });
+            }
+        }
+        for (const name of Object.keys(this.panels)) {
+            const p = this.panels[name];
+            if (!p) continue;
+            p.historyModeLiveAnchors = false;
+        }
+        if (this.historyCurrentSnapshot?.panels?.length) {
+            for (const item of this.historyCurrentSnapshot.panels) {
+                const p = this.panels[item.name];
+                if (!p) continue;
+                if (!this.panelsOnscreen[item.name]) this.panelsOnscreen[item.name] = p;
+                p.panelSize = 'large';
+                p.setAspectMode?.(item.aspectMode || this.panelConfig?.aspect || 'free');
+                p.customAspectRatio = Number.isFinite(item.customAspectRatio) ? item.customAspectRatio : null;
+                if (item.passageAsSeen) {
+                    const narration = item.passageAsSeen.narrationText || item.passageAsSeen.narrationHtml || '';
+                    p.setTxt?.(narration);
+                    p.setSpeakers?.(cloneSnapshotValue(item.passageAsSeen.speakers || []));
+                    if (item.passageAsSeen.scene) {
+                        p.setScene?.(cloneSnapshotValue(item.passageAsSeen.scene));
+                    }
+                }
+                p.setSpeechBounds?.(item.speechBounds || {
+                    left: item.rect.left,
+                    top: item.rect.top,
+                    right: item.rect.left + item.rect.width,
+                    bottom: item.rect.top + item.rect.height,
+                });
+                p.setTarget(item.rect);
+                p.updateTextMode?.();
+                p.syncNarrationPosition?.();
+                p.three?.setSpeakerAnimationPaused?.(item.name !== this.activePanelName);
+                if (p.speechLayout?.items) {
+                    for (const it of p.speechLayout.items) {
+                        it.anchorNorm = null;
+                    }
+                }
+                this.bindPanelHover(item.name, p);
+            }
+            this.largePanelOrder = [...this.historyCurrentSnapshot.order];
+        }
+        this.historyMode = false;
+        this.historyCursor = null;
+        this.historyCurrentSnapshot = null;
+        this.showLiveControls();
+        this.reconcileLargePanelOrder();
+        if (this.largePanelOrder.length) {
+            this.activePanelName = this.largePanelOrder[this.largePanelOrder.length - 1];
+        }
+        this.applyPanelLayering();
+        this.setActiveLargePanel(this.activePanelName);
+        this.suppressHistoryCapture = false;
+        return true;
     }
 
     updateLinkLayout() {
@@ -1484,6 +1803,7 @@ class LayoutUI {
     }
 
     setPsgInfo(info) {
+        if (this.historyMode) this.exitHistoryMode();
        
         this.psgName = info.psgName;
         const liveVars = getSugarCubeVars();
@@ -1519,11 +1839,13 @@ class LayoutUI {
     }
 
     setPanel() {
+        if (this.historyMode) this.exitHistoryMode();
         const mode = this.panelConfig?.panels || 'stack';
         const capacity = this.getPanelCapacity();
         const name = this.psgName;
         const isStack = mode === 'stack';
         if (this.panelSolo) {
+            this.pushHistorySnapshot();
             const keys = Object.keys(this.panelsOnscreen);
             const offscreen = {left: 0, top: this.topInset - 400, width: 360, height: 150};
             for (let i = 0; i < keys.length; i++) {
@@ -1547,6 +1869,7 @@ class LayoutUI {
         projectedSet.add(name);
         const projectedCount = projectedSet.size;
         if (isStack && projectedCount > capacity) {
+            this.pushHistorySnapshot();
             const offscreen = {left: 0, top: this.topInset - 400, width: 360, height: 150};
             for (let i = 0; i < this.largePanelOrder.length; i++) {
                 const key = this.largePanelOrder[i];
@@ -1567,6 +1890,7 @@ class LayoutUI {
 
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, this.txt, -1, scene, 'narration', this.topInset);
+            p.historyModeLiveAnchors = false;
             p.setAspectMode?.(this.panelConfig.aspect);
             p.customAspectRatio = this.panelAspectRatio;
             if (this.speakers?.length) p.setSpeakers(this.speakers);
@@ -1578,6 +1902,7 @@ class LayoutUI {
             this.bindPanelHover(name, p);
         } else {
             let p = this.panels[name];
+            p.historyModeLiveAnchors = false;
             this.currPanel = p;
             p.setLink(-1);
             if (!isAlreadyOnscreenLarge) {
@@ -1607,6 +1932,7 @@ class LayoutUI {
             this.applyLargePanelTargets(false);
             this.setActiveLargePanel(name);
         } else {
+            this.pushHistorySnapshot();
             this.panelsOnscreen[name]?.setNarrationMinTop?.(null);
             this.panelsOnscreen[name]?.setNarrationFixedTop?.(null);
             this.panelsOnscreen[name]?.setSpeechBounds?.({
@@ -1631,6 +1957,8 @@ class LayoutUI {
     }
 
     makeResponse(i) {
+        if (this.historyMode) this.exitHistoryMode();
+        this.pushHistorySnapshot();
         let choice = this.links[i];
         let target = {left: 0, top: this.topInset + this.h / 5, width: this.w * 3 / 4, height: 300 * 3 / 4};
         for (let j in this.panelsOnscreen){

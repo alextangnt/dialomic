@@ -1,4 +1,7 @@
 import * as THREE from 'three';
+import { EditorView, Decoration, ViewPlugin } from '@codemirror/view';
+import { EditorState } from '@codemirror/state';
+import { minimalSetup } from 'codemirror';
 import { Panel } from './panel.js';
 import {
     stripHtml,
@@ -1436,10 +1439,11 @@ function escapeHtmlForEditor(text) {
 function highlightSugarcubeTokens(text) {
     const src = String(text || '');
     // Tokenize delimiters/operators so opening brackets highlight immediately.
-    const re = /(^|\n)\s*[^:\n<>[\]%]+::|<<|>>|\[\[|\]\]|%%|\$[A-Za-z_]\w*|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b\d+(?:\.\d+)?\b|[{}\[\](),:]/gm;
+    const re = /(^|\n)\s*[^:\n<>[\]%]+::|<<|>>|\[\[|\]\]|%%|\$[A-Za-z_]\w*|\b\d+(?:\.\d+)?\b|[{}\[\](),:]/gm;
     let out = '';
     let last = 0;
     let m;
+    let inMacroDepth = 0;
     while ((m = re.exec(src)) !== null) {
         out += escapeHtmlForEditor(src.slice(last, m.index));
         const tok = String(m[0] || '');
@@ -1449,18 +1453,67 @@ function highlightSugarcubeTokens(text) {
         else if (tok === '%%') cls = 'dialomic-macro';
         else if (/::\s*$/.test(tok)) cls = 'speaker-prefix';
         else if (/^\$[A-Za-z_]\w*$/.test(tok)) cls = 'sugar-var';
-        else if (/^['"]/.test(tok)) cls = 'js-string';
-        else if (/^\d/.test(tok)) cls = 'js-number';
-        else if (/^[{}\[\](),:]$/.test(tok)) cls = 'js-punct';
+        else if (inMacroDepth > 0 && /^\d/.test(tok)) cls = 'js-number';
+        else if (inMacroDepth > 0 && /^[{}\[\](),:]$/.test(tok)) cls = 'js-punct';
         const tokenStart = m.index;
         const tokenEnd = tokenStart + tok.length;
         const err = Array.isArray(highlightSugarcubeTokens.errorRanges)
             && highlightSugarcubeTokens.errorRanges.some((r) => tokenStart < r.end && tokenEnd > r.start);
-        out += `<span class="${cls}${err ? ' lint-error' : ''}">${escapeHtmlForEditor(tok)}</span>`;
+        const clsName = `${cls}${err ? `${cls ? ' ' : ''}lint-error` : ''}`.trim();
+        out += `<span${clsName ? ` class="${clsName}"` : ''}>${escapeHtmlForEditor(tok)}</span>`;
+        if (tok === '<<') inMacroDepth += 1;
+        else if (tok === '>>') inMacroDepth = Math.max(0, inMacroDepth - 1);
         last = re.lastIndex;
     }
     out += escapeHtmlForEditor(src.slice(last));
     return out;
+}
+
+function collectSugarcubeTokenRanges(text) {
+    const src = String(text || '');
+    const re = /(^|\n)\s*[^:\n<>[\]%]+::|<<|>>|\[\[|\]\]|%%|\$[A-Za-z_]\w*|\b\d+(?:\.\d+)?\b|[{}\[\](),:]/gm;
+    const ranges = [];
+    let m;
+    let inMacroDepth = 0;
+    while ((m = re.exec(src)) !== null) {
+        const tok = String(m[0] || '');
+        let cls = '';
+        if (tok === '<<' || tok === '>>') cls = 'sugar-macro';
+        else if (tok === '[[' || tok === ']]') cls = 'sugar-link';
+        else if (tok === '%%') cls = 'dialomic-macro';
+        else if (/::\s*$/.test(tok)) cls = 'speaker-prefix';
+        else if (/^\$[A-Za-z_]\w*$/.test(tok)) cls = 'sugar-var';
+        else if (inMacroDepth > 0 && /^\d/.test(tok)) cls = 'js-number';
+        else if (inMacroDepth > 0 && /^[{}\[\](),:]$/.test(tok)) cls = 'js-punct';
+        if (cls) ranges.push({ from: m.index, to: m.index + tok.length, cls: `cm-${cls}` });
+        if (tok === '<<') inMacroDepth += 1;
+        else if (tok === '>>') inMacroDepth = Math.max(0, inMacroDepth - 1);
+    }
+    return ranges;
+}
+
+function createSugarTokenDecorationExtension() {
+    const markCache = new Map();
+    const getMark = (cls) => {
+        if (!markCache.has(cls)) markCache.set(cls, Decoration.mark({ class: cls }));
+        return markCache.get(cls);
+    };
+    const build = (state) => {
+        const text = state.doc.toString();
+        const spans = collectSugarcubeTokenRanges(text)
+            .map((r) => getMark(r.cls).range(r.from, r.to));
+        return Decoration.set(spans, true);
+    };
+    return ViewPlugin.fromClass(class {
+        constructor(view) {
+            this.decorations = build(view.state);
+        }
+        update(update) {
+            if (update.docChanged) this.decorations = build(update.state);
+        }
+    }, {
+        decorations: (v) => v.decorations,
+    });
 }
 
 function lintSugarcubeText(text) {
@@ -1473,10 +1526,12 @@ function lintSugarcubeText(text) {
         errorRanges.push({ start, end });
     };
     const stack = [];
-    const macroRe = /<<\s*(\/?\s*[A-Za-z_]\w*)[^>]*>>/g;
+    const macroRe = /<<([\s\S]*?)>>/g;
     let m;
     while ((m = macroRe.exec(source)) !== null) {
-        const raw = String(m[1] || '').trim().toLowerCase();
+        const body = String(m[1] || '').trim();
+        const cmdMatch = body.match(/^\/?\s*[A-Za-z_]\w*/);
+        const raw = String(cmdMatch?.[0] || '').replace(/\s+/g, '').toLowerCase();
         const line = source.slice(0, m.index).split('\n').length;
         if (!raw) continue;
         if (raw === 'if' || raw === 'for' || raw === 'switch') {
@@ -1522,54 +1577,68 @@ function lintSugarcubeText(text) {
         addRange(open.index || 0, 2);
     }
 
-    // Lightweight bracket/brace/paren matcher (ignores quoted strings).
-    const delim = [];
-    let quote = null;
-    for (let i = 0; i < source.length; i += 1) {
-        const ch = source[i];
-        if (quote) {
-            if (ch === '\\') {
-                i += 1;
+    // Lightweight bracket/brace/paren matcher only inside macro bodies.
+    const macroBodies = [];
+    source.replace(/<<([\s\S]*?)>>/g, (full, body, offset) => {
+        macroBodies.push({ body: String(body || ''), offset: Number(offset) + 2 });
+        return full;
+    });
+    for (const seg of macroBodies) {
+        const delim = [];
+        let quote = null;
+        const body = seg.body;
+        for (let i = 0; i < body.length; i += 1) {
+            const ch = body[i];
+            if (quote) {
+                if (ch === '\\') {
+                    i += 1;
+                    continue;
+                }
+                if (ch === quote) quote = null;
                 continue;
             }
-            if (ch === quote) quote = null;
-            continue;
-        }
-        if (ch === '"' || ch === "'" || ch === '`') {
-            quote = ch;
-            continue;
-        }
-        if (ch === '{' || ch === '[' || ch === '(') {
-            delim.push({ ch, line: source.slice(0, i).split('\n').length, index: i });
-            continue;
-        }
-        if (ch === '}' || ch === ']' || ch === ')') {
-            const top = delim.pop();
-            const pair = top?.ch;
-            const ok = (pair === '{' && ch === '}')
-                || (pair === '[' && ch === ']')
-                || (pair === '(' && ch === ')');
-            if (!ok) {
-                const line = source.slice(0, i).split('\n').length;
-                issues.push(`Line ${line}: unmatched "${ch}"`);
-                addRange(i, 1);
+            if (ch === '"' || ch === "'" || ch === '`') {
+                quote = ch;
+                continue;
+            }
+            if (ch === '{' || ch === '[' || ch === '(') {
+                delim.push({ ch, index: i });
+                continue;
+            }
+            if (ch === '}' || ch === ']' || ch === ')') {
+                const top = delim.pop();
+                const pair = top?.ch;
+                const ok = (pair === '{' && ch === '}')
+                    || (pair === '[' && ch === ']')
+                    || (pair === '(' && ch === ')');
+                if (!ok) {
+                    const abs = seg.offset + i;
+                    const line = source.slice(0, abs).split('\n').length;
+                    issues.push(`Line ${line}: unmatched "${ch}"`);
+                    addRange(abs, 1);
+                }
             }
         }
-    }
-    while (delim.length) {
-        const top = delim.pop();
-        issues.push(`Line ${top.line}: unclosed "${top.ch}"`);
-        addRange(top.index, 1);
+        while (delim.length) {
+            const top = delim.pop();
+            const abs = seg.offset + top.index;
+            const line = source.slice(0, abs).split('\n').length;
+            issues.push(`Line ${line}: unclosed "${top.ch}"`);
+            addRange(abs, 1);
+        }
     }
 
-    // Very light JSON-ish comma lint inside object/array literals.
-    const missingCommaRe = /(["'\}\]0-9])\s*\n\s*(["'$\[{A-Za-z_])/g;
+    // Very light JSON-ish comma lint inside macro bodies only.
     let mc;
-    while ((mc = missingCommaRe.exec(source)) !== null) {
-        const idx = mc.index + String(mc[1] || '').length;
-        const line = source.slice(0, idx).split('\n').length;
-        issues.push(`Line ${line}: possible missing comma`);
-        addRange(idx, 1);
+    const missingCommaRe = /(["'\}\]0-9])\s*\n\s*(["'$\[{A-Za-z_])/g;
+    for (const seg of macroBodies) {
+        missingCommaRe.lastIndex = 0;
+        while ((mc = missingCommaRe.exec(seg.body)) !== null) {
+            const idx = seg.offset + mc.index + String(mc[1] || '').length;
+            const line = source.slice(0, idx).split('\n').length;
+            issues.push(`Line ${line}: possible missing comma`);
+            addRange(idx, 1);
+        }
     }
     return { issues, errorRanges };
 }
@@ -1939,27 +2008,113 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     const makeCodeField = (textarea) => {
         const field = document.createElement('div');
         field.className = 'inline-code-field';
-        const hl = document.createElement('pre');
-        hl.className = 'inline-text-editor-highlight';
-        hl.setAttribute('aria-hidden', 'true');
+        const cmMount = document.createElement('div');
+        cmMount.className = 'inline-cm-editor';
+        field.appendChild(cmMount);
+        const listeners = new Map();
+        const emit = (type, ev) => {
+            const list = listeners.get(type);
+            if (!list) return;
+            for (const fn of list) {
+                try {
+                    fn(ev);
+                } catch (_) {}
+            }
+        };
+        const view = new EditorView({
+            state: EditorState.create({
+                doc: String(textarea.value || ''),
+                extensions: [
+                    minimalSetup,
+                    EditorView.lineWrapping,
+                    createSugarTokenDecorationExtension(),
+                    EditorView.updateListener.of((u) => {
+                        if (!u.docChanged) return;
+                        emit('input', { type: 'input', target: textarea });
+                    }),
+                ],
+            }),
+            parent: cmMount,
+        });
+        view.scrollDOM.classList.add('inline-cm-scroller');
+        view.dom.addEventListener('click', (e) => emit('click', e));
+        view.dom.addEventListener('keyup', (e) => emit('keyup', e));
+        view.dom.addEventListener('keydown', (e) => emit('keydown', e));
+        view.dom.addEventListener('pointerup', (e) => emit('pointerup', e));
+        view.dom.addEventListener('focusin', (e) => emit('focus', e));
+        view.dom.addEventListener('focusout', (e) => emit('blur', e));
+        view.dom.addEventListener('wheel', (e) => {
+            e.stopPropagation();
+            emit('wheel', e);
+        }, { passive: true, capture: true });
+        Object.defineProperty(textarea, 'value', {
+            configurable: true,
+            enumerable: true,
+            get() {
+                return view.state.doc.toString();
+            },
+            set(v) {
+                const next = String(v ?? '');
+                const cur = view.state.doc.toString();
+                if (next === cur) return;
+                view.dispatch({
+                    changes: { from: 0, to: cur.length, insert: next },
+                });
+            },
+        });
+        Object.defineProperty(textarea, 'selectionStart', {
+            configurable: true,
+            enumerable: true,
+            get() {
+                return view.state.selection.main.from;
+            },
+        });
+        Object.defineProperty(textarea, 'selectionEnd', {
+            configurable: true,
+            enumerable: true,
+            get() {
+                return view.state.selection.main.to;
+            },
+        });
+        textarea.focus = () => view.focus();
+        textarea.select = () => {
+            view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } });
+            view.focus();
+        };
+        textarea.setSelectionRange = (start, end) => {
+            view.dispatch({ selection: { anchor: Math.max(0, start), head: Math.max(0, end) } });
+        };
+        textarea.setRangeText = (nextText, start, end) => {
+            const from = Math.max(0, Number(start) || 0);
+            const to = Math.max(from, Number(end) || from);
+            view.dispatch({
+                changes: { from, to, insert: String(nextText ?? '') },
+                selection: { anchor: from + String(nextText ?? '').length },
+            });
+        };
+        textarea.addEventListener = (type, fn) => {
+            if (!listeners.has(type)) listeners.set(type, []);
+            listeners.get(type).push(fn);
+        };
+        textarea.removeEventListener = (type, fn) => {
+            const list = listeners.get(type);
+            if (!list) return;
+            const idx = list.indexOf(fn);
+            if (idx >= 0) list.splice(idx, 1);
+        };
         const sync = () => {
             const value = String(textarea.value || '');
-            const hasTokens = /(<<[\s\S]*?>>|\[\[[\s\S]*?\]\]|%%[\s\S]*?%%|\$[A-Za-z_]\w*|(?:^|\n)\s*[^:\n<>[\]%]+::)/m.test(value);
-            field.classList.toggle('has-tokens', hasTokens);
-            highlightSugarcubeTokens.errorRanges = textarea.__lintErrorRanges || [];
-            hl.innerHTML = hasTokens ? (highlightSugarcubeTokens(value) || '&#8203;') : '';
-            hl.style.transform = 'none';
-            hl.scrollTop = textarea.scrollTop;
-            hl.scrollLeft = textarea.scrollLeft;
+            const cur = view.state.doc.toString();
+            if (value !== cur) {
+                view.dispatch({ changes: { from: 0, to: cur.length, insert: value } });
+            }
         };
-        textarea.addEventListener('input', sync);
-        textarea.addEventListener('scroll', sync);
-        field.appendChild(hl);
-        field.appendChild(textarea);
+        field.__dispose = () => view.destroy();
         sync();
         return { field, sync };
     };
     const taField = makeCodeField(ta);
+    ta.__codeField = taField;
     let activeTab = 'text';
     const sceneMacro = typeof options.sceneMacro === 'string' ? options.sceneMacro : '';
     const choicesRaw = typeof options.choicesRaw === 'string' ? options.choicesRaw : '';
@@ -2033,9 +2188,22 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     wrapper.appendChild(diagnostics);
     const autoSize = () => {
         const active = activeTab === 'text' ? ta : (activeTab === 'scene' ? (sceneTa || ta) : (choicesTa || ta));
-        active.style.height = 'auto';
-        const desired = Math.max(48, active.scrollHeight);
-        active.style.height = `${Math.min(desired, Math.floor(window.innerHeight * 0.55))}px`;
+        const isSpeechEditor = wrapper.classList.contains('speech-inline-editor');
+        const fixed = Math.max(180, Math.floor(window.innerHeight * 0.55));
+        if (active?.__codeField?.field) {
+            let nextHeight = fixed;
+            if (isSpeechEditor) {
+                const cmContent = active.__codeField.field.querySelector('.cm-content');
+                const contentH = Math.ceil(cmContent?.scrollHeight || 0);
+                const padded = contentH > 0 ? contentH + 20 : 64;
+                nextHeight = Math.max(64, Math.min(Math.floor(window.innerHeight * 0.5), padded));
+            }
+            active.__codeField.field.style.height = `${nextHeight}px`;
+            const cmRoot = active.__codeField.field.querySelector('.inline-cm-editor');
+            if (cmRoot) cmRoot.style.height = '100%';
+        } else {
+            active.style.height = `${isSpeechEditor ? Math.max(64, Math.min(Math.floor(window.innerHeight * 0.5), active.scrollHeight + 20)) : fixed}px`;
+        }
     };
     const updateDiagnostics = () => {
         const active = activeTab === 'text' ? ta : (activeTab === 'scene' ? (sceneTa || ta) : (choicesTa || ta));

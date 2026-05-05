@@ -7,6 +7,13 @@
   },
   "dependencies": {
     "@chenglou/pretext": "^0.0.3",
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/language": "^6.12.3",
+    "@codemirror/lint": "^6.9.5",
+    "@codemirror/search": "^6.7.0",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.41.1",
+    "codemirror": "^6.0.2",
     "three": "^0.181.1"
   },
   "devDependencies": {

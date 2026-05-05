@@ -738,10 +738,11 @@ export class SpeechBubbleLayout {
             let anchorY = canvasRect.top + canvasRect.height * 0.2;
             let anchorXLive = null;
             let anchorYLive = null;
+            const useLiveAnchors = Boolean(this.panel?.editorEnabled || this.panel?.historyModeLiveAnchors);
             if (speakerRect) {
                 const targetAnchorX = (speakerRect.left + speakerRect.right) / 2;
                 const targetAnchorY = speakerRect.top;
-                if (this.panel?.editorEnabled) {
+                if (useLiveAnchors) {
                     item.anchorNorm = null;
                     anchorXLive = targetAnchorX;
                     anchorYLive = targetAnchorY;
@@ -757,7 +758,7 @@ export class SpeechBubbleLayout {
                     anchorYLive = targetAnchorY;
                 }
             }
-            if (!this.panel?.editorEnabled && item.anchorNorm) {
+            if (!useLiveAnchors && item.anchorNorm) {
                 anchorX = canvasRect.left + item.anchorNorm.x * canvasRect.width;
                 anchorY = canvasRect.top + item.anchorNorm.y * canvasRect.height;
             }
@@ -773,7 +774,7 @@ export class SpeechBubbleLayout {
             item.lastAnchorY = anchorYLive ?? anchorY;
             const speakerCircle = speakerOffscreen
                 ? null
-                : (this.panel?.editorEnabled
+                : (useLiveAnchors
                     ? this.getImmediateSpeakerCircle(speakerRect)
                     : this.getSpeakerCircle(item, speakerRect, canvasRect));
             const speakerMidY = speakerCircle
