@@ -18,6 +18,18 @@
       </div>
     </div>
     <footer id="playerStatusBar"></footer>
+    <div id="newCustomStoryDialog" class="player-dialog-backdrop" hidden>
+      <div class="player-dialog-card">
+        <h3>Create Custom Story</h3>
+        <p>Template stories must be copied before editing.</p>
+        <label for="newCustomStoryName">Story name</label>
+        <input id="newCustomStoryName" type="text" maxlength="120">
+        <div class="player-dialog-actions">
+          <button id="newCustomStoryCancelBtn" type="button">Cancel</button>
+          <button id="newCustomStoryCreateBtn" type="button">Create</button>
+        </div>
+      </div>
+    </div>
     <script id="p5" type="module" src="./src/layout.js"></script>
   </body>
 </html>

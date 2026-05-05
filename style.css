@@ -449,6 +449,83 @@ iframe {
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 }
 
+.player-dialog-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 10001;
+    display: grid;
+    place-items: center;
+    background: rgba(20, 22, 26, 0.45);
+}
+
+.player-dialog-backdrop[hidden] {
+    display: none !important;
+}
+
+.player-dialog-card {
+    background: #fff6d8;
+    border: 2px solid #d5b25e;
+    border-radius: 12px;
+    box-shadow: 0 12px 26px rgba(0, 0, 0, 0.25);
+    min-width: 320px;
+    max-width: 420px;
+    padding: 14px;
+    display: grid;
+    gap: 8px;
+}
+
+.player-dialog-card h3 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.player-dialog-card p {
+    margin: 0;
+    font-size: 12px;
+    color: #5e6d78;
+}
+
+.player-dialog-card label {
+    font-size: 12px;
+    color: #44576a;
+}
+
+.player-dialog-card input {
+    box-sizing: border-box;
+    width: 100%;
+    background: #fffcf3;
+    color: #1a2430;
+    border: 1px solid #c8c2a8;
+    border-radius: 6px;
+    padding: 6px;
+    font-size: 13px;
+    font-family: inherit;
+}
+
+.player-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.player-dialog-actions button {
+    background: #7ed0e7;
+    border: 2px solid #2f7f9b;
+    color: #0f2e3c;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: 0 2px 0 #2f7f9b;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+.player-dialog-actions button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 0 #2f7f9b;
+}
+
 @font-face {
     font-family: "InconsolataLocal";
     src: url("/src/assets/Inconsolata.otf") format("opentype");

@@ -227,6 +227,13 @@ button:active:not(:disabled):not(.floating-save.dirty), .back-link:active {
   color: #fffef7;
 }
 
+#deleteStoryBtn {
+  --btn-shadow: var(--ui-red-dark);
+  background: var(--ui-red);
+  border-color: var(--ui-red-dark);
+  color: #fff;
+}
+
 .back-link {
   --btn-shadow: var(--ui-orange-dark);
   background: var(--ui-orange);

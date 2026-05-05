@@ -41,6 +41,10 @@ window.onload = () =>{
     const storyStatusEl = document.getElementById("storyStatus");
     const defaultStorySelect = document.getElementById("defaultStorySelect");
     const editorLink = document.getElementById("editorLink");
+    const newCustomStoryDialog = document.getElementById('newCustomStoryDialog');
+    const newCustomStoryName = document.getElementById('newCustomStoryName');
+    const newCustomStoryCancelBtn = document.getElementById('newCustomStoryCancelBtn');
+    const newCustomStoryCreateBtn = document.getElementById('newCustomStoryCreateBtn');
     const IMPORTED_STORY_SELECT_VALUE = '__imported_story__';
     const USER_STORY_SELECT_PREFIX = '__user_story__:';
     const FALLBACK_DEFAULT_STORIES = [
@@ -77,6 +81,7 @@ window.onload = () =>{
     let currentMode = 'default';
     let currentUserStoryId = '';
     let currentDefaultStoryUrl = defaultStories[1]?.url || defaultStories[0]?.url;
+    let currentDefaultStoryHtml = '';
     let pendingStart = false;
     let refreshRestarted = false;
     let awaitingRefreshInit = false;
@@ -215,8 +220,10 @@ window.onload = () =>{
             // Always load defaults through HTML injection path so messaging.js is attached.
             fetchDefaultStoryHtml(currentDefaultStoryUrl).then((html) => {
                 if (typeof html === 'string' && html.trim()) {
+                    currentDefaultStoryHtml = html;
                     loadStoryHtml(html, `${selectedLabel}.html`, { storyStatus: selectedLabel });
                 } else {
+                    currentDefaultStoryHtml = '';
                     resetLayout();
                     iframe.removeAttribute('srcdoc');
                     iframe.setAttribute('src', currentDefaultStoryUrl);
@@ -244,6 +251,59 @@ window.onload = () =>{
         if (/^https?:\/\//i.test(url)) return '';
         if (!url.toLowerCase().endsWith('.html')) return '';
         return url.replace(/^\/+/, '');
+    }
+
+    function nextCustomStoryName(baseName) {
+        const base = String(baseName || 'Story').trim() || 'Story';
+        const existing = new Set(userStories.map((s) => String(s?.name || '').trim().toLowerCase()));
+        let n = 1;
+        let candidate = `${base} ${n}`;
+        while (existing.has(candidate.toLowerCase())) {
+            n += 1;
+            candidate = `${base} ${n}`;
+        }
+        return candidate;
+    }
+
+    function showNewCustomStoryDialog(defaultName) {
+        return new Promise((resolve) => {
+            if (!newCustomStoryDialog || !newCustomStoryName || !newCustomStoryCancelBtn || !newCustomStoryCreateBtn) {
+                resolve(null);
+                return;
+            }
+            newCustomStoryDialog.hidden = false;
+            newCustomStoryName.value = defaultName;
+            newCustomStoryName.focus();
+            newCustomStoryName.select();
+            const cleanup = () => {
+                newCustomStoryDialog.hidden = true;
+                newCustomStoryCancelBtn.removeEventListener('click', onCancel);
+                newCustomStoryCreateBtn.removeEventListener('click', onCreate);
+                newCustomStoryDialog.removeEventListener('pointerdown', onBackdrop);
+                newCustomStoryName.removeEventListener('keydown', onKeyDown);
+            };
+            const onCancel = () => {
+                cleanup();
+                resolve(null);
+            };
+            const onCreate = () => {
+                const value = String(newCustomStoryName.value || '').trim();
+                if (!value) return;
+                cleanup();
+                resolve(value);
+            };
+            const onBackdrop = (event) => {
+                if (event.target === newCustomStoryDialog) onCancel();
+            };
+            const onKeyDown = (event) => {
+                if (event.key === 'Escape') onCancel();
+                if (event.key === 'Enter') onCreate();
+            };
+            newCustomStoryCancelBtn.addEventListener('click', onCancel);
+            newCustomStoryCreateBtn.addEventListener('click', onCreate);
+            newCustomStoryDialog.addEventListener('pointerdown', onBackdrop);
+            newCustomStoryName.addEventListener('keydown', onKeyDown);
+        });
     }
 
     function inferStoryLabel(url) {
@@ -336,6 +396,7 @@ window.onload = () =>{
         };
         if (currentMode === 'imported' && importedHtml) {
             return {
+                kind: 'imported',
                 html: importedHtml,
                 name: importedName || 'Imported Story.html',
                 currentPassage: getCurrentPassageName(),
@@ -345,6 +406,8 @@ window.onload = () =>{
             const found = userStories.find((s) => s.id === currentUserStoryId);
             if (found?.html) {
                 return {
+                    kind: 'user',
+                    id: found.id,
                     html: found.html,
                     name: `${found.name}.html`,
                     currentPassage: getCurrentPassageName(),
@@ -352,10 +415,15 @@ window.onload = () =>{
             }
         }
         const html = await fetchDefaultStoryHtml(currentDefaultStoryUrl);
-        if (typeof html === 'string' && html.trim()) {
+        const resolvedHtml = (typeof currentDefaultStoryHtml === 'string' && currentDefaultStoryHtml.trim())
+            ? currentDefaultStoryHtml
+            : html;
+        if (typeof resolvedHtml === 'string' && resolvedHtml.trim()) {
             const selectedLabel = defaultStories.find((s) => s.url === currentDefaultStoryUrl)?.label || 'Default story';
             return {
-                html,
+                kind: 'default',
+                url: currentDefaultStoryUrl,
+                html: resolvedHtml,
                 name: `${selectedLabel}.html`,
                 currentPassage: getCurrentPassageName(),
             };
@@ -529,6 +597,29 @@ window.onload = () =>{
             event.preventDefault();
             try {
                 const payload = await getCurrentDisplayedStoryForEditor();
+                if (payload?.kind === 'default' && payload?.html) {
+                    const selectedLabel = defaultStories.find((s) => s.url === payload.url)?.label || 'Template';
+                    const defaultName = nextCustomStoryName(selectedLabel);
+                    const storyName = await showNewCustomStoryDialog(defaultName);
+                    if (!storyName) return;
+                    const html = String(payload.html || '');
+                    if (!html.trim()) return;
+                    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                    const story = { id, name: storyName, html, createdAt: Date.now() };
+                    userStories = [...userStories, story];
+                    localStorage.setItem(USER_STORIES_STORAGE_KEY, JSON.stringify(userStories));
+                    populateDefaultStorySelect();
+                    const bootPayload = {
+                        kind: 'user',
+                        id,
+                        html,
+                        name: `${storyName}.html`,
+                        currentPassage: String(payload.currentPassage || ''),
+                    };
+                    localStorage.setItem(EDITOR_BOOT_STORY_KEY, JSON.stringify(bootPayload));
+                    window.location.href = editorLink.getAttribute('href') || './visual-editor.html';
+                    return;
+                }
                 if (payload?.html) {
                     localStorage.setItem(EDITOR_BOOT_STORY_KEY, JSON.stringify(payload));
                 }

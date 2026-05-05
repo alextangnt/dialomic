@@ -273,3 +273,4 @@ References:
 - Twine: https://twinery.org/
 - SugarCube documentation: https://www.motoslave.net/sugarcube/2/
 - SugarCube macro reference: https://www.motoslave.net/sugarcube/2/docs/
+- [Model Attribution](ModelAttribution.md)

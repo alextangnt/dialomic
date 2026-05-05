@@ -4,11 +4,11 @@
     <meta charset="utf-8">
     <title>Dialomic Player</title>
     <!-- p5/openprocessing scripts removed: not used and can interfere with pointer events -->
-    <script type="module" crossorigin src="/assets/player-Dbi4vJu_.js"></script>
-    <link rel="modulepreload" crossorigin href="/assets/style-Cka54Et1.js">
+    <script type="module" crossorigin src="/assets/player-BYaDLz7T.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/style-ly2PcZrn.js">
     <link rel="modulepreload" crossorigin href="/assets/passageText-iwbgI23G.js">
-    <link rel="stylesheet" crossorigin href="/assets/style-CsTZGG0m.css">
-    <link rel="stylesheet" crossorigin href="/assets/landing-Cye4KmYG.css">
+    <link rel="stylesheet" crossorigin href="/assets/style-DCFskCjo.css">
+    <link rel="stylesheet" crossorigin href="/assets/landing-BrK1yc_-.css">
   </head>
   <body>
     <div class="background-element" id="paper-bg"></div>
@@ -21,6 +21,18 @@
       </div>
     </div>
     <footer id="playerStatusBar"></footer>
+    <div id="newCustomStoryDialog" class="player-dialog-backdrop" hidden>
+      <div class="player-dialog-card">
+        <h3>Create Custom Story</h3>
+        <p>Template stories must be copied before editing.</p>
+        <label for="newCustomStoryName">Story name</label>
+        <input id="newCustomStoryName" type="text" maxlength="120">
+        <div class="player-dialog-actions">
+          <button id="newCustomStoryCancelBtn" type="button">Cancel</button>
+          <button id="newCustomStoryCreateBtn" type="button">Create</button>
+        </div>
+      </div>
+    </div>
   </body>
 </html>
     

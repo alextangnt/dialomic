@@ -18,6 +18,8 @@ import {
 const VISUAL_EDITOR_STATE_KEY = 'DL_VISUAL_EDITOR_STATE_V1';
 const PLAYER_IMPORTED_STORY_KEY = 'DL_IMPORTED_STORY_HTML';
 const PLAYER_EDITOR_BOOT_STORY_KEY = 'DL_VISUAL_EDITOR_BOOT_STORY';
+const PLAYER_START_SELECTION_KEY = 'DL_PLAYER_START_SELECTION';
+const USER_STORIES_STORAGE_KEY = 'DL_USER_STORIES';
 const BACKGROUND_KEY = '__background__';
 const FALLBACK_ANIMAL_ASSET_NAMES = ['cat', 'cow', 'deer', 'hare', 'rat', 'wolf'];
 const FALLBACK_BACKGROUND_ASSET_NAMES = ['ballpark', 'beach', 'bus_stop', 'tennis_court'];
@@ -28,6 +30,7 @@ const el = {
     editorHomeLink: document.getElementById('editorHomeLink'),
     file: document.getElementById('editorFile'),
     exportBtn: document.getElementById('exportBtn'),
+    deleteStoryBtn: document.getElementById('deleteStoryBtn'),
     previewStoryBtn: document.getElementById('previewStoryBtn'),
     formatText: document.getElementById('formatText'),
     passageSelect: document.getElementById('passageSelect'),
@@ -116,6 +119,9 @@ const state = {
     backgroundLocked: false,
     openedHtmlBaseline: '',
     startPassageName: '',
+    bootStoryKind: '',
+    bootStoryId: '',
+    bootStoryUrl: '',
 };
 const IGNORED_PASSAGES = new Set(['StoryTitle', 'StoryData']);
 
@@ -981,6 +987,10 @@ function updatePreviewStoryButton() {
     const isHtml = state.format === 'html';
     el.previewStoryBtn.disabled = !isHtml;
     el.previewStoryBtn.classList.toggle('enabled', isHtml);
+    if (el.deleteStoryBtn) {
+        const canDelete = isHtml && state.bootStoryKind === 'user' && Boolean(state.bootStoryId);
+        el.deleteStoryBtn.disabled = !canDelete;
+    }
     if (isHtml) {
         el.previewStoryBtn.title = 'Open player';
     } else {
@@ -2650,6 +2660,28 @@ function stageEditedHtmlForPlayer() {
     return true;
 }
 
+function persistEditedHtmlToUserStory() {
+    if (state.format !== 'html') return false;
+    if (state.bootStoryKind !== 'user' || !state.bootStoryId) return false;
+    try {
+        const html = serializeHtml();
+        const raw = localStorage.getItem(USER_STORIES_STORAGE_KEY);
+        const stories = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(stories)) return false;
+        const idx = stories.findIndex((s) => String(s?.id || '') === String(state.bootStoryId));
+        if (idx < 0) return false;
+        stories[idx] = {
+            ...stories[idx],
+            html,
+        };
+        localStorage.setItem(USER_STORIES_STORAGE_KEY, JSON.stringify(stories));
+        return true;
+    } catch (err) {
+        console.warn('[visual-editor] Failed to persist edited custom story', err);
+        return false;
+    }
+}
+
 function persistVisualEditorState() {
     try {
         const payload = {
@@ -2658,6 +2690,9 @@ function persistVisualEditorState() {
             sourceHtmlTemplate: state.sourceHtmlTemplate,
             passages: state.passages,
             startPassageName: state.startPassageName,
+            bootStoryKind: state.bootStoryKind,
+            bootStoryId: state.bootStoryId,
+            bootStoryUrl: state.bootStoryUrl,
             selected: state.selected,
             ts: Date.now(),
         };
@@ -2677,6 +2712,9 @@ function restoreVisualEditorState() {
         state.filename = String(parsed.filename || 'Edited Story');
         state.sourceHtmlTemplate = String(parsed.sourceHtmlTemplate || '');
         state.startPassageName = String(parsed.startPassageName || '');
+        state.bootStoryKind = String(parsed.bootStoryKind || '');
+        state.bootStoryId = String(parsed.bootStoryId || '');
+        state.bootStoryUrl = String(parsed.bootStoryUrl || '');
         state.passages = parsed.passages
             .map((p) => ({
                 name: String(p?.name || ''),
@@ -2710,6 +2748,9 @@ function restoreBootStoryFromPlayer() {
         const story = parseHtmlStory(html);
         state.format = 'html';
         state.filename = String(parsed?.name || 'Player Story.html');
+        state.bootStoryKind = String(parsed?.kind || '');
+        state.bootStoryId = String(parsed?.id || '');
+        state.bootStoryUrl = String(parsed?.url || '');
         state.sourceHtmlTemplate = story.template;
         state.startPassageName = String(story.startPassageName || '');
         state.passages = story.passages.filter((p) => !IGNORED_PASSAGES.has(p.name));
@@ -3129,6 +3170,9 @@ function saveSceneTransformsToPassage() {
         if (passageKey) state.stableBodyByPassage[passageKey] = nextBody;
         if (passageKey) state.aspectDirtyByPassage[passageKey] = false;
         persistVisualEditorState();
+        if (state.format === 'html') {
+            persistEditedHtmlToUserStory();
+        }
         if (savedSceneCount == null) {
             setStatus(`Saved text updates in "${p.name}".`);
         } else {
@@ -3963,21 +4007,56 @@ el.exportBtn?.addEventListener('click', async () => {
     });
 });
 
+el.deleteStoryBtn?.addEventListener('click', async () => {
+    if (state.bootStoryKind !== 'user' || !state.bootStoryId) return;
+    const ok = await showConfirmDialog(
+        `Delete custom story "${state.filename}"? This removes it from browser storage.`,
+        'Delete Story',
+    );
+    if (!ok) return;
+    try {
+        const raw = localStorage.getItem(USER_STORIES_STORAGE_KEY);
+        const stories = raw ? JSON.parse(raw) : [];
+        if (Array.isArray(stories)) {
+            const next = stories.filter((s) => String(s?.id || '') !== String(state.bootStoryId));
+            localStorage.setItem(USER_STORIES_STORAGE_KEY, JSON.stringify(next));
+        }
+    } catch (err) {
+        console.warn('[visual-editor] Failed to delete custom story', err);
+    }
+    window.location.href = './index.html';
+});
+
 el.previewStoryBtn?.addEventListener('click', async () => {
     if (state.format !== 'html') return;
     let discardedUnsaved = false;
     await runWithUnsavedGuard(() => {
         if (discardedUnsaved && state.openedHtmlBaseline) {
-            const nameBase = state.filename.replace(/\.[^.]+$/, '') || 'story';
-            localStorage.setItem(PLAYER_IMPORTED_STORY_KEY, JSON.stringify({
-                html: state.openedHtmlBaseline,
-                name: `${nameBase}.html`,
-            }));
+            if (state.bootStoryKind === 'user' && state.bootStoryId) {
+                localStorage.setItem(PLAYER_START_SELECTION_KEY, JSON.stringify({
+                    kind: 'user',
+                    id: state.bootStoryId,
+                }));
+            } else {
+                const nameBase = state.filename.replace(/\.[^.]+$/, '') || 'story';
+                localStorage.setItem(PLAYER_IMPORTED_STORY_KEY, JSON.stringify({
+                    html: state.openedHtmlBaseline,
+                    name: `${nameBase}.html`,
+                }));
+            }
         } else {
             saveCurrentPassageBody();
             // Force one final live scene->body sync before staging for player.
             syncCurrentSceneSnapshotToPassageBody();
-            stageEditedHtmlForPlayer();
+            if (state.bootStoryKind === 'user' && state.bootStoryId) {
+                persistEditedHtmlToUserStory();
+                localStorage.setItem(PLAYER_START_SELECTION_KEY, JSON.stringify({
+                    kind: 'user',
+                    id: state.bootStoryId,
+                }));
+            } else {
+                stageEditedHtmlForPlayer();
+            }
         }
         window.location.href = './player.html';
     }, {

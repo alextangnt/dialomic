@@ -14,8 +14,13 @@ const el = {
     newStoryName: document.getElementById('newStoryName'),
     newStoryCancelBtn: document.getElementById('newStoryCancelBtn'),
     newStoryCreateBtn: document.getElementById('newStoryCreateBtn'),
+    editStoryDialog: document.getElementById('editStoryDialog'),
+    editStoryName: document.getElementById('editStoryName'),
+    editStoryCancelBtn: document.getElementById('editStoryCancelBtn'),
+    editStoryCreateBtn: document.getElementById('editStoryCreateBtn'),
     viewStorySelect: document.getElementById('viewStorySelect'),
     importStoryBtn: document.getElementById('importStoryBtn'),
+    editStoryBtn: document.getElementById('editStoryBtn'),
     openPlayerBtn: document.getElementById('openPlayerBtn'),
     importStoryFile: document.getElementById('importStoryFile'),
 };
@@ -89,6 +94,44 @@ function setDialogOpen(open) {
     }
 }
 
+function showEditStoryDialog(defaultName) {
+    return new Promise((resolve) => {
+        if (!el.editStoryDialog || !el.editStoryName || !el.editStoryCancelBtn || !el.editStoryCreateBtn) {
+            resolve(null);
+            return;
+        }
+        el.editStoryDialog.hidden = false;
+        el.editStoryName.value = defaultName;
+        el.editStoryName.focus();
+        el.editStoryName.select();
+        const cleanup = () => {
+            el.editStoryDialog.hidden = true;
+            el.editStoryCancelBtn.removeEventListener('click', onCancel);
+            el.editStoryCreateBtn.removeEventListener('click', onCreate);
+            el.editStoryName.removeEventListener('keydown', onKeyDown);
+            el.editStoryDialog.removeEventListener('pointerdown', onBackdrop);
+        };
+        const onCancel = () => { cleanup(); resolve(null); };
+        const onCreate = () => {
+            const value = String(el.editStoryName.value || '').trim();
+            if (!value) return;
+            cleanup();
+            resolve(value);
+        };
+        const onKeyDown = (event) => {
+            if (event.key === 'Escape') onCancel();
+            if (event.key === 'Enter') onCreate();
+        };
+        const onBackdrop = (event) => {
+            if (event.target === el.editStoryDialog) onCancel();
+        };
+        el.editStoryCancelBtn.addEventListener('click', onCancel);
+        el.editStoryCreateBtn.addEventListener('click', onCreate);
+        el.editStoryName.addEventListener('keydown', onKeyDown);
+        el.editStoryDialog.addEventListener('pointerdown', onBackdrop);
+    });
+}
+
 function populateStorySelect(defaultStories, userStories) {
     if (!el.viewStorySelect) return;
     el.viewStorySelect.innerHTML = '';
@@ -101,7 +144,7 @@ function populateStorySelect(defaultStories, userStories) {
     for (const s of userStories) {
         const opt = document.createElement('option');
         opt.value = `user:${s.id}`;
-        opt.textContent = `${s.name}`;
+        opt.textContent = `Custom: ${s.name}`;
         el.viewStorySelect.appendChild(opt);
     }
 }
@@ -163,6 +206,77 @@ function openPlayerWithSelection(selection, userStories) {
     window.location.href = './player.html';
 }
 
+function nextCustomStoryName(baseName, userStories) {
+    const base = String(baseName || 'Story').trim() || 'Story';
+    const existing = new Set(userStories.map((s) => String(s?.name || '').trim().toLowerCase()));
+    let n = 1;
+    let candidate = `${base} ${n}`;
+    while (existing.has(candidate.toLowerCase())) {
+        n += 1;
+        candidate = `${base} ${n}`;
+    }
+    return candidate;
+}
+
+async function openEditorWithSelection(selection, defaultStories, userStoriesRef) {
+    if (selection === 'imported') {
+        try {
+            const raw = localStorage.getItem(EDITED_STORY_STORAGE_KEY);
+            const parsed = raw ? JSON.parse(raw) : null;
+            const html = String(parsed?.html || '');
+            if (!html.trim()) return;
+            localStorage.setItem(EDITOR_BOOT_STORY_KEY, JSON.stringify({
+                kind: 'imported',
+                html,
+                name: parsed?.name || 'Imported Story.html',
+            }));
+            window.location.href = './visual-editor.html';
+        } catch {
+            // ignore
+        }
+        return;
+    }
+    const [kind, value] = String(selection || '').split(':');
+    if (kind === 'user') {
+        const found = userStoriesRef.find((s) => s.id === value);
+        if (!found) return;
+        localStorage.setItem(EDITOR_BOOT_STORY_KEY, JSON.stringify({
+            kind: 'user',
+            id: found.id,
+            html: found.html,
+            name: `${found.name}.html`,
+        }));
+        window.location.href = './visual-editor.html';
+        return;
+    }
+    const story = defaultStories.find((s) => s.url === value) || defaultStories[0];
+    if (!story?.url) return;
+    const suggested = nextCustomStoryName(story.label || inferStoryLabel(story.url), userStoriesRef);
+    const name = await showEditStoryDialog(suggested);
+    if (!name || !String(name).trim()) return;
+    let html = '';
+    try {
+        const resp = await fetch(story.url);
+        if (!resp.ok) return;
+        html = await resp.text();
+    } catch {
+        return;
+    }
+    const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const customName = String(name).trim();
+    const created = { id, name: customName, html, createdAt: Date.now() };
+    userStoriesRef.push(created);
+    writeUserStories(userStoriesRef);
+    populateStorySelect(defaultStories, userStoriesRef);
+    localStorage.setItem(EDITOR_BOOT_STORY_KEY, JSON.stringify({
+        kind: 'user',
+        id,
+        html,
+        name: `${customName}.html`,
+    }));
+    window.location.href = './visual-editor.html';
+}
+
 async function main() {
     const manifestStories = await loadDefaultStoriesFromManifest();
     const defaultStories = manifestStories.length ? manifestStories : FALLBACK_DEFAULT_STORIES;
@@ -183,6 +297,8 @@ async function main() {
         writeUserStories(userStories);
         populateStorySelect(defaultStories, userStories);
         localStorage.setItem(EDITOR_BOOT_STORY_KEY, JSON.stringify({
+            kind: 'user',
+            id,
             html,
             name: `${name}.html`,
         }));
@@ -196,13 +312,9 @@ async function main() {
         if (event.key === 'Enter') el.newStoryCreateBtn?.click();
     });
 
-    window.addEventListener('pointerdown', (event) => {
-        if (el.newStoryDialog?.hidden) return;
-        const t = event.target;
-        if (!(t instanceof Element)) return;
-        if (t.closest('#newStoryDialog') || t.closest('#newStoryBtn')) return;
-        setDialogOpen(false);
-    }, true);
+    el.newStoryDialog?.addEventListener('pointerdown', (event) => {
+        if (event.target === el.newStoryDialog) setDialogOpen(false);
+    });
 
     setDialogOpen(false);
 
@@ -232,6 +344,13 @@ async function main() {
         const sel = String(el.viewStorySelect?.value || '');
         if (!sel) return;
         openPlayerWithSelection(sel, userStories);
+    });
+
+    el.editStoryBtn?.addEventListener('click', async (event) => {
+        event.preventDefault();
+        const sel = String(el.viewStorySelect?.value || '');
+        if (!sel) return;
+        await openEditorWithSelection(sel, defaultStories, userStories);
     });
 }
 
