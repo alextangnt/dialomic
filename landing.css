@@ -44,11 +44,11 @@ html, body {
 }
 
 .landing-card {
-  background: rgba(10, 12, 18, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: #ffeeb9;
+  border: 2px solid #dfc87d;
   border-radius: 12px;
   padding: 14px;
-  color: #f2f7ff;
+  color: #1a2430;
 }
 
 .landing-card h2 {
@@ -56,19 +56,20 @@ html, body {
   font-size: 0.95rem;
   letter-spacing: 0.03em;
   text-transform: uppercase;
-  color: #ffd493;
+  color: #7a5b1f;
 }
 
 .landing-card p {
   margin: 0;
   font-size: 0.92rem;
-  color: rgba(242, 247, 255, 0.9);
+  color: #44576a;
 }
 
 .landing-actions {
   display: flex;
   gap: 12px;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   margin-top: 2px;
   margin-bottom: 0;
@@ -78,6 +79,7 @@ html, body {
   position: relative;
   display: flex;
   align-items: center;
+  justify-content: center;
 }
 
 .landing-btn {
@@ -159,12 +161,19 @@ html, body {
   min-width: 118px;
 }
 
+#editStoryBtn,
+#openPlayerBtn {
+  min-width: 40px;
+}
+
 #editStoryBtn {
   background: #f3d24d;
   border: 2px solid #b9941f;
-  color: #4b3a07;
-  border-radius: 8px;
-  padding: 6px 12px;
+  color: #000;
+  border-radius: 999px;
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
   height: 40px;
   min-height: 40px;
   box-sizing: border-box;
@@ -179,6 +188,23 @@ html, body {
   transition: transform 120ms ease, box-shadow 120ms ease;
   white-space: nowrap;
   font-family: inherit;
+}
+
+#openPlayerBtn {
+  border-radius: 999px;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+#editStoryBtn {
+  font-size: 19px;
 }
 
 #editStoryBtn:hover {
@@ -287,13 +313,13 @@ html, body {
     width: 100%;
   }
   .story-picker {
-    width: 100%;
-    flex-wrap: wrap;
+    width: min(100%, 680px);
+    flex-wrap: nowrap;
     justify-content: center;
   }
   .story-picker select {
-    min-width: 100%;
-    flex-basis: 100%;
+    min-width: 0;
+    flex: 1 1 180px;
   }
   #newStoryBtn,
   #importStoryBtn,
@@ -301,5 +327,21 @@ html, body {
   #openPlayerBtn {
     width: 118px;
     min-width: 118px;
+  }
+  #editStoryBtn,
+  #openPlayerBtn {
+    width: 40px;
+    min-width: 40px;
+  }
+}
+
+@media (max-width: 560px) {
+  .story-picker {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .story-picker select {
+    min-width: 100%;
+    flex-basis: 100%;
   }
 }

@@ -341,26 +341,49 @@ body.debug-mode .debug-only {
 }
 
 #selectedSkyColorInput {
-  width: 28px;
-  height: 22px;
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 4px !important;
   border: 1px solid #bfa25e;
   background: #fff;
+  box-sizing: border-box;
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  overflow: hidden;
+}
+
+#selectedSkyColorInput::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+#selectedSkyColorInput::-webkit-color-swatch {
+  border: 0;
+  border-radius: 0;
 }
 
 #selectedEnvironmentResetBtn {
-  width: 24px;
-  height: 22px;
-  line-height: 16px;
-  padding: 0;
-  border-radius: 6px;
-  --btn-shadow: #bf6f0e;
+  width: 24px !important;
+  height: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+  max-width: 24px !important;
+  max-height: 24px !important;
+  aspect-ratio: 1 / 1;
+  line-height: 1;
+  padding: 0 !important;
+  border-radius: 999px !important;
+  --btn-shadow: var(--ui-orange-dark);
   background: var(--ui-orange);
   border-color: var(--ui-orange-dark);
   color: #fff;
-  box-shadow: 0 2px 0 var(--ui-orange-dark);
   font-weight: 700;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 24px;
 }
 
 #selectedDeleteModelBtn {
@@ -398,11 +421,17 @@ body.debug-mode .debug-only {
   line-height: 20px;
   padding: 0;
   border-radius: 999px;
+  --btn-shadow: #b6903f;
   background: #fff6d8;
   border-color: #d5b25e;
   color: #5e4a18;
-  box-shadow: 0 2px 0 #b6903f;
   transform: translate(-50%, 0) !important;
+}
+
+.floating-add-speech:hover:not(:disabled),
+.floating-add-speech:focus-visible {
+  box-shadow: 0 4px 0 var(--btn-shadow);
+  border-color: #d5b25e;
 }
 
 .floating-add-speech:hover:not(:disabled),
@@ -648,28 +677,34 @@ body.debug-mode .debug-only {
   line-height: 14px;
   padding: 0;
   border-radius: 999px;
+  --btn-shadow: var(--ui-red-dark);
   background: var(--ui-red);
   border: 2px solid var(--ui-red-dark);
   color: #fff;
-  box-shadow: 0 2px 0 var(--ui-red-dark);
   font-weight: 800;
   font-size: 12px;
   display: none;
   place-items: center;
 }
 
+.panel-speech .speech-remove-btn:hover:not(:disabled),
+.panel-speech .speech-remove-btn:focus-visible {
+  box-shadow: 0 4px 0 var(--btn-shadow);
+  border-color: var(--ui-red-dark);
+}
+
 .floating-delete-model {
   position: static;
   z-index: auto;
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   line-height: 16px;
   padding: 0;
-  border-radius: 6px;
+  border-radius: 999px;
+  --btn-shadow: var(--ui-orange-dark);
   background: var(--ui-orange);
   border-color: var(--ui-orange-dark);
   color: #fff;
-  box-shadow: 0 2px 0 var(--ui-orange-dark);
   font-weight: 700;
   font-size: 15px;
 }
@@ -681,18 +716,18 @@ body.debug-mode .debug-only {
   line-height: 14px;
   padding: 0;
   border-radius: 6px;
+  --btn-shadow: var(--ui-cyan-dark);
   background: var(--ui-cyan);
   border-color: var(--ui-cyan-dark);
   color: #183949;
-  box-shadow: 0 2px 0 var(--ui-cyan-dark);
   font-weight: 700;
   font-size: 13px;
 }
 
 .floating-mode-btn.active {
+  --btn-shadow: var(--ui-cyan-dark);
   background: var(--ui-cyan);
   border-color: var(--ui-cyan-dark);
-  box-shadow: 0 2px 0 var(--ui-cyan-dark);
   color: #183949;
 }
 
@@ -855,7 +890,7 @@ input, select, textarea {
 .floating-save.dirty,
 .floating-save.dirty:hover,
 .floating-save.dirty:active {
-  box-shadow: 0 2px 0 #2b6c8b;
+  box-shadow: 0 2px 0 var(--ui-blue-dark);
 }
 
 #clearSceneBtn {

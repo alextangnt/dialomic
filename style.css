@@ -88,9 +88,9 @@ canvas {
 }
 
 #link-list .link-button {
-    background: rgba(255, 255, 0, 0.85);
+    background: rgba(0, 0, 0, 0.9);
     border: 0;
-    color: #000;
+    color: #fff;
     cursor: pointer;
     font-family: "InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
     font-size: inherit;
@@ -100,19 +100,46 @@ canvas {
     white-space: nowrap;
     position: relative;
     align-self: flex-start;
+    margin-left: 12px;
+    border-radius: 8px;
+    overflow: visible;
+    outline: none;
     transition: background-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 #link-list .link-button.selected {
-    background: rgba(255, 255, 140, 0.95);
-    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.15);
+    background: rgba(56, 56, 56, 0.95);
+    box-shadow: none;
+}
+
+#link-list .link-button::before {
+    content: ">";
+    position: absolute;
+    right: calc(100% + 4px);
+    top: 50%;
+    transform: translateY(-50%);
+    color: #000;
+    font-weight: 900;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+}
+
+#link-list .link-button.selected::before {
+    opacity: 1;
 }
 
 #link-list .link-button::after {
     content: "←";
-    margin-left: 6px;
+    position: absolute;
+    left: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%);
     opacity: 0;
     transition: opacity 0.15s ease;
+}
+
+#link-list .link-button.selected::after {
+    opacity: 1;
 }
 
 #link-list .link-button:hover::after {
@@ -120,8 +147,7 @@ canvas {
 }
 
 #link-list .link-button:hover {
-    background: rgba(255, 255, 170, 1);
-    padding-right: 22px;
+    background: rgba(56, 56, 56, 0.95);
 }
 
 .panel-text {

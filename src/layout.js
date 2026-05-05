@@ -1243,7 +1243,8 @@ class LayoutUI {
     updateLinkLayout() {
         const maxFont = (this.h * 0.8) / Math.max(1, this.links.length);
         this.fontSize = Math.min(22, maxFont);
-        this.bx = this.w / 100;
+        // Match the panel grid's horizontal inset so links align with full-width panels.
+        this.bx = Math.max(8, this.w * 0.02);
         this.bd = this.fontSize * 1.2;
         this.linkGap = Math.max(8, this.fontSize * 0.3);
         const bottomPad = Math.max(48, this.fontSize * 2);

@@ -2,6 +2,7 @@ const EDITED_STORY_STORAGE_KEY = 'DL_IMPORTED_STORY_HTML';
 const EDITOR_BOOT_STORY_KEY = 'DL_VISUAL_EDITOR_BOOT_STORY';
 const PLAYER_START_SELECTION_KEY = 'DL_PLAYER_START_SELECTION';
 const USER_STORIES_STORAGE_KEY = 'DL_USER_STORIES';
+const UPLOAD_SELECT_VALUE = '__upload_story__';
 
 const FALLBACK_DEFAULT_STORIES = [
     { label: 'Template', url: 'defaultstories/template.html' },
@@ -19,7 +20,6 @@ const el = {
     editStoryCancelBtn: document.getElementById('editStoryCancelBtn'),
     editStoryCreateBtn: document.getElementById('editStoryCreateBtn'),
     viewStorySelect: document.getElementById('viewStorySelect'),
-    importStoryBtn: document.getElementById('importStoryBtn'),
     editStoryBtn: document.getElementById('editStoryBtn'),
     openPlayerBtn: document.getElementById('openPlayerBtn'),
     importStoryFile: document.getElementById('importStoryFile'),
@@ -147,6 +147,10 @@ function populateStorySelect(defaultStories, userStories) {
         opt.textContent = `Custom: ${s.name}`;
         el.viewStorySelect.appendChild(opt);
     }
+    const uploadOpt = document.createElement('option');
+    uploadOpt.value = UPLOAD_SELECT_VALUE;
+    uploadOpt.textContent = 'Upload html...';
+    el.viewStorySelect.appendChild(uploadOpt);
 }
 
 function ensureImportedSelectOption(filename = 'Imported Story') {
@@ -282,6 +286,7 @@ async function main() {
     const defaultStories = manifestStories.length ? manifestStories : FALLBACK_DEFAULT_STORIES;
     let userStories = readUserStories();
     populateStorySelect(defaultStories, userStories);
+    let lastNonUploadSelection = String(el.viewStorySelect?.value || '');
 
     el.newStoryBtn?.addEventListener('click', () => setDialogOpen(true));
     el.newStoryCancelBtn?.addEventListener('click', () => setDialogOpen(false));
@@ -329,6 +334,7 @@ async function main() {
             }));
             ensureImportedSelectOption(file.name || 'Imported Story');
             el.viewStorySelect.value = 'imported';
+            lastNonUploadSelection = 'imported';
         } catch (err) {
             console.warn('[landing] failed to import story file', err);
         } finally {
@@ -336,8 +342,15 @@ async function main() {
         }
     });
 
-    el.importStoryBtn?.addEventListener('click', () => {
-        el.importStoryFile?.click();
+    el.viewStorySelect?.addEventListener('change', () => {
+        const sel = String(el.viewStorySelect?.value || '');
+        if (sel === UPLOAD_SELECT_VALUE) {
+            el.importStoryFile?.click();
+            // Keep previous selection until file is chosen.
+            if (el.viewStorySelect) el.viewStorySelect.value = lastNonUploadSelection;
+            return;
+        }
+        if (sel) lastNonUploadSelection = sel;
     });
 
     el.openPlayerBtn?.addEventListener('click', () => {
