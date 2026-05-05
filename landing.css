@@ -129,7 +129,7 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(11, 16, 26, 0.78);
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   width: fit-content;
   max-width: 100%;
@@ -138,8 +138,8 @@ html, body {
 .story-picker select {
   min-height: 40px;
   min-width: 0;
-  width: 100%;
-  flex: 1 1 220px;
+  width: auto;
+  flex: 1 1 260px;
   border-radius: 10px;
   border: 2px solid #1f2b3f;
   background: #1b2433;
@@ -319,7 +319,7 @@ html, body {
   }
   .story-picker select {
     min-width: 0;
-    flex: 1 1 180px;
+    flex: 1 1 160px;
   }
   #newStoryBtn,
   #importStoryBtn,

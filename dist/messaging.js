@@ -108,7 +108,13 @@ function handleViewerMessage(event) {
     if (data.type === 'uiInput') {
         const root = document.querySelector('.passage') || document.body;
         const input = root.querySelector('input, textarea');
-        if (input) input.value = String(data.value ?? '');
+        if (input) {
+            input.value = String(data.value ?? '');
+            // Mirror real typing so SugarCube input macros update bound variables.
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, key: 'Unidentified' }));
+        }
         return;
     }
 

@@ -1,62 +1,105 @@
-This project began because I wanted to make a storytelling tool for artists. I like comics, I like interactive media, I like games and funky little clickable tools, but I’m not very good at making games. I like picking through the capabilities of tools people give me and see how funnily I can make them spin. By making a tool *I* can use, that my friends and I can use, I’m shortcutting the “What do I use to tell my story” step that I always deliberate on.
+![welcome](documentation/welcome.gif)
+## 1. Project Overview
+Dialomic is a browser-based application for creating and playing interactive 3D webcomics using Twine/SugarCube story logic. It combines:
+- A **Player** that runs a story.
+- A **Visual Editor** that lets authors create stories from scratch and edit stories. The author can edit scene composition, dialogue bubbles, narration, and passage content directly.
 
-![Template that translates Twine html (below) into visual “webcomic” format, generating a random three.js box per node](https://miro.medium.com/v2/resize:fit:1280/format:webp/1*jT4NkjpcLR5z5InjlLv8Mg.gif)![Running the text only Twine .html file](https://miro.medium.com/v2/resize:fit:1280/format:webp/1*VyeRhqvG0sk6zif_QAm3fQ.gif)
+The core goal is to keep Twine's narrative and scripting strengths while giving authors a visual scene workflow that does not require rebuilding a custom game engine.
+![gif](documentation/hello.gif)
 
-When I was given access to Twine and told to make a very basic story, I read through a good deal of the Twine Harlowe (default story format) documentation and made a silly randomized project that looped on itself, rather than attempting to tell a good story. Y/N, equipped with a handy pocket-burger, climbs through an eternal construction site and talks to a randomized NPC at every level. The “game” ends when you’ve completed seven loops and have picked up a screw from the ground at every level. I was chuffed at the fact I could code a parametrized “narrative” game like that.
+## 2. Problem and Motivation
+Traditional visual-novel or game pipelines require heavy art and tooling overhead (scene layout, branching UI logic, state management, export/deploy). Twine solves branching narrative and scripting elegantly, but is primarily text-based and requires heavy overhead for visuals.
 
-That’s not to say I don’t like to make good stories. When I’m not working my ass off in my CS cores, I’m usually creating original characters who have wacky stories of their own and live in wide, ironic, contradictory literary worlds that I illustrate. I just often struggle to find a suitable way to Tell these stories. Can I really draw unique cutscenes for every character? Draw every background for a visual novel?...
+This project began because I wanted to make a storytelling tool for artists. I like comics, I like interactive media, I like games and funky little clickable tools, but I’m not very good at making games. I like picking through the capabilities of tools people give me and see how funnily I can make them spin. By making a tool *I* can use, that my friends and I can use, I’m shortcutting the “What do I use to tell my story” step that I always deliberate on. I made Dialomic because I wanted to preserve Twine's simplicity while adding panelized 3D staging and comic-style presentation.
 
-There's something I really love about Twine, and that's how powerful it is, while having an extremely simple base UI. Fully text based stories. So let's start simple: my concept is to make a tool for users to create interactive webcomics.
+This project is heavily inspired by browser-based creation tools, especially those for coding and game prototyping like [Scratch](https://scratch.mit.edu/) and [Bitsy](https://scratch.mit.edu/).
 
-1. I decided to just *use* Twine for narrative/dialogue flow. I want to keep the variables, scripting, conditional logic, etc, of Twine. 
-2. Then, I'll have the user be able to define simple parametrized scenes for each node within their Twine stories. Since I want to go 3D, I'll use THREE.js for this.
-3. From there, there are tons of additional features to be parametrized so that an author can control how their stories look. More scene elements. Animation. UI. You name it.
+![Scratch](documentation/scratch.png)
+![Bitsy](documentation/bitsy.png)
 
-## STEP 1
-### Making Twine work for me
-![Twine app GUI with examples of Twine Sugarcube formatting](https://miro.medium.com/v2/resize:fit:1400/format:webp/1*Rn53v6zbWyNyQWdVDuOqIw.png)![How it compiles into a runnable .html](https://miro.medium.com/v2/resize:fit:1400/format:webp/1*wgPxm19IpxbotVPNq_gZBA.png)![Part of messaging script I attach to that .html file. Controls clicking links, restarts, etc.](https://miro.medium.com/v2/resize:fit:1400/format:webp/1*LzKQ5Z8nhnEezGdbktk_Rg.png)![:passageend is an event that Sugarcube .html files will send out when the passage finishes loading in the iframe](https://miro.medium.com/v2/resize:fit:1400/format:webp/1*SOPT6sAeruWV1j8DzoVHyQ.png)
+[Twine](https://twinery.org/) itself is a huge inspiration as well, obviously. There are also engines like [Ren'Py](https://www.renpy.org/) for visual novels, but they aren't quite as intuitive as Twine, and there's still a ton of overhead if you plan to make custom visuals.
 
-So now, I have code that reads from a headless Sugarcube-compiled .html file as a logic engine, and a p5js file that is sent passages. A click onto this p5js canvas simulates a click into the hidden Sugarcube iframe. It’s clean, it’s stupid, it works.
+Despite the fact that one can tell interactive stories Scratch, Bitsy, or base Twine, I haven't seen one that easily combines Twine's logic and story control engine with 3D visuals, especially on the browser. Crafting 3D scenes directly in the browser with [three.js](https://threejs.org/) allows for a ton of flexibility and iteration in shot and scene composition, as well as procedural animation.
 
-The next step is making something that actually looks nice. I wanted users of my tool to be able to import 3D models + bgs + objects with preset poses that they could procedurally tell, within some Twine code, how to pose and frame themselves within a comic panel. How do I incorporate both 3D and 2D graphics at all? three.js!
+## 3. System Evolution: Text-Only to Visual Editor
+### Initial Text-Based Phase
+I started this process with a fully text-based workflow. I didn't know how powerful three.js was, and thought that making a visual editor would be way too difficult. I also didn't know much about how Twine built .html files using story formats.
 
-My current template generates a random cube + bg color just as a proof of concept (per panel). When you revisit a panel, it shows the same object as before.
+Essentially, I presumed the author would create a Twine story however they felt most comfortable. Through the Twine app, in the browser, or as a .twee file that was built and turned into html. I expected authors to compose each scene fully in text within their passages. See the [text-based documentation](textOnly.md) for more details. Essentially,
+- Authors wrote SugarCube passages.
+- Scene state lived in passage variables (primarily `$DL`).
+- Objects were defined in the scene states as strings. If an object was given a tag, it became a speaker. These strings included model type, as well as the object's position and orientation in the scene. I defined a whole language of string tokens to define an object's "stage placement" in the scene.
+- Dialogue bubbles used `speaker:: line` syntax.
+- A messaging bridge connected a hidden Twine runtime iframe to Dialomic's rendering layer.
+- Paragraphs are split on blank lines, meaning each individual paragraph will be parsed for "speaker" or "narration".
+- Everything after `%%%` is ignored by the scene/narration parser, so choice text doesn't get included in narration.
 
-Next, after importing some very simple placeholder 3d models and objects and scenes, I will be integrating scene composition based on variables users set in Twine. I already can access variables as soon as they are updated per node.
+Example passage block:
+```twine
+<<set $DL = {
+  objects: [
+    "rat1= RAT VERYNEAR FARLEFT LOOKFRONT",
+    "rat2= RAT MID FARRIGHT LOOKFRONT",
+    "RAT NEAR CENTER LOOKLEFT"
+  ],
+  background: "bus stop"
+}>>
 
-## STEP 2
-### Set the scene
+rat1:: This is a speaker line that will become a speech bubble.
 
-While I would love for rigged models to be imported into scenes, then placed in neat environments with total control over lighting and camera and whatnot, I decided to scale down my prototype into something simple for a user to control.
+This is narration (plain passage text).
+%%%
+[[Choice A|Some Passage]]
+[[Choice B|Other Passage]]
+```
+![Old format](documentation/dialomic_3dscene.gif)
 
-![Array of rats! In every specified location!](documentation/rats.png)
+In this model, Twine drives logic and stores variables, Dialomic renders panels based on those variables.
 
-I'll be using David OReilly's everything models for now. [Animals](https://davidoreilly.itch.io/everything-library-animals)! They make great, lowpoly building blocks for simple to complex iconographic stories.
+### Transition to Visual Editing
+As scene complexity grew (camera, model transforms, backgrounds, bubble placement, multi-panel layout), raw text editing became error-prone and harder to maintain. Also, I wanted to create my own stories the system I had created, but the positioning system would have been too limiting for the shots I wanted to compose in a more serious story.
 
-![Examples of the positioning notation and syntax](documentation/ratsandcow.png)
+As it stands, Dialomic's strengths are in it's lego-like, low-poly simplistic models that work as default sprites. However, I wanted to be able to use my own models and position them more freely in the future. As such, I developed a visual editor attached to the web player to manually edit 3d scenes directly in the browser.
 
-Given just a few common animals and my positioning syntax, I imagine users will be still able to tell a wide variety of fable-like stories, along with whatever they may want to tell. For now, I hope this limitation allows users to have fun and be creative without being too nitpicky about what is shown onscreen.
+![editor](documentation/editor.gif)
+![editor](documentation/editor2.gif)
 
-### STEP 2.5
-Publishing to the web and an interface overhaul!
+The Visual Editor was introduced to:
+- Select passages and edit scene state directly in 3D.
+- Edit narration/speech/choices with immediate preview context.
+- Keep passage text and scene preview synchronized.
+- Support save/revert flows and safer mutation paths for story content.
 
-![New UI. Includes restart button and a file import](documentation/ui.png)
-
-This next step is about how I want to present my tool to the user. After some research and consultation from Codex, it turns out I can't compile Twine's .twee native files into Sugarcube HTML files in the browser, because [Tweego](https://www.motoslave.net/tweego/) is a CLI. This just means that the user has to import an already compiled .html file from the app, which is just an additional step. 
-
-![Imported file working!](documentation/imported.png)
-
-Nonetheless, I added a UI bar at the top of Dialomic for users to import their own .html stories to run instead of my default tutorialish file!
-
-Finally, I published the file on Github pages here: https://alextangnt.github.io/dialomic/
-
-This was done with lots of help from Codex, because I had no idea how to set up a Github workflow, nor how to do Vite development with a to make a start script that will modify input files and delete them.
+In the end, I have a hybrid workflow where authors can still inspect and edit the text-based data structures, but the mundanity of scene composition happens in the editor. It works like most 3d editors in Blender, Maya, Unity, etc. Core features include:
+- Model and background gizmos to position, scale, and rotate
+- Buttons to add and delete models
+- UI to add, edit, and delete speech bubbles
+- Natural camera positioning
 
 
-## NEXT STEPS
+### Scene Contract (`$DL`)
+In the current stage, the data structure for a scene is still called $DL. This is essentially a .json that stores all the necessary information to recreate the scene.
 
-* Get some speech bubbles in there! Handle overlap and layering logic! Figure out who's saying what.
-* Import some background presets to use.
-* Procedural animation in panels?
+Common keys include:
+- `objects`
+- `background`
+- `skyColor`
+- `camera`
+- `config` (panel stacking/grid/aspect behavior)
 
-![Speech bubbles and speaker animations](documentation/dialomic_animatedwithdialogue.gif)
+Since the scene is still stored as text, and is live updated through both text editor changes and 3d scene updates, scenes can be copied from passage to passage!
+
+## 4. The Future of Dialomic
+Here's a sample game by Katherine Wang, (slightly edited for display)
+![Guessing game by Katherine Wang](documentation/guessinggame.gif)
+This example shows multiple panels stacking for some pages, and solo panels for other pages. Panel layout control is one of the things I definitely want authors to be able to play with.
+![Scrolling](documentation/scroll.gif)
+I recently added the ability to scroll through the history of the story while playing. Currently, it's a bit hard to see what's happening, but each previous page of panels using those historical states re-displays in order.
+
+There is no limit to the features I want to add, even at this current stage and release. Some of these features may require a major rework of my general editor layout, which can definitely be a bit of a pain.
+- Manual bubble layout!
+- Custom fonts and speech bubble customization
+- Interactive choice editor and creation
+- Renaming stories, renaming passages
+- Importing custom models
+- More default animations, as well as the ability to add custom animation clips. Rigged models!?

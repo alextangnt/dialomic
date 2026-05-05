@@ -1771,7 +1771,7 @@ function applyCurrentPassageBody(nextBody, { applyScene = true, markSceneDirty =
     }
     refreshDraftFromPassageBody();
     if (applyScene) applySceneFromBodyLive(next, { ignoreCamera: true });
-    renderPreviewLinks(parseLinkLabels(next));
+    renderPreviewLinksFromBody(next);
     if (markSceneDirty) setSceneDirty(true);
     return true;
 }
@@ -2111,7 +2111,7 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         };
         field.__dispose = () => view.destroy();
         sync();
-        return { field, sync };
+        return { field, sync, getValue: () => view.state.doc.toString() };
     };
     const taField = makeCodeField(ta);
     ta.__codeField = taField;
@@ -2190,12 +2190,35 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         const active = activeTab === 'text' ? ta : (activeTab === 'scene' ? (sceneTa || ta) : (choicesTa || ta));
         const isSpeechEditor = wrapper.classList.contains('speech-inline-editor');
         const fixed = Math.max(180, Math.floor(window.innerHeight * 0.55));
+        if (isSpeechEditor) {
+            const value = String(active?.value || '');
+            const words = value.split(/\s+/).filter(Boolean);
+            const longest = words.reduce((best, w) => (w.length > best.length ? w : best), '');
+            const measure = document.createElement('span');
+            measure.style.position = 'fixed';
+            measure.style.visibility = 'hidden';
+            measure.style.pointerEvents = 'none';
+            measure.style.whiteSpace = 'pre';
+            measure.style.fontFamily = '"InconsolataLocal", "Inconsolata", Menlo, Monaco, Consolas, "Liberation Mono", monospace';
+            measure.style.fontSize = '12px';
+            measure.textContent = longest || ' ';
+            document.body.appendChild(measure);
+            const wordW = Math.ceil(measure.getBoundingClientRect().width);
+            measure.remove();
+            const minW = Math.max(220, Math.round(rect.width));
+            const maxW = Math.max(minW, Math.floor(window.innerWidth * 0.72));
+            const targetW = Math.max(minW, Math.min(maxW, wordW + 84));
+            wrapper.style.width = `${targetW}px`;
+        }
         if (active?.__codeField?.field) {
             let nextHeight = fixed;
             if (isSpeechEditor) {
+                const docText = String(active.value || '');
+                const explicitLines = Math.max(1, docText.split('\n').length);
                 const cmContent = active.__codeField.field.querySelector('.cm-content');
-                const contentH = Math.ceil(cmContent?.scrollHeight || 0);
-                const padded = contentH > 0 ? contentH + 20 : 64;
+                const computed = cmContent ? window.getComputedStyle(cmContent) : null;
+                const linePx = Math.max(14, Math.round(parseFloat(computed?.lineHeight || '18') || 18));
+                const padded = Math.round(explicitLines * linePx + 22);
                 nextHeight = Math.max(64, Math.min(Math.floor(window.innerHeight * 0.5), padded));
             }
             active.__codeField.field.style.height = `${nextHeight}px`;
@@ -2249,20 +2272,23 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         options.onLiveText(textVal);
     };
     const getCompositeValue = () => {
+        const textValueNow = ta?.__codeField?.getValue ? ta.__codeField.getValue() : ta.value;
+        const sceneValueNow = sceneTa?.__codeField?.getValue ? sceneTa.__codeField.getValue() : (sceneTa ? sceneTa.value : '');
+        const choicesValueNow = choicesTa?.__codeField?.getValue ? choicesTa.__codeField.getValue() : (choicesTa ? choicesTa.value : '');
         let val;
         if (typeof options.composeValue === 'function') {
             val = options.composeValue({
-                textValue: ta.value,
-                sceneValue: sceneTa ? sceneTa.value : '',
-                choicesValue: choicesTa ? choicesTa.value : '',
+                textValue: textValueNow,
+                sceneValue: sceneValueNow,
+                choicesValue: choicesValueNow,
             });
         } else {
-            val = ta.value;
+            val = textValueNow;
             if (sceneTa && typeof options.onSceneChange === 'function') {
-                val = options.onSceneChange(sceneTa.value, val);
+                val = options.onSceneChange(sceneValueNow, val);
             }
             if (choicesTa && typeof options.onChoicesChange === 'function') {
-                val = options.onChoicesChange(choicesTa.value, val);
+                val = options.onChoicesChange(choicesValueNow, val);
             }
         }
         return val;
@@ -2278,9 +2304,28 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
         }
     };
     const commit = () => {
+        ta?.__codeField?.sync?.();
+        sceneTa?.__codeField?.sync?.();
+        choicesTa?.__codeField?.sync?.();
+        const textValueNow = ta?.__codeField?.getValue ? ta.__codeField.getValue() : ta.value;
+        const sceneValueNow = sceneTa?.__codeField?.getValue ? sceneTa.__codeField.getValue() : (sceneTa ? sceneTa.value : '');
+        const choicesValueNow = choicesTa?.__codeField?.getValue ? choicesTa.__codeField.getValue() : (choicesTa ? choicesTa.value : '');
         const val = getCompositeValue();
         cleanup();
-        onCommit(val);
+        onCommit(val, {
+            textValue: textValueNow,
+            sceneValue: sceneValueNow,
+            choicesValue: choicesValueNow,
+            activeTab,
+        });
+        const passage = state.passages[state.selected];
+        if (passage) {
+            const currentBody = String(passage.body || '');
+            refreshDraftFromPassageBody();
+            updatePanelFromTextDraft();
+            applySceneFromBodyLive(currentBody, { ignoreCamera: true });
+            renderPreviewLinksFromBody(currentBody);
+        }
         state.panel?.setTxt?.(draftNarrationHtmlForPanel());
         state.panel?.updateNarrationTarget?.();
         state.panel?.syncNarrationBackground?.();
@@ -2291,6 +2336,8 @@ function openInlineTextEditor(hostEl, getValue, onCommit, options = {}) {
     const cancel = () => {
         cleanup();
         if (typeof options.onCancel === 'function') options.onCancel();
+        const passage = state.passages[state.selected];
+        if (passage) renderPreviewLinksFromBody(String(passage.body || ''));
         // Always restore inline bubble editing hooks after editor exit.
         wireInlineTextEditors();
         refreshSpeechBubbleDeleteButtons();
@@ -2370,6 +2417,7 @@ function openNarrationTabbedEditor(hostEl) {
                 updatePanelFromTextDraft();
                 setTextDirty(true);
                 saveSceneTransformsToPassage();
+                renderPreview();
             },
             {
                 doneLabel: 'Save',
@@ -2384,46 +2432,70 @@ function openNarrationTabbedEditor(hostEl) {
     openInlineTextEditor(
         hostEl,
         () => textRaw,
-        (val) => {
-            const nextRaw = normalizeChoiceDivider(String(val || ''));
+        (val, meta = {}) => {
+            const textValue = Object.prototype.hasOwnProperty.call(meta, 'textValue') ? String(meta.textValue || '') : extractTextLines(String(val || ''));
+            const sceneValue = Object.prototype.hasOwnProperty.call(meta, 'sceneValue') ? String(meta.sceneValue || '') : extractSceneLines(String(val || ''));
+            const choicesValue = Object.prototype.hasOwnProperty.call(meta, 'choicesValue') ? String(meta.choicesValue || '') : extractChoiceLines(String(val || ''));
+            let nextRaw = String(p.body || '');
+            nextRaw = mergeLinesAtIndices(
+                nextRaw,
+                getTextLineIndices(nextRaw),
+                textValue,
+                'top',
+                true
+            );
+            nextRaw = mergeLinesAtIndices(
+                nextRaw,
+                getSceneLineIndices(nextRaw),
+                sceneValue,
+                'top'
+            );
+            nextRaw = mergeLinesAtIndices(
+                nextRaw,
+                getChoiceLineIndices(nextRaw),
+                choicesValue,
+                'bottom'
+            );
+            nextRaw = normalizeChoiceDivider(nextRaw);
             const validScene = validateDlMacroInPassage(nextRaw, state.vars);
             if (!validScene.ok) {
                 p.body = initialRaw;
                 if (el.passageBody) el.passageBody.value = initialRaw;
                 refreshDraftFromPassageBody();
                 updatePanelFromTextDraft();
-                renderPreviewLinks(parseLinkLabels(initialRaw));
+                renderPreviewLinksFromBody(initialRaw);
                 setStatus(`Scene update canceled: ${validScene.error}`);
                 return;
             }
             const prevRaw = String(p.body || '');
             const sceneChanged = extractSceneLines(nextRaw) !== extractSceneLines(prevRaw);
+            const choicesChanged = extractChoiceLines(nextRaw) !== extractChoiceLines(prevRaw);
             const cameraChanged = didCameraSpecChange(prevRaw, nextRaw);
-            if (nextRaw !== prevRaw) {
+            const bodyChanged = nextRaw !== prevRaw;
+            if (bodyChanged) {
                 logBodyDiff(prevRaw, nextRaw, `narration-tabs:${p.name || state.selected}`);
-                p.body = nextRaw;
-                if (el.passageBody) el.passageBody.value = nextRaw;
-                refreshDraftFromPassageBody();
-                updatePanelFromTextDraft();
-                renderPreviewLinks(parseLinkLabels(p.body || ''));
                 setTextDirty(true);
             }
-            // Always apply live scene on commit (click-off) so scene tab edits
-            // propagate even if the text body was already updated by live input.
-            applySceneFromBodyLive(nextRaw, { ignoreCamera: !cameraChanged });
+            p.body = nextRaw;
+            if (el.passageBody) el.passageBody.value = nextRaw;
             refreshDraftFromPassageBody();
             updatePanelFromTextDraft();
-            state.panel?.updateNarrationTarget?.();
-            state.panel?.syncNarrationBackground?.();
-            if (sceneChanged) {
-                state.panel?.positionSpeechBubbles?.();
+            renderPreviewLinksFromBody(nextRaw);
+            // Rebuild preview from committed body to keep scene/models/choices in sync.
+            renderPreview();
+            if (sceneChanged || cameraChanged) {
+                setSceneDirty(true);
             }
+            if (choicesChanged) {
+                setTextDirty(true);
+            }
+            persistVisualEditorState();
         },
         {
             sceneMacro: sceneRaw,
             choicesRaw,
             composeValue: ({ textValue, sceneValue, choicesValue }) => {
-                let nextRaw = String(raw || '');
+                let nextRaw = String(p.body || raw || '');
                 nextRaw = mergeLinesAtIndices(
                     nextRaw,
                     getTextLineIndices(nextRaw),
@@ -2468,7 +2540,7 @@ function openNarrationTabbedEditor(hostEl) {
                 refreshDraftFromPassageBody();
                 updatePanelFromTextDraft();
                 applySceneFromBodyLive(initialRaw, { ignoreCamera: !cameraChanged });
-                renderPreviewLinks(parseLinkLabels(initialRaw));
+                renderPreviewLinksFromBody(initialRaw);
             },
             // Commit-only update mode: apply to scene only when exiting editor.
         }
@@ -2623,7 +2695,7 @@ function refreshCurrentPanelTextAndBubbles() {
     if (!p || !state.panel) return;
     updatePanelFromTextDraft();
     syncDraftIntoPassageBody();
-    renderPreviewLinks(parseLinkLabels(p.body));
+    renderPreviewLinksFromBody(p.body);
     wireInlineTextEditors();
     refreshSpeechBubbleDeleteButtons();
 }
@@ -2676,11 +2748,9 @@ function parseSpeakerBlocks(text, sceneObjects, format, options = {}) {
 function parseLinkLabels(text) {
     const source = String(text || '');
     const labels = [];
-    const seen = new Set();
     const pushLabel = (label) => {
         const trimmed = String(label || '').trim();
-        if (!trimmed || seen.has(trimmed)) return;
-        seen.add(trimmed);
+        if (!trimmed) return;
         labels.push(trimmed);
     };
     const re = /\[\[([\s\S]*?)\]\]/g;
@@ -2762,7 +2832,7 @@ function updateCurrentPassageEnvironment({ backgroundName, skyColor }) {
     state.selectedModelKey = BACKGROUND_KEY;
     state.pendingSelectionKey = BACKGROUND_KEY;
     applySceneFromBodyLive(nextBody, { ignoreCamera: true });
-    renderPreviewLinks(parseLinkLabels(nextBody));
+    renderPreviewLinksFromBody(nextBody);
     refreshSelectedModelBadge();
     refreshFloatingDeleteButton();
 }
@@ -2960,6 +3030,10 @@ function renderPreviewLinks(labels) {
         btn.style.whiteSpace = 'normal';
         el.links.appendChild(btn);
     }
+}
+
+function renderPreviewLinksFromBody(body) {
+    renderPreviewLinks(parseLinkLabels(String(body || '')));
 }
 
 function splitAssignments(source) {
@@ -3301,7 +3375,7 @@ function syncCurrentSceneSnapshotToPassageBody() {
         state.activeInlineEditor.setSceneText(extractSceneLines(nextBody), { applyLive: false });
     }
     refreshDraftFromPassageBody();
-    renderPreviewLinks(parseLinkLabels(nextBody));
+    renderPreviewLinksFromBody(nextBody);
     persistVisualEditorState();
     return true;
 }
@@ -3860,7 +3934,7 @@ el.saveCameraBtn?.addEventListener('click', () => {
             }
             refreshDraftFromPassageBody();
             updatePanelFromTextDraft();
-            renderPreviewLinks(parseLinkLabels(nextBody));
+            renderPreviewLinksFromBody(nextBody);
             persistVisualEditorState();
         }
     }
@@ -4100,7 +4174,7 @@ el.revertSceneBtn?.addEventListener('click', () => {
     refreshDraftFromPassageBody();
     updatePanelFromTextDraft();
     applySceneFromBodyLive(stable, { ignoreCamera: true });
-    renderPreviewLinks(parseLinkLabels(stable));
+    renderPreviewLinksFromBody(stable);
     setTextDirty(false);
     setSceneDirty(false);
     persistVisualEditorState();

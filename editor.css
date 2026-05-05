@@ -553,6 +553,7 @@ body.debug-mode .debug-only {
   border-radius: 6px;
   overflow: hidden;
   max-height: 55vh;
+  width: 100%;
 }
 
 .inline-cm-editor,
@@ -569,7 +570,8 @@ body.debug-mode .debug-only {
 }
 
 .inline-cm-editor .cm-scroller {
-  overflow: auto;
+  overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
   line-height: 16px;
 }

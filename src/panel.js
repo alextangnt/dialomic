@@ -229,6 +229,7 @@ export class ThreeScene {
         let models = []
         this.models = models;
         this.modelByKey = new Map();
+        this.pendingModelLoads = new Map();
         this.maxRadius = 0.5;
         this.repulsion = {
             enabled: false,
@@ -832,6 +833,9 @@ export class ThreeScene {
     removeEditableModelByKey(key) {
         const norm = String(key || '').toLowerCase();
         if (!norm) return false;
+        if (this.pendingModelLoads.has(norm)) {
+            this.pendingModelLoads.delete(norm);
+        }
         const model = this.modelByKey.get(norm);
         if (!model) return false;
         if (this.editorTransformControls?.object === model) {
@@ -859,6 +863,31 @@ export class ThreeScene {
         }
         if (this.editorOnChange) this.editorOnChange();
         return true;
+    }
+
+    hasPendingModelLoad(key) {
+        const norm = String(key || '').toLowerCase();
+        return Boolean(norm && this.pendingModelLoads.has(norm));
+    }
+
+    getPendingModelSignature(key) {
+        const norm = String(key || '').toLowerCase();
+        if (!norm) return '';
+        return String(this.pendingModelLoads.get(norm)?.signature || '');
+    }
+
+    disposeModelResources(model) {
+        model?.traverse?.((child) => {
+            if (!child?.isMesh) return;
+            if (child.geometry) child.geometry.dispose();
+            if (child.material) {
+                if (Array.isArray(child.material)) {
+                    child.material.forEach((m) => m?.dispose?.());
+                } else {
+                    child.material.dispose?.();
+                }
+            }
+        });
     }
 
     revertEditableModelTransformByKey(key) {
@@ -970,9 +999,41 @@ export class ThreeScene {
             }
             return modelKey || null;
         })();
+        const loadSignature = JSON.stringify({
+            filename,
+            sourceId: sourceId || null,
+            spec: specString || '',
+            position: explicitPosition ? [explicitPosition.x, explicitPosition.y, explicitPosition.z] : null,
+            rotation: explicitRotation ? [explicitRotation.x, explicitRotation.y, explicitRotation.z] : null,
+            scale: explicitScale ? [explicitScale.x, explicitScale.y, explicitScale.z] : null,
+            dist: Number.isFinite(dist) ? dist : null,
+            distName: distName || null,
+            locKey: locKey || null,
+            angle: Number.isFinite(angle) ? angle : null,
+        });
+        if (modelKey) {
+            const pending = this.pendingModelLoads.get(modelKey);
+            if (pending?.signature === loadSignature) {
+                return;
+            }
+        }
+        const loadTicket = Symbol(`model-load:${modelKey || 'anon'}`);
+        if (modelKey) {
+            this.pendingModelLoads.set(modelKey, { ticket: loadTicket, signature: loadSignature });
+        }
         this.pendingShotModels += 1;
         this.mouseTiltReady = false;
         loader.load( filename, ( gltf ) => {
+            if (modelKey) {
+                const pending = this.pendingModelLoads.get(modelKey);
+                if (!pending || pending.ticket !== loadTicket) {
+                    this.pendingShotModels = Math.max(0, this.pendingShotModels - 1);
+                    if (this.pendingShotModels === 0) this.mouseTiltReady = true;
+                    this.disposeModelResources(gltf?.scene);
+                    return;
+                }
+                this.pendingModelLoads.delete(modelKey);
+            }
             let model = gltf.scene;
             scene.add( model );
             model.scale.set(1,1,1);
@@ -1047,11 +1108,19 @@ export class ThreeScene {
                 this.enableEditorTools(pending);
             }
 
-        }, undefined, function ( error ) {
-
-            console.error( error );
-
-        } );
+        }, undefined, (error) => {
+            if (modelKey) {
+                const pending = this.pendingModelLoads.get(modelKey);
+                if (pending?.ticket === loadTicket) {
+                    this.pendingModelLoads.delete(modelKey);
+                }
+            }
+            this.pendingShotModels = Math.max(0, this.pendingShotModels - 1);
+            if (this.pendingShotModels === 0) {
+                this.mouseTiltReady = true;
+            }
+            console.error(error);
+        });
     }
 
     setBackground(backgroundSpec) {

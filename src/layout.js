@@ -33,6 +33,10 @@ function isStoryInitPayload(info) {
     return String(info?.psgName || '').trim().toLowerCase() === 'storyinit';
 }
 
+function getIframeTargetOrigin() {
+    return iframe?.getAttribute('srcdoc') ? '*' : window.location.origin;
+}
+
 
 window.onload = () =>{
     iframe = document.getElementById("logicEngine");
@@ -602,8 +606,14 @@ window.onload = () =>{
                     const defaultName = nextCustomStoryName(selectedLabel);
                     const storyName = await showNewCustomStoryDialog(defaultName);
                     if (!storyName) return;
-                    const html = String(payload.html || '');
-                    if (!html.trim()) return;
+                    let html = String(payload.html || '');
+                    if (!html.trim() && payload.url) {
+                        html = String(await fetchDefaultStoryHtml(payload.url) || '');
+                    }
+                    if (!html.trim()) {
+                        if (statusEl) statusEl.textContent = 'Unable to create story: source story HTML unavailable';
+                        return;
+                    }
                     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                     const story = { id, name: storyName, html, createdAt: Date.now() };
                     userStories = [...userStories, story];
@@ -1299,7 +1309,7 @@ class LayoutUI {
 
     restartStory() {
         if (!loaded) return;
-        iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, window.location.origin);
+        iframe.contentWindow.postMessage({ type: 'start' , passage: this.psgName}, getIframeTargetOrigin());
         const uniquePanels = new Set([
             ...Object.values(this.panels || {}),
             ...Object.values(this.panelsOnscreen || {}),
@@ -1756,7 +1766,7 @@ class LayoutUI {
         if (!loaded) return;
         iframe.contentWindow.postMessage(
             { type: 'uiInput', value: String(value ?? '') },
-            window.location.origin
+            getIframeTargetOrigin()
         );
     }
 
@@ -1764,7 +1774,7 @@ class LayoutUI {
         if (!loaded) return;
         iframe.contentWindow.postMessage(
             { type: 'uiButton' },
-            window.location.origin
+            getIframeTargetOrigin()
         );
     }
 
@@ -2014,7 +2024,7 @@ class LayoutUI {
         if (loaded) {
             iframe.contentWindow.postMessage(
                 { type: 'click', clicked: this.clicked, sessionId: activeSessionId },
-                window.location.origin
+                getIframeTargetOrigin()
             );
         }
     }
