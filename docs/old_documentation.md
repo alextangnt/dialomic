@@ -29,22 +29,22 @@ Next, after importing some very simple placeholder 3d models and objects and sce
 
 While I would love for rigged models to be imported into scenes, then placed in neat environments with total control over lighting and camera and whatnot, I decided to scale down my prototype into something simple for a user to control.
 
-![Array of rats! In every specified location!](documentation/rats.png)
+![Array of rats! In every specified location!](../documentation/rats.png)
 
 I'll be using David OReilly's everything models for now. [Animals](https://davidoreilly.itch.io/everything-library-animals)! They make great, lowpoly building blocks for simple to complex iconographic stories.
 
-![Examples of the positioning notation and syntax](documentation/ratsandcow.png)
+![Examples of the positioning notation and syntax](../documentation/ratsandcow.png)
 
 Given just a few common animals and my positioning syntax, I imagine users will be still able to tell a wide variety of fable-like stories, along with whatever they may want to tell. For now, I hope this limitation allows users to have fun and be creative without being too nitpicky about what is shown onscreen.
 
 ### STEP 2.5
 Publishing to the web and an interface overhaul!
 
-![New UI. Includes restart button and a file import](documentation/ui.png)
+![New UI. Includes restart button and a file import](../documentation/ui.png)
 
 This next step is about how I want to present my tool to the user. After some research and consultation from Codex, it turns out I can't compile Twine's .twee native files into Sugarcube HTML files in the browser, because [Tweego](https://www.motoslave.net/tweego/) is a CLI. This just means that the user has to import an already compiled .html file from the app, which is just an additional step. 
 
-![Imported file working!](documentation/imported.png)
+![Imported file working!](../documentation/imported.png)
 
 Nonetheless, I added a UI bar at the top of Dialomic for users to import their own .html stories to run instead of my default tutorialish file!
 
@@ -59,7 +59,7 @@ This was done with lots of help from Codex, because I had no idea how to set up 
 * Import some background presets to use.
 * Procedural animation in panels?
 
-![Speech bubbles and speaker animations](documentation/dialomic_animatedwithdialogue.gif)
+![Speech bubbles and speaker animations](../documentation/dialomic_animatedwithdialogue.gif)
 
 
 ## 4. Current Architecture (High Level)

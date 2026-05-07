@@ -28,7 +28,7 @@ Dialomic turns Twine stories into interactive webcomics with animated 3D panels,
 
 Visit the [Dialomic web player](https://alextangnt.github.io/dialomic/) for a sample story and to play your stories!
 
-See `CHANGELOG.md` for a running list of new features.
+See `docs/CHANGELOG.md` for a running list of new features.
 
 ### Getting Started
 1. Download the [Twine desktop app or use the online editor](https://twinery.org/).
@@ -273,4 +273,4 @@ References:
 - Twine: https://twinery.org/
 - SugarCube documentation: https://www.motoslave.net/sugarcube/2/
 - SugarCube macro reference: https://www.motoslave.net/sugarcube/2/docs/
-- [Model Attribution](ModelAttribution.md)
+- [Model Attribution](docs/ModelAttribution.md)

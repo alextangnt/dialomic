@@ -8,14 +8,14 @@ See `CHANGELOG.md` for a running list of new features.
 ### Getting Started
 1. Download the [Twine desktop app or use the online editor](https://twinery.org/).
 2. Make a new story.
-![New Story](documentation/newstory.png)
+![New Story](../documentation/newstory.png)
 3. Go to `Story>Details>Story Format`, change the format to `SugarCube 2.37.3`.
-![SugarCube Format](documentation/sugarcube.png)
+![SugarCube Format](../documentation/sugarcube.png)
 4. Set up your scene, speech bubbles, and choices! (See below)
 5. When finished, export a .html file in `Build>Publish to File`
-![Export](documentation/export.png)
+![Export](../documentation/export.png)
 6. To preview your story, visit the [Dialomic web player](https://alextangnt.github.io/dialomic/) and upload your file at the top! Make edits to your Twine story as needed. Happy comicing!
-![Preview](documentation/preview.png)
+![Preview](../documentation/preview.png)
 (This is a different story from the screenshot above)
 
 ## Passage Formatting
@@ -96,7 +96,7 @@ This text is Twine narration or dialogue text of your choice combined with custo
 
 Both of the above formats produce this result.
 
-![Dialogue example](documentation/dialogue.gif)
+![Dialogue example](../documentation/dialogue.gif)
 
 
 #### Object Spec String Format
@@ -110,7 +110,7 @@ Accepted tokens:
 - Location: `FARLEFT`, `LEFT`, `CENTER`, `RIGHT`, `FARRIGHT`
 - Facing: `LOOKLEFT`, `LOOKFRONT`, `LOOKRIGHT`, `LOOKBACK`
 
-![Model Placements](documentation/locations.png)
+![Model Placements](../documentation/locations.png)
 
 #### Accepted Model Tokens (Animals)
 Use the model name as the first token. These map to `.glb` files in `public/assets/animals/`. As of now, authors have access to:

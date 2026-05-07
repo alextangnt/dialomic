@@ -1,12 +1,12 @@
 [Try Dialomic here!](https://alextangnt.github.io/dialomic/)
-![welcome](documentation/welcome.gif)
+![welcome](../documentation/welcome.gif)
 ## 1. Project Overview
 Dialomic is a browser-based application for creating and playing interactive 3D webcomics using Twine/SugarCube story logic. It combines:
 - A **Player** that runs a story.
 - A **Visual Editor** that lets authors create stories from scratch and edit stories. The author can edit scene composition, dialogue bubbles, narration, and passage content directly.
 
 The core goal is to keep Twine's narrative and scripting strengths while giving authors a visual scene workflow that does not require rebuilding a custom game engine.
-![gif](documentation/hello.gif)
+![gif](../documentation/hello.gif)
 
 ## 2. Problem and Motivation
 Traditional visual-novel or game pipelines require heavy art and tooling overhead (scene layout, branching UI logic, state management, export/deploy). Twine solves branching narrative and scripting elegantly, but is primarily text-based and requires heavy overhead for visuals.
@@ -15,8 +15,8 @@ This project began because I wanted to make a storytelling tool for artists. I l
 
 This project is heavily inspired by browser-based creation tools, especially those for coding and game prototyping like [Scratch](https://scratch.mit.edu/) and [Bitsy](https://scratch.mit.edu/).
 
-![Scratch](documentation/scratch.png)
-![Bitsy](documentation/bitsy.png)
+![Scratch](../documentation/scratch.png)
+![Bitsy](../documentation/bitsy.png)
 
 [Twine](https://twinery.org/) itself is a huge inspiration as well, obviously. There are also engines like [Ren'Py](https://www.renpy.org/) for visual novels, but they aren't quite as intuitive as Twine, and there's still a ton of overhead if you plan to make custom visuals.
 
@@ -50,7 +50,7 @@ This is narration (plain passage text).
 [[Choice A|Some Passage]]
 [[Choice B|Other Passage]]
 ```
-![Old format](documentation/dialomic_3dscene.gif)
+![Old format](../documentation/dialomic_3dscene.gif)
 
 In this model, Twine drives logic and stores variables, Dialomic renders panels based on those variables.
 
@@ -65,8 +65,8 @@ As scene complexity grew (camera, model transforms, backgrounds, bubble placemen
 
 As it stands, Dialomic's strengths are in it's lego-like, low-poly simplistic models that work as default sprites. However, I wanted to be able to use my own models and position them more freely in the future. As such, I developed a visual editor attached to the web player to manually edit 3d scenes directly in the browser.
 
-![editor](documentation/editor.gif)
-![editor](documentation/editor2.gif)
+![editor](../documentation/editor.gif)
+![editor](../documentation/editor2.gif)
 
 The Visual Editor was introduced to:
 - Select passages and edit scene state directly in 3D.
@@ -95,9 +95,9 @@ Since the scene is still stored as text, and is live updated through both text e
 
 ## 4. The Future of Dialomic
 Here's a sample game by Katherine Wang, (slightly edited for display)
-![Guessing game by Katherine Wang](documentation/guessinggame.gif)
+![Guessing game by Katherine Wang](../documentation/guessinggame.gif)
 This example shows multiple panels stacking for some pages, and solo panels for other pages. Panel layout control is one of the things I definitely want authors to be able to play with.
-![Scrolling](documentation/scroll.gif)
+![Scrolling](../documentation/scroll.gif)
 I recently added the ability to scroll through the history of the story while playing. Currently, it's a bit hard to see what's happening, but each previous page of panels using those historical states re-displays in order.
 
 There is no limit to the features I want to add, even at this current stage and release. Some of these features may require a major rework of my general editor layout, which can definitely be a bit of a pain.
