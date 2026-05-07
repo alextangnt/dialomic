@@ -1,34 +1,89 @@
 # Dialomic
-
+[Try Dialomic here!](https://alextangnt.github.io/dialomic/)
+![welcome](documentation/welcome.gif)
 ## Dialomic Visual Editor Creation
 Dialomic is an interactive 3D graphic novel designer and runtime for Twine/SugarCube stories.
 
-High-level flow:
-1. Open the Dialomic index page.
+![gif](documentation/hello.gif)
+### Getting Started
+1. Visit the [home page](https://alextangnt.github.io/dialomic/)
 2. Click `+ New Story` to start from the template, or import an existing HTML story in the Play container.
 3. Click `▶ Play` to open the Dialomic Player and run the current story.
 4. Click `✎ Edit Story` in the Player to open Dialomic Visual Editor on the active story/passage.
 5. In Visual Editor, edit scenes directly: models, transforms, background/sky, speech bubbles, narration, choices, and scene macros.
 6. Use `Save Story` to commit scene/text changes and `Preview Story` to return to Player.
 
-Core pages:
-- `index.html`: landing page, story creation/import, and play launcher.
-- `player.html`: interactive story runtime (Twine logic iframe + Dialomic panel UI).
-- `visual-editor.html`: single-passage scene editor with 3D controls and text tabs.
+![editor](documentation/editor.gif)
+![editor](documentation/editor2.gif)
 
-Notes:
-- `ifid` for newly created stories is auto-generated.
-- Imported stories are staged locally in browser storage and available immediately in Play.
-- Scene edits sync into passage text so Player and Editor remain consistent.
+### Editing Scenes in the Visual Editor
+Here's an example of the typical layout for the visual editor after you've created a story.
+![Visual Editor](documentation/viseditor.png)
+
+#### Passage Selection
+Your story is controlled by navigating through various **Passages**, which each contain a **Scene** and any accompanying text through narration and speech bubbles. Passages can contain **Choices**, which are links that lead to any other defined passage.
+
+When creating a new story, you are placed at the **Start** passage by defailt. If you are editing a story from the Player, you are placed at the passage that you last viewed. **Start** is the passage that displays first when you begin the story. In the dropdown in the top left, you may select any currently defined passage and edit the corresponding scene.
+
+There is an unnumbered passage called **StoryInit** that doesn't contain a scene. **StoryInit** is where you write code for any global variables or macros that you want to reference later down the line. Referenced variables will not display correctly if they are visualized in the scene, but they will work when the story itself plays.
+
+#### Camera Buttons
+* **Focus:** Focuses camera on selected model so that it's fully in shot
+* **Set Camera:** By default, the camera used in the editor does not match the camera that will be seen in the scene when the story is played. Click this button to set that camera to your current view.
+* **Revert Camera:** Clicking this button returns the camera to the saved scene position
+
+
+### Reading and Editing Passage Code 
+To view passage code rather than the visualized scene, click into the black box where narration would typically go when you play the story. This window is where you would modify and check information relating to your passage and scene through text or code. At this stage, you must click into the text editor to edit and add choices.
+
+Please view [Sugarcube](https://www.motoslave.net/sugarcube/2/) documentation and format with Sugarcube code if you wish you use macros in your story!
+
+Passage data is split into three tabs:
+
+#### Text
+This tab stores all narration, speech bubbles, and so forth.
+
+#### Scene
+This tab mostly contains the scene data stored as (`$DL`).
+The Visual Editor writes scene state into a SugarCube macro like:
+
+```twine
+<<set $DL = {
+  objects: [
+    {
+      "id": "rat1",
+      "spec": "RAT MID CENTER LOOKLEFT",
+      "position": [0, 0, 0],
+      "rotation": [0, 0, 0],
+      "scale": [1, 1, 1]
+    }
+  ],
+  "background": { "name": "none" },
+  "skyColor": "#bfe3ff"
+}>>
+```
+
+- `objects` is the model list for that passage.
+- `id` is the speaker/object key used by `speakerKey::` lines.
+- In Visual Editor, `spec` defaults to just `MODEL` for model name (for example `"rat"`).
+- Text-only authoring may use extended shorthand like `MODEL DISTANCE LOCATION FACING`.
+- `position`, `rotation`, `scale` are explicit transform overrides.
+- `background`, `skyColor`, and optional `camera`/`config` control scene environment and panel behavior.
+
+Important: this Visual Editor format is different from the older text-only object-key patterns.  
+If you are authoring text-only, Dialomic still supports multiple declaration styles for `DL.objects` (e.g. keyed object maps, arrays of keyed strings like `rat1= ...`, and array/object variable references). The Visual Editor standardizes edits into a JSON-like `$DL` block so scene transforms are explicit and round-trip safely.
+
+#### Choices
+Choices are formatted as `[[Link Text|Linked Passage Name]]`. When this passage is played, Dialmoic will render a choice underneath your scene panel with the text `Link Text`, that takes you to the passage `Linked Passage Name` when clicked.
+
+Currently, you have to make a new passage New Passage button, but this will be updated in later patches.
 
 ---
 
-## Dialomic Text-Only Creation
+## Dialomic Text-Only Creation (OLD)
 Dialomic turns Twine stories into interactive webcomics with animated 3D panels, narration overlays, and speech bubbles. Authors write standard SugarCube passages and add a few formatting conventions so scenes and dialogue can be parsed automatically.
 
 Visit the [Dialomic web player](https://alextangnt.github.io/dialomic/) for a sample story and to play your stories!
-
-See `docs/CHANGELOG.md` for a running list of new features.
 
 ### Getting Started
 1. Download the [Twine desktop app or use the online editor](https://twinery.org/).
@@ -44,7 +99,7 @@ See `docs/CHANGELOG.md` for a running list of new features.
 (This is a different story from the screenshot above)
 
 ## Passage Formatting
-- Paragraphs are split on blank lines (or `<br><br>` after export), meaning each individual paragraph will be parsed for "speaker" or "narration".
+- Paragraphs are split on blank lines, meaning each individual paragraph will be parsed for "speaker" or "narration".
 - Everything after `%%%` is ignored by the scene/narration parser (use this to separate narrative from choices if desired).
 
 Example passage block:

@@ -3988,7 +3988,10 @@ el.addModelBtn?.addEventListener('click', () => {
         i += 1;
         key = `${asset}${i}`;
     }
-    state.panel.three.addModel(`${key}=${asset}`);
+    state.panel.three.addModel({
+        id: key,
+        spec: asset,
+    });
     markSceneDirtyFrom3d();
 });
 
