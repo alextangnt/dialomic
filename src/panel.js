@@ -110,9 +110,9 @@ const facings = {
     "LOOKRIGHT": Math.PI/2,
     "LOOKBACK": Math.PI
 }
-const frames = 10;
+export const PANEL_ENTER_DURATION_MS = 350;
 const EDITOR_BACKGROUND_KEY = '__background__';
-const exitFrames = 16;
+export const PANEL_EXIT_DURATION_MS = 500;
 
 function normalizeSceneObjects(scene) {
     const objs = scene?.objects;
@@ -192,8 +192,18 @@ export class ThreeScene {
         scene.background = bg
         let renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
         this.renderer = renderer;
-        renderer.setPixelRatio(window.devicePixelRatio);
-        renderer.setSize( width, height );
+        // Preserve display sharpness; transition performance comes from avoiding
+        // repeated drawing-buffer allocation, rather than reducing pixel density.
+        renderer.setPixelRatio(window.devicePixelRatio || 1);
+        renderer.setSize(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)), false);
+        this.renderWidth = Math.max(1, Math.round(width));
+        this.renderHeight = Math.max(1, Math.round(height));
+        this.pendingRenderSize = null;
+        this.logicalRenderSize = { width: this.renderWidth, height: this.renderHeight };
+        this.transitionRenderSize = null;
+        this.externallyDriven = false;
+        this.renderingEnabled = true;
+        this.disposed = false;
 
         
         
@@ -406,9 +416,35 @@ export class ThreeScene {
 
 
 
-    animate() {
-        const now = performance.now();
+    setExternallyDriven(enabled = true) {
+        this.externallyDriven = enabled;
+        this.renderRequested = true;
+        this.setRenderingEnabled(this.renderingEnabled);
+    }
+
+    setRenderingEnabled(enabled) {
+        if (this.disposed) return;
+        this.renderingEnabled = enabled;
+        if (enabled) this.renderRequested = true;
+        this.lastTime = performance.now();
+        this.renderer.setAnimationLoop(enabled && !this.externallyDriven ? this.animate : null);
+    }
+
+    animate(now = performance.now()) {
+        if (this.disposed || !this.renderingEnabled || document.hidden) return false;
+        const elapsed = Math.max(0, now - this.lastTime);
         this.lastTime = now;
+        // Layout can request several sizes in one frame; allocate only the final one.
+        if (this.pendingRenderSize) {
+            const { width, height } = this.pendingRenderSize;
+            if (width !== this.renderWidth || height !== this.renderHeight) {
+                this.renderer.setSize(width, height, false);
+                this.renderWidth = width;
+                this.renderHeight = height;
+                this.renderRequested = true;
+            }
+            this.pendingRenderSize = null;
+        }
         if (this.repulsion.enabled && this.models.length > 1) {
             this.applyRepulsion();
         }
@@ -416,18 +452,62 @@ export class ThreeScene {
         if (this.editorEnabled && this.editorOrbitControls) {
             this.editorOrbitControls.update();
         } else if (this.mouseTiltReady && this.mouseTiltEnabled) {
-            this.applyMouseTilt();
+            this.applyMouseTilt(elapsed);
         }
-        // this.controls.update();
+        if (this.externallyDriven && !this.hasPlayerRenderChanges()) return false;
         this.renderer.render( this.scene, this.camera );
-        
+        return true;
+    }
+
+    hasPlayerRenderChanges() {
+        // Player animation currently changes camera and scene-root transforms, not
+        // nested bones/materials. Compare those values without traversing every mesh.
+        // Standalone/editor scenes keep unconditional rendering for gizmos and edits.
+        const state = this.playerRenderState ||= [];
+        let index = 0;
+        let changed = Boolean(this.renderRequested);
+        const record = (value) => {
+            if (state[index] !== value) changed = true;
+            state[index++] = value;
+        };
+        this.camera.updateMatrixWorld();
+        for (const value of this.camera.matrixWorld.elements) record(value);
+        for (const value of this.camera.projectionMatrix.elements) record(value);
+        const background = this.scene.background;
+        record(background?.r);
+        record(background?.g);
+        record(background?.b);
+        for (const object of this.scene.children) {
+            record(object.id);
+            record(object.visible);
+            if (object.matrixAutoUpdate) object.updateMatrix();
+            for (const value of object.matrix.elements) record(value);
+        }
+        if (state.length !== index) changed = true;
+        state.length = index;
+        this.renderRequested = false;
+        return changed;
     }
 
     resize(width, height) {
-        this.camera.aspect = width / height;
-        this.camera.updateProjectionMatrix();
-        this.renderer.setSize(width, height);
+        width = Math.max(1, width);
+        height = Math.max(1, height);
+        const aspect = width / height;
+        if (this.camera.aspect !== aspect) {
+            this.camera.aspect = aspect;
+            this.camera.updateProjectionMatrix();
+        }
+        this.logicalRenderSize = { width: Math.round(width), height: Math.round(height) };
+        this.pendingRenderSize = this.transitionRenderSize || this.logicalRenderSize;
 
+    }
+
+    setTransitionRenderSize(size) {
+        this.transitionRenderSize = size ? {
+            width: Math.max(1, Math.round(size.width)),
+            height: Math.max(1, Math.round(size.height)),
+        } : null;
+        this.pendingRenderSize = this.transitionRenderSize || this.logicalRenderSize;
     }
 
     parseVec3(value) {
@@ -843,17 +923,7 @@ export class ThreeScene {
             this.editorSelectedKey = null;
         }
         this.scene.remove(model);
-        model.traverse?.((child) => {
-            if (!child?.isMesh) return;
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) {
-                if (Array.isArray(child.material)) {
-                    child.material.forEach((m) => m?.dispose?.());
-                } else {
-                    child.material.dispose?.();
-                }
-            }
-        });
+        this.disposeModelResources(model);
         this.modelByKey.delete(norm);
         this.models = this.models.filter((m) => m !== model);
         this.updateEditorOrbitBounds();
@@ -877,17 +947,23 @@ export class ThreeScene {
     }
 
     disposeModelResources(model) {
+        const geometries = new Set();
+        const materials = new Set();
+        const textures = new Set();
         model?.traverse?.((child) => {
-            if (!child?.isMesh) return;
-            if (child.geometry) child.geometry.dispose();
-            if (child.material) {
-                if (Array.isArray(child.material)) {
-                    child.material.forEach((m) => m?.dispose?.());
-                } else {
-                    child.material.dispose?.();
+            if (child.geometry) geometries.add(child.geometry);
+            const list = Array.isArray(child.material) ? child.material : [child.material];
+            for (const material of list) {
+                if (!material) continue;
+                materials.add(material);
+                for (const value of Object.values(material)) {
+                    if (value?.isTexture) textures.add(value);
                 }
             }
         });
+        for (const texture of textures) texture.dispose();
+        for (const material of materials) material.dispose();
+        for (const geometry of geometries) geometry.dispose();
     }
 
     revertEditableModelTransformByKey(key) {
@@ -1024,6 +1100,10 @@ export class ThreeScene {
         this.pendingShotModels += 1;
         this.mouseTiltReady = false;
         loader.load( filename, ( gltf ) => {
+            if (this.disposed) {
+                this.disposeModelResources(gltf?.scene);
+                return;
+            }
             if (modelKey) {
                 const pending = this.pendingModelLoads.get(modelKey);
                 if (!pending || pending.ticket !== loadTicket) {
@@ -1164,7 +1244,10 @@ export class ThreeScene {
         this.clearBackground(true);
 
         this.loader.load(filename, (gltf) => {
-            if (token !== this.backgroundToken) return;
+            if (this.disposed || token !== this.backgroundToken) {
+                this.disposeModelResources(gltf?.scene);
+                return;
+            }
             const model = gltf.scene;
             this.backgroundModel = model;
             this.scene.add(model);
@@ -1200,18 +1283,7 @@ export class ThreeScene {
             this.clearSelectedEditableModel();
         }
         this.scene.remove(model);
-        model.traverse((child) => {
-            if (child.isMesh) {
-                if (child.geometry) child.geometry.dispose();
-                if (child.material) {
-                    if (Array.isArray(child.material)) {
-                        child.material.forEach((m) => m.dispose && m.dispose());
-                    } else if (child.material.dispose) {
-                        child.material.dispose();
-                    }
-                }
-            }
-        });
+        this.disposeModelResources(model);
         this.backgroundModel = null;
         if (!preserveSourceSpec) this.backgroundSourceSpec = null;
     }
@@ -1542,9 +1614,12 @@ export class ThreeScene {
         }
     }
 
-    applyMouseTilt() {
-        this.mouseTilt.x = lerp(this.mouseTilt.x, this.mouseTiltTarget.x, this.mouseTiltLerp);
-        this.mouseTilt.y = lerp(this.mouseTilt.y, this.mouseTiltTarget.y, this.mouseTiltLerp);
+    applyMouseTilt(elapsed = 1000 / 60) {
+        const rate = 1 - Math.pow(1 - this.mouseTiltLerp, elapsed / (1000 / 60));
+        this.mouseTilt.x = lerp(this.mouseTilt.x, this.mouseTiltTarget.x, rate);
+        this.mouseTilt.y = lerp(this.mouseTilt.y, this.mouseTiltTarget.y, rate);
+        if (Math.abs(this.mouseTilt.x - this.mouseTiltTarget.x) < 0.0001) this.mouseTilt.x = this.mouseTiltTarget.x;
+        if (Math.abs(this.mouseTilt.y - this.mouseTiltTarget.y) < 0.0001) this.mouseTilt.y = this.mouseTiltTarget.y;
         const yaw = -this.mouseTilt.x * this.mouseTilt.maxYaw;
         const pitch = -this.mouseTilt.y * this.mouseTilt.maxPitch;
         const dir = new THREE.Vector3(0, 0, -1).applyEuler(new THREE.Euler(pitch, yaw, 0));
@@ -1683,6 +1758,11 @@ export class ThreeScene {
     }
 
     dispose() {
+        if (this.disposed) return;
+        this.disposed = true;
+        this.renderer.setAnimationLoop(null);
+        this.pendingModelLoads.clear();
+        this.backgroundToken += 1;
         if (this.mouseTiltHandler) {
             window.removeEventListener('mousemove', this.mouseTiltHandler, true);
         }
@@ -1711,6 +1791,10 @@ export class ThreeScene {
             this.editorOrbitControls = null;
         }
         this.editorEnabled = false;
+        this.disposeModelResources(this.scene);
+        this.scene.clear();
+        this.models.length = 0;
+        this.modelByKey.clear();
     }
 
 }
@@ -1723,6 +1807,7 @@ export class Panel {
         this.target = target;
         this.id = id;
         this.text = text;
+        this.hasNarration = getHtmlTextLength(text || '') > 0;
         this.textType = textType;
         this.topInset = topInset;
         this.isUpdating = true;
@@ -1731,6 +1816,7 @@ export class Panel {
         this.onScreen = true;
         this.isAnimatingOut = false;
         this.isDeleted = false;
+        this.transition = { from: { ...curr }, startTime: performance.now() };
 
         this.canvas = document.createElement('canvas');
         this.canvas.style.position = 'absolute';
@@ -1947,7 +2033,7 @@ export class Panel {
 
     
 
-    resize(width, height, scaleText = true) {
+    resize(width, height, scaleText = true, updateLayout = true) {
         this.data.width = width;
         this.data.height = height;
         this.canvas.style.width = `${width}px`;
@@ -1968,17 +2054,17 @@ export class Panel {
             this.narrationEl.style.lineHeight = `${this.baseLineHeight}px`;
         }
         this.applySpeechTypography();
-        if (this.isUpdating) {
-            // During panel animation, avoid rebuilding bubble DOM each frame.
-            // Reposition existing elements only to prevent vertical jostle.
-            this.updateTextMode();
-            this.updateNarrationTarget();
-            this.positionSpeechBubbles();
-        } else {
-            this.renderText();
+        if (updateLayout) {
+            if (this.isUpdating) {
+                this.updateTextMode();
+                this.updateNarrationTarget();
+                this.positionSpeechBubbles();
+            } else {
+                this.renderText();
+            }
         }
         const reserve = this.textType === 'narration' ? (this.fixedNarrationReserve || 0) : 0;
-        this.three.resize(width, Math.max(40, height - reserve));
+        if (this.textType !== 'narration') this.three.resize(width, Math.max(40, height - reserve));
         
         
 
@@ -2004,21 +2090,22 @@ export class Panel {
         }
     }
 
-    move(left,top){
+    move(left,top, updateLayout = true){
         this.data.left = left;
         this.data.top = top;
         this.canvas.style.left = `${left}px`;
         this.canvas.style.top = `${top}px`;
         this.textEl.style.left = `${left}px`;
         this.textEl.style.top = `${top}px`;
-        this.updateNarrationTarget();
+        if (updateLayout) this.updateNarrationTarget();
     }
 
     setCurr(data, scaleText = true){
         let t = data;
         this.target = t;
-        this.move(t.left,t.top);
-        this.resize(t.width,t.height, scaleText);
+        this.transition = { from: { ...data }, startTime: performance.now() };
+        this.move(t.left,t.top, false);
+        this.resize(t.width,t.height, scaleText, false);
         if (this.textType === 'narration') {
             this.updateNarrationTarget();
             this.narrationData.left = this.narrationTarget.left;
@@ -2026,10 +2113,12 @@ export class Panel {
             this.narrationEl.style.left = `${this.narrationData.left}px`;
             this.narrationEl.style.top = `${this.narrationData.top}px`;
         }
+        this.positionSpeechBubbles();
     }
     
     setTarget(data, options = {}){
         this.target = data;
+        this.transition = { from: { ...this.data }, startTime: performance.now() };
         const explicitAnimateOut = Boolean(options?.animateOut);
         const w = window.innerWidth;
         const h = window.innerHeight;
@@ -2053,12 +2142,10 @@ export class Panel {
     }
 
 
-    moveToTarget(){
-        
-        
-        const frameBudget = this.isAnimatingOut ? exitFrames : frames;
-        const rate = 1 - Math.pow(0.1, 1 / frameBudget);
-        const snapEpsilon = 1;
+    moveToTarget(now = performance.now()){
+        const duration = this.isAnimatingOut ? PANEL_EXIT_DURATION_MS : PANEL_ENTER_DURATION_MS;
+        const progress = Math.max(0, Math.min(1, (now - this.transition.startTime) / duration));
+        const rate = 1 - Math.pow(1 - progress, 3);
         const c = this.data;
         const t = this.target;
 
@@ -2067,7 +2154,7 @@ export class Panel {
         const next = { left: c.left, top: c.top, width: c.width, height: c.height };
         const updateAxis = (axis) => {
             if (!this.movingToTarget[axis]) return;
-            const current = c[axis];
+            const current = this.transition.from[axis];
             const target = t[axis];
             next[axis] = lerp(current, target, rate);
         };
@@ -2077,10 +2164,10 @@ export class Panel {
         updateAxis('height');
 
         if (next.left !== c.left || next.top !== c.top) {
-            this.move(next.left, next.top);
+            this.move(next.left, next.top, false);
         }
         if (next.width !== c.width || next.height !== c.height) {
-            this.resize(next.width, next.height);
+            this.resize(next.width, next.height, true, false);
         }
 
         if (this.textType === 'narration') {
@@ -2091,19 +2178,14 @@ export class Panel {
             this.narrationEl.style.top = `${this.narrationData.top}px`;
         }
 
-        const done =
-            Math.abs(c.left - t.left) < snapEpsilon &&
-            Math.abs(c.top - t.top) < snapEpsilon &&
-            Math.abs(c.width - t.width) < snapEpsilon &&
-            Math.abs(c.height - t.height) < snapEpsilon;
+        const done = progress >= 1;
         if (done) {
-            this.move(t.left, t.top);
-            this.resize(t.width, t.height);
             this.movingToTarget = {left:false, top:false, width:false, height:false};
             this.isUpdating = false;
         }
         
-        if (c.left+c.width<0 || c.top+c.height<0 || c.left>wwidth || c.top>wheight){
+        const outsideViewport = c.left+c.width<0 || c.top+c.height<0 || c.left>wwidth || c.top>wheight;
+        if (outsideViewport && (this.isAnimatingOut || done)){
             this.isUpdating = false;
             this.onScreen = false;
             this.canvas.style.display = 'none';
@@ -2123,6 +2205,7 @@ export class Panel {
         this.isAnimatingOut = false;
         this.speechLayout.clearExitFreeze();
         this.three?.setSpeakerAnimationPaused?.(false);
+        if (!this.onScreen) this.three?.setRenderingEnabled(false);
     }
     startUpdates(){
         this.onScreen = true;
@@ -2130,18 +2213,37 @@ export class Panel {
         this.canvas.style.display = 'block';
         this.narrationBgEl.style.display = 'block';
         this.updateTextMode();
-        this.three.renderer.setAnimationLoop(this.three.animate);
+        this.three.setRenderingEnabled(true);
         this.movingToTarget = {left:true, top:true, width:true, height:true};
     }
 
-    update(){
-        
-        if (!this.isUpdating) {
-            this.positionSpeechBubbles();
-            return this.linked;
+    update(now = performance.now()){
+        if (this.isDeleted || !this.onScreen) return -1;
+        const wasUpdating = this.isUpdating;
+        if (wasUpdating && this.three.externallyDriven && this.bufferTransition !== this.transition) {
+            this.bufferTransition = this.transition;
+            this.three.setTransitionRenderSize({
+                width: Math.max(80, this.target.width),
+                height: Math.max(40, this.target.height - (this.fixedNarrationReserve || 0)),
+            });
         }
-        this.moveToTarget();
-        this.positionSpeechBubbles();
+        if (wasUpdating) this.moveToTarget(now);
+        if (wasUpdating && !this.isUpdating && this.three.externallyDriven) {
+            this.three.setTransitionRenderSize(null);
+        }
+        if (!this.onScreen) return -1;
+        const rendered = this.three.externallyDriven ? this.three.animate(now) : true;
+        // Static panels still refresh speech for DOM/font/control changes, but avoid
+        // full-rate geometry measurement while their camera and models are unchanged.
+        const speechDue = rendered || wasUpdating || this.lastSpeechLayoutTime == null ||
+            now - this.lastSpeechLayoutTime >= 1000 / 30;
+        if (speechDue) {
+            this.positionSpeechBubbles();
+            this.lastSpeechLayoutTime = now;
+        }
+        if (!this.isUpdating) {
+            return wasUpdating ? -1 : this.linked;
+        }
         return -1;
     }
     setLink(i){
@@ -2150,6 +2252,7 @@ export class Panel {
 
     setTxt(txt){
         this.text = txt;
+        this.hasNarration = getHtmlTextLength(txt || '') > 0;
         this.renderText();
     }
 
@@ -2157,9 +2260,6 @@ export class Panel {
         this.speakers = Array.isArray(speakers) ? speakers : [];
         if (this.three && this.three.setSpeakerQueue) {
             this.three.setSpeakerQueue(this.speakers);
-        }
-        if (this.speakers.length) {
-            this.three.renderer.setAnimationLoop(this.three.animate);
         }
         this.renderText();
     }
@@ -2177,21 +2277,12 @@ export class Panel {
             this.three.renderer.setAnimationLoop(null);
             this.three.renderer.dispose();
         }
-        for (let obj in this.three.objects){
-            if (!obj.isMesh) return;
-                obj.geometry.dispose();
-                if (obj.material.isMaterial) {
-                    cleanMaterial(object.material);
-                } else {
-                    for (const material of obj.material) cleanMaterial(material);
-                }
-        }
     }
 
     
     
     updateTextMode(){
-        const hasNarration = getHtmlTextLength(this.text || '') > 0;
+        const hasNarration = this.hasNarration;
         if (this.textType === 'dialogue') {
             this.textEl.style.display = 'block';
             this.narrationBgEl.style.display = 'none';
@@ -2225,7 +2316,7 @@ export class Panel {
         this.narrationEl.style.top = `${panelRef.top}px`;
         this.narrationEl.style.width = `${width}px`;
 
-        const hasNarration = getHtmlTextLength(this.text || '') > 0;
+        const hasNarration = this.hasNarration;
         let reserve = 0;
 
         if (!hasNarration) {

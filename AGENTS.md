@@ -25,6 +25,21 @@ Flow:
 4. `panel.js` renders Three.js panel(s), narration, and bubbles.
 5. User choice/input events are posted back to iframe.
 
+Player rendering and animation:
+- `LayoutUI.tick()` owns the player frame loop and samples `performance.now()` when the callback begins. New player panels call `three.setExternallyDriven()`; their `Panel.update(timestamp)` updates geometry, renders 3D, then projects speech bubbles.
+- Standalone/editor scenes retain Three.js animation loops. Use `setRenderingEnabled()` to suspend/resume a scene; hidden player panels stop rendering and resume when recalled from history.
+- Panel transitions use elapsed milliseconds (350 ms entry/reposition, 500 ms exit) with cubic easing. Mouse tilt uses elapsed-time smoothing. Dropped frames skip ahead instead of extending the transition.
+- Renderer pixel ratio follows `window.devicePixelRatio` in both player and editor; mode switches do not lower it. Earlier 1x touch / 1.5x desktop caps were removed because they visibly pixelated high-density displays. CSS controls canvas dimensions; drawing-buffer sizes are rounded, batched, and applied once before rendering, only when changed.
+- During player transitions, `setTransitionRenderSize()` holds drawing-buffer allocation at the target size while CSS dimensions and camera aspect continue updating. At completion it releases the override and applies the exact current canvas size. Retargeting replaces the override; editor rendering is unchanged.
+- `src/playerPerformance.js` owns optional on-device diagnostics, enabled by adding `perf=1` to the player URL. Its overlay reports the elapsed-time runtime marker, viewport, measured transition duration/frame count, and synchronous player frame work (not GPU/presentation time). `LayoutUI.destroy()` removes the overlay; normal player URLs do not create it.
+- Externally driven player scenes skip GPU draws when camera matrices, scene-root transforms/visibility/identity, background color, and buffer size are unchanged. This covers current player animation (root-level speaker hops and camera tilt). Future nested skeletal/material/light animation must set `three.renderRequested = true` when changing; standalone/editor rendering remains continuous.
+- Mouse tilt snaps to its target within 0.0001 normalized units so it can settle. Speech layout runs at most 30 Hz for unchanged player scenes and continues every frame during scene changes and panel transitions.
+- Panel geometry updates batch narration layout and speech positioning. Speech state is reused when unchanged, and model bounds are cached only within each speech layout pass. Disabled speech debug targets perform no DOM measurement/allocation.
+- Scene disposal invalidates pending loads and releases geometry, materials, and textures. Late load callbacks dispose their results rather than attaching to deleted scenes.
+- Destroying a player layout cancels its RAF and removes its window listeners. Pointer hover uses one pointer event handler rather than processing both pointermove and mousemove.
+- History still retains panel scenes/WebGL contexts for reuse. Suspending rendering reduces ongoing work but does not bound this cache; long-story context/memory usage needs a separate cache/recreation or shared-renderer change.
+- `player.html` declares a device-width viewport so phones use their actual CSS viewport rather than a scaled desktop layout.
+
 ### Visual Editor
 - Entry page: `visual-editor.html`
 - Main runtime: `src/visualEditor.js`
@@ -86,7 +101,9 @@ Flow:
 
 ## Build/Run
 - Build: `npm run build`
+- Production preview: run `npm run build` before `npx vite preview --host 0.0.0.0`. Preview serves `dist`, not current source; this repository tracks `dist`, which can otherwise retain older frame-dependent animation code. Source changes appear immediately only in the dev server.
 - Dev: `npm run dev`
+- Runtime regression checks: `npm test` (Node tests bundle browser modules with esbuild and exercise timing/render lifecycle with renderer/DOM stubs; these do not measure browser FPS).
 - Default story manifest generator: `scripts/generate-default-stories-manifest.js`
   - Runs automatically in `predev` and `prebuild`
 

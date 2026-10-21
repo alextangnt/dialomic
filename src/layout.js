@@ -1,4 +1,5 @@
-import { Panel } from './panel.js';
+import { Panel, PANEL_ENTER_DURATION_MS, PANEL_EXIT_DURATION_MS } from './panel.js';
+import { PlayerPerformanceHud } from './playerPerformance.js';
 import { stripHtml, splitHtmlParagraphs, buildSceneObjectMap } from './passageText.js';
 
 /*
@@ -935,16 +936,28 @@ class LayoutUI {
         this.selectedLinkIndex = 0;
 
         this.tick = this.tick.bind(this);
-        requestAnimationFrame(this.tick);
+        this.performanceHud = new URLSearchParams(window.location.search).has('perf')
+            ? new PlayerPerformanceHud() : null;
+        this.frameRequest = requestAnimationFrame(this.tick);
 
-        window.addEventListener('resize', () => this.onResize());
-        window.addEventListener('keydown', (event) => this.onKeyDown(event));
-        window.addEventListener('wheel', (event) => this.onWheel(event), { passive: false });
-        window.addEventListener('pointermove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true });
-        window.addEventListener('mousemove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true });
+        this.windowListeners = [
+            ['resize', () => this.onResize()],
+            ['keydown', (event) => this.onKeyDown(event)],
+            ['wheel', (event) => this.onWheel(event), { passive: false }],
+            ['pointermove', (event) => this.onGlobalPointerMove(event), { passive: true, capture: true }],
+        ];
+        for (const [type, handler, options] of this.windowListeners) {
+            window.addEventListener(type, handler, options);
+        }
     }
 
     destroy() {
+        this.destroyed = true;
+        cancelAnimationFrame(this.frameRequest);
+        this.performanceHud?.destroy();
+        for (const [type, handler, options] of this.windowListeners) {
+            window.removeEventListener(type, handler, options);
+        }
         if (this.linksRoot) this.linksRoot.remove();
         if (this.inputRoot) this.inputRoot.remove();
         if (this.restartBtn) this.restartBtn.remove();
@@ -1900,6 +1913,7 @@ class LayoutUI {
 
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, this.txt, -1, scene, 'narration', this.topInset);
+            p.three.setExternallyDriven();
             p.historyModeLiveAnchors = false;
             p.setAspectMode?.(this.panelConfig.aspect);
             p.customAspectRatio = this.panelAspectRatio;
@@ -1985,6 +1999,7 @@ class LayoutUI {
         let scene = withDefaultSceneCamera(sceneVars.DL);
         if (!this.panels[name]) {
             let p = new Panel(data, target, name, choice, i,scene, 'narration', this.topInset);
+            p.three.setExternallyDriven();
             p.panelSize = 'small';
             p.setSpeechBounds?.({
                 left: target.left,
@@ -2030,6 +2045,10 @@ class LayoutUI {
     }
 
     tick() {
+        if (this.destroyed) return;
+        // Sample the monotonic wall clock when work starts, rather than using the
+        // timestamp of a frame whose callback may have waited behind other work.
+        const now = performance.now();
         for (let panel in this.panelsOnscreen){
             let p = this.panelsOnscreen[panel];
             if (!p.onScreen){
@@ -2040,14 +2059,18 @@ class LayoutUI {
                 if (this.hoverPanelName === panel) this.hoverPanelName = null;
                 this.applyPanelLayering();
             } else {
-                let linkExists = p.update();
+                const transition = p.isUpdating ? p.transition : null;
+                const expectedMs = p.isAnimatingOut ? PANEL_EXIT_DURATION_MS : PANEL_ENTER_DURATION_MS;
+                let linkExists = p.update(now);
+                if (transition) this.performanceHud?.recordPanel(p, transition, expectedMs);
                 if (linkExists !== -1){
                     this.clickLink(linkExists);
                     p.setLink(-1);
                 }
             }
         }
-        requestAnimationFrame(this.tick);
+        this.performanceHud?.recordFrame(now);
+        this.frameRequest = requestAnimationFrame(this.tick);
     }
 
     updatePanelLayoutImmediate() {

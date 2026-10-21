@@ -67,6 +67,10 @@ export class SpeechBubbleLayout {
     }
 
     sync(elements, speakers) {
+        // The steady-state player tick only moves anchors; preserve layout objects.
+        if (elements.length === this.items.length && elements.every((el, index) =>
+            this.items[index].el === el && this.items[index].speaker === (speakers?.[index]?.speaker || '')
+        )) return;
         const prevItems = this.items || [];
         const reused = new Set(elements);
         for (const prev of prevItems) {
@@ -136,6 +140,10 @@ export class SpeechBubbleLayout {
     }
 
     updateDebugTarget(item, cx, cy, r) {
+        if (!this.shouldShowDebugTarget()) {
+            if (item?.debugTargetEl) item.debugTargetEl.style.display = 'none';
+            return;
+        }
         const marker = this.ensureDebugTargetEl(item);
         if (!marker) return;
         const canvasRect = this.panel?.canvas?.getBoundingClientRect?.();
@@ -241,9 +249,16 @@ export class SpeechBubbleLayout {
         }
     }
 
+    getSpeakerBounds(speakerKey) {
+        if (this.frameBounds?.has(speakerKey)) return this.frameBounds.get(speakerKey);
+        const bounds = this.panel.three?.getModelBoundsByKey(speakerKey);
+        this.frameBounds?.set(speakerKey, bounds);
+        return bounds;
+    }
+
     getSpeakerRect(speakerKey, canvasRect, yOffset = 0) {
         if (!speakerKey) return null;
-        const bounds = this.panel.three?.getModelBoundsByKey(speakerKey);
+        const bounds = this.getSpeakerBounds(speakerKey);
         if (!bounds) return null;
         const logicalW = Math.max(1, this.panel.canvas?.clientWidth || this.panel.data?.width || canvasRect.width || 1);
         const logicalH = Math.max(1, this.panel.canvas?.clientHeight || this.panel.data?.height || canvasRect.height || 1);
@@ -333,7 +348,7 @@ export class SpeechBubbleLayout {
         const model = three?.getModelByKey?.(speakerKey);
         if (!model || !three?.worldToScreen) return null;
         model.updateMatrixWorld?.(true);
-        const bounds = three.getModelBoundsByKey?.(speakerKey);
+        const bounds = this.getSpeakerBounds(speakerKey);
         const world = new THREE.Vector3();
         if (bounds?.center?.isVector3) {
             world.copy(bounds.center);
@@ -533,6 +548,18 @@ export class SpeechBubbleLayout {
     }
 
     layout() {
+        if (!this.items.length) return;
+        // Repeated lines for one speaker share one scene traversal per layout pass.
+        // Keep this cache local to the pass so editor transforms and speaker hops stay live.
+        this.frameBounds = new Map();
+        try {
+            this.layoutBubbles();
+        } finally {
+            this.frameBounds = null;
+        }
+    }
+
+    layoutBubbles() {
         if (!this.items.length) return;
         const canvasRect = this.panel.canvas.getBoundingClientRect();
         const prevCanvasLeft = this.lastCanvasSize.left;
